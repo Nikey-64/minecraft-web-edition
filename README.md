@@ -1,3 +1,13 @@
+
+
+BIG Warning
+**The original project is no longer actively maintained!**
+also this project does not belong to me if you want to see the original basegame go look for Overv in github
+also thanks you overv for doing this masterpiece https://github.com/Overv/WebCraft 👋wave hand
+
+¿wanna try it? go here -> [Minecraft-web-edition](https://nikey-64.github.io/minecraft-web-edition/)  (also for some reason you need to reload the page from the url space in singleplayer)
+Important if you want to join multiplayer you need to wait until 0.10.0 Please understand that im trying to make it more like the vanilla game Thanks you
+
 WebCraft (HTML5 Minecraft)
 ---------------------
 [![GitHub issues](https://img.shields.io/github/issues/Overv/WebCraft.svg)](https://github.com/Overv/WebCraft/issues)
