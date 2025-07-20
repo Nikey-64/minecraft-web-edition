@@ -20,24 +20,16 @@ var vertexSource =
 	"	vColor = aColor;"+
 	"	vTexCoord = aTexCoord;"+
 	"}";
-	var fragmentSource = 
-    "precision highp float;"+
-    "uniform sampler2D uSampler;"+
-    "varying vec4 vColor;"+
-    "varying vec2 vTexCoord;"+
-    "uniform vec3 uFogColor;"+
-    "uniform float uFogDensity;"+
-    "void main() {"+
-    "   vec4 color = texture2D( uSampler, vec2( vTexCoord.s, vTexCoord.t ) ) * vec4( vColor.rgb, 1.0 );"+
-    "   if ( color.a < 0.1 ) discard;"+
-    
-    // Calcular la niebla
-    "   float fogFactor = exp2( -uFogDensity * uFogDensity * (gl_FragCoord.z * gl_FragCoord.z) );"+
-    "   fogFactor = clamp( fogFactor, 0.0, 1.0 );"+
-    
-    // Aplicar niebla
-    "   gl_FragColor = mix( vec4(uFogColor, 1.0), color, fogFactor );"+
-    "}";
+var fragmentSource =
+	"precision highp float;"+
+	"uniform sampler2D uSampler;"+
+	"varying vec4 vColor;"+
+	"varying vec2 vTexCoord;"+
+	"void main() {"+
+	"	vec4 color = texture2D( uSampler, vec2( vTexCoord.s, vTexCoord.t ) ) * vec4( vColor.rgb, 1.0 );"+
+	"	if ( color.a < 0.1 ) discard;"+
+	"	gl_FragColor = vec4( color.rgb, vColor.a );"+
+	"}";
 
 // Constructor( id )
 //
@@ -45,22 +37,12 @@ var vertexSource =
 //
 // id - Identifier of the HTML canvas element to render to.
 
-// render.js
-
-
-function Renderer(id) 
+function Renderer( id )
 {
-    var canvas = this.canvas = document.getElementById(id);
-    canvas.renderer = this;
-    canvas.width = canvas.clientWidth;
-    canvas.height = canvas.clientHeight;
-	
-	Renderer.prototype.setRenderDistance = function(distance) {
-		this.renderDistance = distance;
-	};
-	
-	this.loadedTextures = {};
-	this.chunksToRender = [];
+	var canvas = this.canvas = document.getElementById( id );
+	canvas.renderer = this;
+	canvas.width = canvas.clientWidth;
+	canvas.height = canvas.clientHeight;
 	
 	// Initialise WebGL
 	var gl;
@@ -74,66 +56,13 @@ function Renderer(id)
 	gl.viewportWidth = canvas.width;
 	gl.viewportHeight = canvas.height;
 	
-
-	gl.clearColor(0.62, 0.81, 1.0, 1.0); 
-    gl.enable(gl.DEPTH_TEST); 
-    gl.enable(gl.CULL_FACE); 
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); 
-
-    // Load shaders
-    this.loadShaders(); // Asegúrate de que esto se llame aquí
-
+	gl.clearColor( 0.62, 0.81, 1.0, 1.0 );
+	gl.enable( gl.DEPTH_TEST );
+	gl.enable( gl.CULL_FACE );
+	gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
 	
 	// Load shaders
-	Renderer.prototype.loadShaders = function() 
-{ 
-    var gl = this.gl; 
-
-    // Create shader program 
-    this.program = gl.createProgram(); // Cambia a this.program
-    var vertexShader = gl.createShader(gl.VERTEX_SHADER); 
-    gl.shaderSource(vertexShader, vertexSource); 
-    gl.compileShader(vertexShader); 
-    gl.attachShader(this.program, vertexShader); 
-
-    if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) 
-        throw "Could not compile vertex shader!\n" + gl.getShaderInfoLog(vertexShader); 
-
-    // Compile fragment shader 
-    var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER); 
-    gl.shaderSource(fragmentShader, fragmentSource); 
-    gl.compileShader(fragmentShader); 
-    gl.attachShader(this.program, fragmentShader); 
-
-    if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) 
-        throw "Could not compile fragment shader!\n" + gl.getShaderInfoLog(fragmentShader); 
-
-    // Finish program 
-    gl.linkProgram(this.program); 
-
-    if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) 
-        throw "Could not link the shader program! "; 
-
-    gl.useProgram(this.program); 
-
-    // Store variable locations 
-    this.uProjMat = gl.getUniformLocation(this.program, "uProjMatrix"); 
-    this.uViewMat= gl.getUniformLocation(this.program, "uViewMatrix"); 
-    this.uModelMat= gl.getUniformLocation(this.program, "uModelMatrix"); 
-    this.uSampler = gl.getUniformLocation(this.program, "uSampler"); 
-    this.aPos = gl.getAttribLocation(this.program, "aPos"); 
-    this.aColor = gl.getAttribLocation(this.program, "aColor"); 
-    this.aTexCoord = gl.getAttribLocation(this.program, "aTexCoord"); 
-
-    // Enable input 
-    gl.enableVertexAttribArray(this.aPos); 
-    gl.enableVertexAttribArray(this.aColor); 
-    gl.enableVertexAttribArray(this.aTexCoord); 
-
-    // Obtener ubicaciones de niebla
-    this.uFogColor = gl.getUniformLocation(this.program, "uFogColor");
-    this.uFogDensity = gl.getUniformLocation(this.program, "uFogDensity");
-}; 
+	this.loadShaders();
 	
 	// Load player model
 	this.loadPlayerHeadModel();
@@ -192,47 +121,21 @@ function Renderer(id)
 	ctx.textBaseline = "middle";
 	ctx.font = "24px Minecraftia";
 	document.getElementsByTagName( "body" )[0].appendChild( textCanvas );
-
-
-
-
 }
 
 // draw()
 //
 // Render one frame of the world to the canvas.
 
-
-Renderer.prototype.draw = function() 
-{ 
-    var gl = this.gl; 
-
-    // Inicializa la vista 
-    this.updateViewport(); 
-    gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight); 
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); 
-
-    // Asegúrate de usar el programa de shader correcto
-    gl.useProgram(this.program); // Asegúrate de que esto esté aquí
-	this.fogColor = [0.62, 0.81, 1.0]; // Color de la niebla
-    this.fogDensity = 0.1; // Densidad de la niebla
-    // Configurar niebla
-    gl.uniform3fv(this.uFogColor, this.fogColor);
-    gl.uniform1f(this.uFogDensity, this.fogDensity);
-
-      
-		// Dibujar los chunks que están en el rango de visión
-		for (var chunk of this.chunksToRender) {
-			if (this.isTextureLoaded(chunk.x, chunk.y, chunk.z)) {
-				this.drawChunk(chunk.x, chunk.y, chunk.z); // Método para dibujar el chunk
-			}
-		}
+Renderer.prototype.draw = function()
+{
+	var gl = this.gl;
 	
-		// ... resto del código de dibujo
+	// Initialise view
+	this.updateViewport();
+	gl.viewport( 0, 0, gl.viewportWidth, gl.viewportHeight );
+	gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
 	
-	
-	
-
 	// Draw level chunks
 	var chunks = this.chunks;
 	
@@ -248,14 +151,12 @@ Renderer.prototype.draw = function()
 	}
 	
 	// Draw players
-
-	
 	var players = this.world.players;
-
-    gl.enable( gl.BLEND );
-
-    for ( var p in world.players ) 
-    { 
+	
+	gl.enable( gl.BLEND );
+	
+	for ( var p in world.players )
+	{
 		var player = world.players[p];
 
 		if(player.moving || Math.abs(player.aniframe) > 0.1){
@@ -334,11 +235,6 @@ Renderer.prototype.draw = function()
 	
 	mat4.identity( this.modelMatrix );
 	gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
-
-	// drawChunk(x, y, z)
-	Renderer.prototype.drawChunk = function(x, y, z) {
-		// Implementa la lógica para dibujar el chunk en la posición (x, y, z)
-	};
 }
 
 // buildPlayerName( nickname )
@@ -542,8 +438,6 @@ Renderer.prototype.loadShaders = function()
 	if ( !gl.getShaderParameter( fragmentShader, gl.COMPILE_STATUS ) )
 		throw "Could not compile fragment shader!\n" + gl.getShaderInfoLog( fragmentShader );
 	
-    
-
 	// Finish program
 	gl.linkProgram( program );
 	
@@ -616,56 +510,8 @@ Renderer.prototype.onBlockChanged = function( x, y, z )
 		else if ( y >= chunks[i].start[1] && y < chunks[i].end[1] && z >= chunks[i].start[2] && z < chunks[i].end[2] && ( x == chunks[i].end[0] || x == chunks[i].start[0] - 1 ) )
 			chunks[i].dirty = true;
 	}
+}
 
-    // updateChunks()
-	Renderer.prototype.updateChunks = function() {
-
-		var renderDistance = this.renderDistance; // Distancia de renderizado 
-			var playerPos = this.world.localPlayer.pos; 
-			var chunkSize = this.chunkSize; // Tamaño del chunk 
-			var horizontalRenderDistance = 32; // Distancia de renderizado horizontal (en chunks) 
-			var verticalRenderDistance = 1; // Solo el chunk del jugador y 1 arriba y 1 abajo (total 3) 
-		
-			// Calcular el rango de chunks a renderizar horizontalmente 
-			var startX = Math.floor((playerPos.x - horizontalRenderDistance * chunkSize) / chunkSize); 
-			var endX = Math.floor((playerPos.x + horizontalRenderDistance * chunkSize) / chunkSize); 
-			var startY = Math.floor((playerPos.y - horizontalRenderDistance * chunkSize) / chunkSize); 
-			var endY = Math.floor((playerPos.y + horizontalRenderDistance * chunkSize) / chunkSize); 
-		
-			// Calcular el rango de chunks a renderizar verticalmente (solo 3 columnas)
-			var startZ = Math.max(0, Math.floor(playerPos.z) - verticalRenderDistance); // No permitir que sea menor que 0
-			var endZ = Math.min(this.world.sz - 1, Math.floor(playerPos.z) + verticalRenderDistance); // No permitir que supere el tamaño del mundo
-		
-			this.chunksToRender = []; // Inicializar el array de chunks a renderizar 
-		
-			// Actualizar solo los chunks alrededor del jugador 
-			for (var x = startX; x <= endX; x++) { 
-				for (var y = startY; y <= endY; y++) { 
-					for (var z = startZ; z <= endZ; z++) { 
-						if (this.world.getBlock(x, y, z) != BLOCK.AIR) { 
-							this.chunksToRender.push({ x: x, y: y, z: z }); 
-						} 
-					} 
-				} 
-			} 
-		}; 
-	};
-
-
-// isTextureLoaded(x, y, z)
-Renderer.prototype.isTextureLoaded = function(x, y, z) {
-    return this.loadedTextures[`${x},${y},${z}`] || false;
-};
-
-// loadChunkTexture(x, y, z)
-Renderer.prototype.loadChunkTexture = function(x, y, z) {
-    this.loadedTextures[`${x},${y},${z}`] = true; // Marca la textura como cargada
-	// isTextureLoaded(x, y, z)
-Renderer.prototype.isTextureLoaded = function(x, y, z) {
-    return this.loadedTextures[`${x},${y},${z}`] || false;
-};
-    // Aquí puedes agregar el código para cargar la textura real
-};
 // buildChunks( count )
 //
 // Build up to <count> dirty chunks.
@@ -681,33 +527,16 @@ function pushQuad( v, p1, p2, p3, p4 )
 	v.push( p1[0], p1[1], p1[2], p1[3], p1[4], p1[5], p1[6], p1[7], p1[8] );
 }
 
-
-
 Renderer.prototype.buildChunks = function( count )
 {
 	var gl = this.gl;
 	var chunks = this.chunks;
 	var world = this.world;
-    var playerPos = world.localPlayer.pos; // Obtener la posición del jugador
-    var renderDistance = this.renderDistance; // Obtener la distancia de renderizado
-
-    // Calcular los límites del rango de renderizado
-    var startX = Math.floor(playerPos.x - renderDistance);
-    var endX = Math.floor(playerPos.x + renderDistance);
-    var startY = Math.floor(playerPos.y - renderDistance);
-    var endY = Math.floor(playerPos.y + renderDistance);
-
-
-
 	
-	for (var i = 0; i < chunks.length; i++) {
-        var chunk = chunks[i];
-
+	for ( var i = 0; i < chunks.length; i++ )
+	{
+		var chunk = chunks[i];
 		
-		var chunkX = chunk.start[0];
-        var chunkY = chunk.start[1];
-
-        if (chunkX >= startX && chunkX <= endX && chunkY >= startY && chunkY <= endY) {
 		if ( chunk.dirty )
 		{
 			var vertices = [];
@@ -753,37 +582,6 @@ Renderer.prototype.buildChunks = function( count )
 		if ( count == 0 ) break;
 	}
 }
-}
-
-Renderer.prototype.saveChunks = function() {
-    var gl = this.gl;
-    var world = this.world;
-    var playerPos = world.localPlayer.pos; // Obtener la posición del jugador
-    var renderDistance = this.renderDistance; // Obtener la distancia de renderizado
-
-    // Calcular los límites del rango de renderizado
-    var startX = Math.floor(playerPos.x - renderDistance);
-    var endX = Math.floor(playerPos.x + renderDistance);
-    var startY = Math.floor(playerPos.y - renderDistance);
-    var endY = Math.floor(playerPos.y + renderDistance);
-
-    for (var i = 0; i < this.chunks.length; i++) {
-        var chunk = this.chunks[i];
-
-        // Obtener las coordenadas del chunk
-        var chunkX = chunk.start[0];
-        var chunkY = chunk.start[1];
-
-        // Verificar si el chunk está fuera del rango de renderizado
-        if (chunkX < startX || chunkX > endX || chunkY < startY || chunkY > endY) {
-            if (chunk.buffer) {
-                gl.deleteBuffer(chunk.buffer); // Eliminar el buffer de WebGL
-                chunk.buffer = null; // Marcar el buffer como eliminado
-            }
-            chunk.dirty = true; // Marcar el chunk como sucio para que se pueda cargar de nuevo si es necesario
-        }
-    }
-};
 
 // setPerspective( fov, min, max )
 //
@@ -837,10 +635,6 @@ Renderer.prototype.drawBuffer = function( buffer )
 	
 	gl.drawArrays( gl.TRIANGLES, 0, buffer.vertices );
 }
-
-
-
-
 
 // loadPlayerHeadModel()
 //
@@ -1203,31 +997,3 @@ Renderer.prototype.loadPlayerBodyModel = function()
 	gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
 	gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.DYNAMIC_DRAW );
 }
-Renderer.prototype.updateChunks = function() {
-    var playerPos = this.world.localPlayer.pos;
-    var chunkSize = this.chunkSize; // Tamaño del chunk
-    var halfChunkSize = chunkSize / 2; // 1/2 chunk
-    var renderDistance = 4; // Distancia de renderizado (en chunks)
-
-    // Calcular el rango de chunks a renderizar
-    var startX = Math.floor((playerPos.x - renderDistance * halfChunkSize) / chunkSize);
-    var endX = Math.floor((playerPos.x + renderDistance * halfChunkSize) / chunkSize);
-    var startY = Math.floor((playerPos.y - renderDistance * halfChunkSize) / chunkSize);
-    var endY = Math.floor((playerPos.y + renderDistance * halfChunkSize) / chunkSize);
-    
-    // Mantener la altura completa
-    var maxHeight = this.world.sz; // Altura total del mundo
-
-    this.chunksToRender = []; // Inicializar el array de chunks a renderizar
-
-    // Actualizar solo los chunks alrededor del jugador
-    for (var x = startX; x <= endX; x++) {
-        for (var y = startY; y <= endY; y++) {
-            for (var z = 0; z < maxHeight; z++) {
-                if (this.world.getBlock(x, y, z) != BLOCK.AIR) {
-                    this.chunksToRender.push({ x: x, y: y, z: z });
-                }
-            }
-        }
-    }
-};

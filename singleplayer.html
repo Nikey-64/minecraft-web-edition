@@ -1,13 +1,10 @@
 <!DOCTYPE HTML>
 <html>
 	<head>
-		<title>Minecraft Web edition 0.1.1</title>
+		<title>WebCraft</title>
 		
 		<!-- Character encoding -->
 		<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
-
-		<!-- icon -->
-		<link href="media/favicon.png" rel="icon" type="image/png" sizes="64x64">
 		
 		<!-- Stylesheet -->
 		<link href="style/main.css" rel="stylesheet" type="text/css">
@@ -32,24 +29,16 @@
 		</table>
 		
 		<!-- Initialisation code -->
-		<script type="text/javascript">		
-		
-
+		<script type="text/javascript">			
 			// Create a new flat world
-			var world = new World( 82, 82, 64 );
-			world.createFlatWorld( 32 );
+			var world = new World( 16, 16, 16 );
+			world.createFlatWorld( 6 );
 			
-		    // Establecer la distancia de renderizado a x chunks
-            var renderDistance = 16; // Puedes ajustar este valor según lo necesites
-
 			// Set up renderer
 			var render = new Renderer( "renderSurface" );
 			render.setWorld( world, 8 );
-			render.setPerspective( 60, 0.01, 20 );
-			render.setRenderDistance(renderDistance); // Establecer la distancia de renderizado
+			render.setPerspective( 60, 0.01, 200 );
 			
-
-
 			// Create physics simulator
 			var physics = new Physics();
 			physics.setWorld( world );
@@ -60,18 +49,11 @@
 			player.setInputCanvas( "renderSurface" );
 			player.setMaterialSelector( "materialSelector" );
 			
-
-
 			// Render loop			
 			setInterval( function()
 			{
 				var time = new Date().getTime() / 1000.0;
-
-				render.updateChunks();
 				
-				// Guardar chunks que están fuera del rango de renderizado
-				render.saveChunks();
-
 				// Simulate physics
 				physics.simulate();
 				
@@ -79,7 +61,7 @@
 				player.update();
 				
 				// Build a chunk
-				render.buildChunks( 4 );
+				render.buildChunks( 1 );
 				
 				// Draw world
 				render.setCamera( player.getEyePos().toArray(), player.angles );
@@ -87,7 +69,6 @@
 				
 				while ( new Date().getTime() / 1000 - time < 0.016 );
 			}, 1 );
-			
 		</script>
 	</body>
 </html>

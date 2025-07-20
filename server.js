@@ -2,25 +2,24 @@
 // Server
 //
 // This file contains all of the code necessary for managing a
-// minecraft web edition server on the Node.js platform.
+// WebCraft server on the Node.js platform.
 // ==========================================
 
 // Parameters
-var io = 1;
 var WORLD_SX = 128;
-var WORLD_SY = 64;
-var WORLD_SZ = 128;
+var WORLD_SY = 128;
+var WORLD_SZ = 32;
 var WORLD_GROUNDHEIGHT = 16;
 var SECONDS_BETWEEN_SAVES = 60;
 var ADMIN_IP = "";
 
 // Load modules
 var modules = {};
-modules.use('/socket.io', io.static('js/socket.io' + '/node_modules/socket.io/client-dist/'));
 modules.helpers = require( "./js/helpers.js" );
 modules.blocks = require( "./js/blocks.js" );
 modules.world = require( "./js/world.js" );
 modules.network = require( "./js/network.js" );
+modules.io = require( "socket.io" );
 modules.fs = require( "fs" );
 var log = require( "util" ).log;
 
