@@ -1,4 +1,4 @@
-/* Minecraft-like pixely font */
+/* Minecraft font */
 @font-face {
 	font-family: minecraftia;
 	src: url( 'minecraftia.ttf' );
@@ -8,17 +8,13 @@
 
 body {
 	height: 100%;
-	
 	font-family: minecraftia;
 	font-size: 16px;
-	
-	text-shadow: #3f3f3f 2px 2px 0px;
-	
-	background: url( '../media/background.png' );
+
+	background: url( '../media/gui/background.png' ) repeat;
 }
 
 /* Render surface */
-
 #renderSurface {
 	position: absolute;
 	left: 0;
@@ -146,4 +142,109 @@ body {
 	color: white;
 	font-family: minecraftia;
 	font-size: 16px;
+}
+
+/* GUI design */
+
+.Titlelogo {
+	position: absolute;
+	left: 50%;
+	top: 10%;
+	width: 512px;
+	height: 256px;
+	margin-left: -11%;
+
+	background: url( '../media/gui/logo.png' ) no-repeat;
+}
+
+.menu {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+
+	transform: translate(-50%, -50%);
+	align-content: center;
+	text-align: center;
+}
+
+.menu .Button {
+	display: block;
+	margin: 30px auto;
+	
+}
+
+.Button { /*here goes the button style*/
+	background: url('../media/gui/button.png') no-repeat;display: flex; 
+	width: 200%;
+	height: 100%;
+	cursor: default;
+	align-items: center;
+	font-family: minecraftia;
+	font-size: 16px;
+	color: white;
+	border: none;
+	outline: none;
+	filter: none;
+	padding-left: auto;
+	padding-right: auto;
+}
+.Button:hover {
+	background: url('../media/gui/button_hover.png') no-repeat;
+	cursor: default;
+	filter: none;
+	padding-left: 20%;
+	padding-right: 20%;
+}
+.Button:disabled {
+	background: url('../media/gui/button_disabled.png') no-repeat;
+	cursor: default;
+	filter: none;
+	padding-left: 20%;
+	padding-right: 20%;
+}
+.cursorPointer {
+	background: url(/media/gui/cursor.png);
+}
+.versionString {
+	position: absolute;
+	bottom: 5px;
+	left: 10px;
+	
+	color: #fff;
+	font-size: 12px;
+	
+	text-shadow: #3f3f3f 1px 1px 0px;
+}
+.Copyrightstring {
+	position: absolute;
+	bottom: 5px;
+	right: 10px;
+	
+	color: #fff;
+	font-size: 12px;
+	
+	text-shadow: #3f3f3f 1px 1px 0px;
+}
+.separator {
+	width: 100%;
+	height: 4px;
+	margin: 10px 0;
+	background-size: contain;
+}
+
+.separator1 {
+	width: 100%;
+	height: 2px;
+	margin: 10px 0;
+}
+
+.gui {
+	position: absolute;
+	left: 0;
+	top: 0;
+	
+	width: 100%;
+	height: 100%;
+	
+	pointer-events: none;
 }
