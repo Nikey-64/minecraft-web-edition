@@ -330,6 +330,20 @@ Player.prototype.update = function()
 
 		// Resolve collision
 		this.pos = this.resolveCollision( pos, bPos, velocity.mul( delta ) );
+		
+		// Clamp player position to world bounds to prevent falling through
+		// Keep player slightly inside bounds (0.1 margin) to avoid edge cases
+		var margin = 0.1;
+		if ( this.pos.x < margin ) this.pos.x = margin;
+		if ( this.pos.y < margin ) this.pos.y = margin;
+		if ( this.pos.z < margin ) this.pos.z = margin;
+		if ( this.pos.x > world.sx - 1 - margin ) this.pos.x = world.sx - 1 - margin;
+		if ( this.pos.y > world.sy - 1 - margin ) this.pos.y = world.sy - 1 - margin;
+		if ( this.pos.z > world.sz - 1.7 - margin ) {
+			this.pos.z = world.sz - 1.7 - margin;
+			this.velocity.z = 0;
+			this.falling = false;
+		}
 	}
 
 	this.lastUpdate = new Date().getTime();
