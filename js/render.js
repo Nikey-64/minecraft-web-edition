@@ -43,7 +43,13 @@ function Renderer( id )
 	canvas.renderer = this;
 	canvas.width = canvas.clientWidth;
 	canvas.height = canvas.clientHeight;
-	
+
+	this.renderDistance = parseInt(localStorage.getItem('renderDistance')) || 8; // chunks default radius
+	this.chunkSize = 16; // Default chunk size (16x16x16 preferred for optimal performance)
+	this.camPos = [0, 0, 0]; // Initialize camera position
+	this.camAng = [0, 0, 0]; // Initialize camera angles
+	this.renderBehind = false; // Option to not render chunks behind the player (disabled by default)
+
 	// Initialise WebGL
 	var gl;
 	try
@@ -130,26 +136,29 @@ function Renderer( id )
 Renderer.prototype.draw = function()
 {
 	var gl = this.gl;
-	
+
 	// Initialise view
 	this.updateViewport();
 	gl.viewport( 0, 0, gl.viewportWidth, gl.viewportHeight );
 	gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
-	
+
+	// Update chunks based on player position
+	this.updateChunks();
+
 	// Draw level chunks
 	var chunks = this.chunks;
-	
+
 	gl.bindTexture( gl.TEXTURE_2D, this.texTerrain );
-	
+
 	if ( chunks != null )
 	{
 		for ( var i = 0; i < chunks.length; i++ )
 		{
-			if ( chunks[i].buffer != null ) 
+			if ( chunks[i].loaded && chunks[i].buffer != null )
 				this.drawBuffer( chunks[i].buffer );
 		}
 	}
-	
+
 	// Draw players
 	var players = this.world.players;
 	
@@ -299,7 +308,7 @@ Renderer.prototype.buildPlayerName = function( nickname )
 // can be retrieved by simply reading the pixel the mouse is over.
 //
 // WARNING: This implies that the level can never be larger than
-// 254x254x254 blocks! (Value 255 is used for sky.)
+// 254x254x254 blocks! (Value 255 is used for sky.) ((sky should use 2048 to allow bigger worlds in future))
 
 Renderer.prototype.pickAt = function( min, max, mx, my )
 {
@@ -466,14 +475,14 @@ Renderer.prototype.loadShaders = function()
 // Makes the renderer start tracking a new world and set up the chunk structure.
 //
 // world - The world object to operate on.
-// chunkSize - X, Y and Z dimensions of each chunk, doesn't have to fit exactly inside the world.
+// chunkSize - X, Y and Z dimensions of each chunk, doesn't have to fit exactly inside the world. 16x16x16 is prefered for optimal peformance.
 
 Renderer.prototype.setWorld = function( world, chunkSize )
 {
 	this.world = world;
 	world.renderer = this;
 	this.chunkSize = chunkSize;
-	
+
 	// Create chunk list
 	var chunks = this.chunks = [];
 	for ( var x = 0; x < world.sx; x += chunkSize ) {
@@ -482,12 +491,117 @@ Renderer.prototype.setWorld = function( world, chunkSize )
 				chunks.push( {
 					start: [ x, y, z ],
 					end: [ Math.min( world.sx, x + chunkSize ), Math.min( world.sy, y + chunkSize ), Math.min( world.sz, z + chunkSize ) ],
-					dirty: true
+					dirty: true,
+					loaded: false
 				} );
 			}
 		}
 	}
+
+	// Initialize spawn chunks with loaded: true
+	var spawnX = Math.floor(world.spawn[0] / chunkSize) * chunkSize;
+	var spawnY = Math.floor(world.spawn[1] / chunkSize) * chunkSize;
+	var spawnZ = Math.floor(world.spawn[2] / chunkSize) * chunkSize;
+
+	for ( var i = 0; i < chunks.length; i++ ) {
+		var chunk = chunks[i];
+		if ( chunk.start[0] >= spawnX - chunkSize * this.renderDistance &&
+			 chunk.start[0] <= spawnX + chunkSize * this.renderDistance &&
+			 chunk.start[1] >= spawnY - chunkSize * this.renderDistance &&
+			 chunk.start[1] <= spawnY + chunkSize * this.renderDistance &&
+			 chunk.start[2] >= spawnZ - chunkSize * this.renderDistance &&
+			 chunk.start[2] <= spawnZ + chunkSize * this.renderDistance ) {
+			chunk.loaded = true;
+		}
+	}
 }
+
+// isChunkInRange( chunkX, chunkY, chunkZ, playerX, playerY, playerZ )
+//
+// Returns true if the chunk at (chunkX, chunkY, chunkZ) is within render distance of the player at (playerX, playerY, playerZ).
+// Render distance for Z is asymmetric: full above, half below.
+Renderer.prototype.isChunkInRange = function( chunkX, chunkY, chunkZ, playerX, playerY, playerZ )
+{
+	var playerChunkX = Math.floor(playerX / this.chunkSize);
+	var playerChunkY = Math.floor(playerY / this.chunkSize);
+	var playerChunkZ = Math.floor(playerZ / this.chunkSize);
+
+	var distX = Math.abs(chunkX - playerChunkX);
+	var distY = Math.abs(chunkY - playerChunkY);
+	var distZ = chunkZ > playerChunkZ ? chunkZ - playerChunkZ : (playerChunkZ - chunkZ) * 2;
+
+	return distX <= this.renderDistance && distY <= this.renderDistance && distZ <= this.renderDistance;
+};
+
+// unloadChunk( chunkIndex )
+//
+// Unloads the chunk at the specified index by setting loaded to false and deleting the buffer.
+
+Renderer.prototype.unloadChunk = function( chunkIndex )
+{
+	var chunk = this.chunks[chunkIndex];
+	chunk.loaded = false;
+	if ( chunk.buffer != null )
+	{
+		this.gl.deleteBuffer( chunk.buffer );
+		chunk.buffer = null;
+	}
+};
+
+// setRenderDistance( distance )
+//
+// Updates the render distance and triggers chunk updates.
+
+Renderer.prototype.setRenderDistance = function( distance )
+{
+	this.renderDistance = distance;
+	// Trigger immediate chunk update
+	this.updateChunks();
+};
+
+// loadChunk( chunkIndex )
+//
+// Loads the chunk at the specified index by setting loaded to true and marking it as dirty.
+
+Renderer.prototype.loadChunk = function( chunkIndex )
+{
+	var chunk = this.chunks[chunkIndex];
+	chunk.loaded = true;
+	chunk.dirty = true;
+};
+
+// updateChunks()
+//
+// Updates the loaded state of chunks based on the player's current position.
+// Loads chunks that are in range and unloads those that are not.
+
+Renderer.prototype.updateChunks = function()
+{
+	var playerX = this.camPos[0];
+	var playerY = this.camPos[1];
+	var playerZ = this.camPos[2];
+	var chunks = this.chunks;
+
+	for ( var i = 0; i < chunks.length; i++ )
+	{
+		var chunk = chunks[i];
+		var chunkX = chunk.start[0] / this.chunkSize;
+		var chunkY = chunk.start[1] / this.chunkSize;
+		var chunkZ = chunk.start[2] / this.chunkSize;
+
+		var inRange = this.isChunkInRange( chunkX, chunkY, chunkZ, playerX, playerY, playerZ );
+
+		if ( inRange && !chunk.loaded )
+		{
+			this.loadChunk( i );
+		}
+		else if ( !inRange && chunk.loaded )
+		{
+			this.unloadChunk( i );
+		}
+	}
+};
+
 
 // onBlockChanged( x, y, z )
 //

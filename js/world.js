@@ -41,7 +41,7 @@ function World( sx, sy, sz )
 
 World.prototype.createFlatWorld = function( height )
 {
-	this.spawnPoint = new Vector( this.sx / 2 + 0.5, this.sy / 2 + 0.5, height );
+	this.spawn = new Vector( this.sx / 2 + 0.5, this.sy / 2 + 0.5, height );
 	
 	for ( var x = 0; x < this.sx; x++ )
 		for ( var y = 0; y < this.sy; y++ )
@@ -60,7 +60,7 @@ World.prototype.createFlatWorld = function( height )
 World.prototype.createFromString = function( str )
 {
 	var i = 0;
-	
+
 	for ( var x = 0; x < this.sx; x++ ) {
 		for ( var y = 0; y < this.sy; y++ ) {
 			for ( var z = 0; z < this.sz; z++ ) {
@@ -69,6 +69,44 @@ World.prototype.createFromString = function( str )
 			}
 		}
 	}
+}
+
+// createChunkFromString( cx, cy, cz, str )
+//
+// Creates a chunk from a string representation.
+// Assumes chunk size is 16x16x16 and world size is multiple of 16.
+//
+// cx, cy, cz - Chunk coordinates.
+// str - String representation of the chunk.
+
+World.prototype.createChunkFromString = function( cx, cy, cz, str )
+{
+	var i = 0;
+	var chunkSize = 16;
+
+	for ( var x = cx * chunkSize; x < (cx + 1) * chunkSize; x++ ) {
+		for ( var y = cy * chunkSize; y < (cy + 1) * chunkSize; y++ ) {
+			for ( var z = cz * chunkSize; z < (cz + 1) * chunkSize; z++ ) {
+				this.blocks[x][y][z] = BLOCK.fromId( str.charCodeAt( i ) - 97 );
+				i = i + 1;
+			}
+		}
+	}
+}
+
+// toChunkString( cx, cy, cz, chunkSize )
+//
+// Returns a string representation of the chunk at (cx, cy, cz).
+
+World.prototype.toChunkString = function( cx, cy, cz, chunkSize )
+{
+	var blockArray = [];
+	for ( var x = cx; x < cx + chunkSize; x++ )
+		for ( var y = cy; y < cy + chunkSize; y++ )
+			for ( var z = cz; z < cz + chunkSize; z++ )
+				blockArray.push( String.fromCharCode( 97 + this.blocks[x][y][z].id ) );
+	
+	return blockArray.join( "" );
 }
 
 // getBlock( x, y, z )
@@ -123,7 +161,7 @@ if ( typeof( exports ) != "undefined" )
 			fs.lstatSync( filename );
 			var data = fs.readFileSync( filename, "utf8" ).split( "," );
 			this.createFromString( data[3] );
-			this.spawnPoint = new Vector( parseInt( data[0] ), parseInt( data[1] ), parseInt( data[2] ) );
+			this.spawn = new Vector( parseInt( data[0] ), parseInt( data[1] ), parseInt( data[2] ) );
 			return true;
 		} catch ( e ) {
 			return false;
@@ -137,7 +175,7 @@ if ( typeof( exports ) != "undefined" )
 	
 	World.prototype.saveToFile = function( filename )
 	{
-		var data = this.spawnPoint.x + "," + this.spawnPoint.y + "," + this.spawnPoint.z + "," + this.toNetworkString();
+		var data = this.spawn.x + "," + this.spawn.y + "," + this.spawn.z + "," + this.toNetworkString();
 		require( "fs" ).writeFileSync( filename, data );	
 	}
 	

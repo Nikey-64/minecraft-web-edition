@@ -26,7 +26,7 @@ Player.prototype.setWorld = function( world )
 {
 	this.world = world;
 	this.world.localPlayer = this;
-	this.pos = world.spawnPoint;
+	this.pos = world.spawn;
 	this.velocity = new Vector( 0, 0, 0 );
 	this.angles = [ 0, Math.PI, 0 ];
 	this.falling = false;

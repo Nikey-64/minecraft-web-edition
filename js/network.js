@@ -135,7 +135,7 @@ Client.prototype.onWorld = function( data )
 Client.prototype.onSpawn = function( data )
 {
 	// Set spawn point
-	this.world.spawnPoint = new Vector( data.x, data.y, data.z );
+	this.world.spawn = new Vector( data.x, data.y, data.z );
 
 	if ( this.eventHandlers["spawn"] ) this.eventHandlers.spawn();
 }
@@ -441,11 +441,11 @@ Server.prototype.onNickname = function( socket, data )
         } );
 
         // Spawn client
-        socket.emit( "spawn", {
-            x: world.spawnPoint.x,
-            y: world.spawnPoint.y,
-            z: world.spawnPoint.z,
-        } );
+		socket.emit( "spawn", {
+			x: world.spawn.x,
+			y: world.spawn.y,
+			z: world.spawn.z,
+		} );
 
         // Tell client about other players
         for ( var p in this.world.players )
@@ -465,9 +465,9 @@ Server.prototype.onNickname = function( socket, data )
         // Inform other players
         socket.broadcast.emit( "join", {
             nick: nickname,
-            x: world.spawnPoint.x,
-            y: world.spawnPoint.y,
-            z: world.spawnPoint.z,
+            x: world.spawn.x,
+            y: world.spawn.y,
+            z: world.spawn.z,
             pitch: 0,
             yaw: 0
         } );
@@ -478,9 +478,9 @@ Server.prototype.onNickname = function( socket, data )
             nick: nickname,
             lastBlockCheck: +new Date(),
             blocks: 0,
-            x: world.spawnPoint.x,
-            y: world.spawnPoint.y,
-            z: world.spawnPoint.z,
+            x: world.spawn.x,
+            y: world.spawn.y,
+            z: world.spawn.z,
             pitch: 0,
             yaw: 0
         };
@@ -497,7 +497,7 @@ Server.prototype.onBlockUpdate = function( socket, data )
 
 	if ( typeof( data.x ) != "number" || typeof( data.y ) != "number" || typeof( data.z ) != "number" || typeof( data.mat ) != "number" ) return false;
 	if ( data.x < 0 || data.y < 0 || data.z < 0 || data.x >= world.sx || data.y >= world.sy || data.z >= world.sz ) return false;
-	if ( Math.sqrt( (data.x-world.spawnPoint.x)*(data.x-world.spawnPoint.x) + (data.y-world.spawnPoint.y)*(data.y-world.spawnPoint.y) + (data.z-world.spawnPoint.z)*(data.z-world.spawnPoint.z)  ) < 10 ) return false;
+	if ( Math.sqrt( (data.x-world.spawn.x)*(data.x-world.spawn.x) + (data.y-world.spawn.y)*(data.y-world.spawn.y) + (data.z-world.spawn.z)*(data.z-world.spawn.z)  ) < 10 ) return false;
 
 	var material = BLOCK.fromId( data.mat );
 	if ( material == null || ( !material.spawnable && data.mat != 0 ) ) return false;
