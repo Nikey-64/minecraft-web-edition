@@ -58,6 +58,58 @@ Player.prototype.setInputCanvas = function( id )
 	canvas.onmousedown = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.DOWN, e.which == 3 ); return false; }
 	canvas.onmouseup = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.UP, e.which == 3 ); return false; }
 	canvas.onmousemove = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.MOVE, e.which == 3 ); return false; }
+
+	// Pointer lock for mouse capture
+	canvas.onclick = function() {
+		canvas.requestPointerLock();
+	}
+
+	document.addEventListener('pointerlockchange', function() {
+		if (document.pointerLockElement === canvas) {
+			document.getElementById('crosshair').style.display = 'block';
+			document.getElementById('cursor').style.display = 'none';
+			t.pointerLocked = true;
+			t.dragging = true;
+			t.targetPitch = t.angles[0];
+			t.targetYaw = t.angles[1];
+			// Disable old mouse events
+			canvas.onmousedown = null;
+			canvas.onmouseup = null;
+			canvas.onmousemove = null;
+		} else {
+			document.getElementById('crosshair').style.display = 'none';
+			document.getElementById('cursor').style.display = 'block';
+			t.pointerLocked = false;
+			t.dragging = false;
+			t.angles[0] = t.targetPitch;
+			t.angles[1] = t.targetYaw;
+			// Re-enable old mouse events
+			canvas.onmousedown = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.DOWN, e.which == 3 ); return false; }
+			canvas.onmouseup = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.UP, e.which == 3 ); return false; }
+			canvas.onmousemove = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.MOVE, e.which == 3 ); return false; }
+			// Pause the game when mouse is uncaptured
+			if (typeof pauseGame === 'function') {
+				pauseGame();
+			}
+		}
+	});
+
+	document.addEventListener('mousemove', function(e) {
+		if (t.pointerLocked) {
+			t.onMouseMove(e.movementX, e.movementY);
+		}
+	});
+
+	document.addEventListener('mousedown', function(e) {
+		if (t.pointerLocked) {
+			if (e.button === 0) { // Left click
+				t.doBlockActionAtCenter(true); // Destroy
+			} else if (e.button === 2) { // Right click
+				t.doBlockActionAtCenter(false); // Place
+			}
+			e.preventDefault();
+		}
+	});
 }
 
 // setMaterialSelector( id )
@@ -117,8 +169,15 @@ Player.prototype.onKeyEvent = function( keyCode, down )
 	var key = String.fromCharCode( keyCode ).toLowerCase();
 	this.keys[key] = down;
 	this.keys[keyCode] = down;
-	
+
 	if ( !down && key == "t" && this.eventHandlers["openChat"] ) this.eventHandlers.openChat();
+	if ( !down && keyCode == 27 ) { // ESC key
+		if (this.pointerLocked) {
+			document.exitPointerLock();
+		} else if (typeof pauseGame === 'function') {
+			pauseGame();
+		}
+	}
 }
 
 // onMouseEvent( x, y, type, rmb )
@@ -133,7 +192,7 @@ Player.prototype.onMouseEvent = function( x, y, type, rmb )
 		this.yawStart = this.targetYaw = this.angles[1];
 		this.pitchStart = this.targetPitch = this.angles[0];
 	} else if ( type == MOUSE.UP ) {
-		if ( Math.abs( this.dragStart.x - x ) + Math.abs( this.dragStart.y - y ) < 4 )	
+		if ( Math.abs( this.dragStart.x - x ) + Math.abs( this.dragStart.y - y ) < 4 )
 			this.doBlockAction( x, y, !rmb );
 
 		this.dragging = false;
@@ -148,6 +207,17 @@ Player.prototype.onMouseEvent = function( x, y, type, rmb )
 	}
 }
 
+// onMouseMove( deltaX, deltaY )
+//
+// Hook for mouse movement in pointer lock mode.
+
+Player.prototype.onMouseMove = function( deltaX, deltaY )
+{
+	this.targetPitch = this.angles[0] - deltaY / 200;
+	this.targetYaw = this.angles[1] + deltaX / 200;
+	this.dragging = true;
+}
+
 // doBlockAction( x, y )
 //
 // Called to perform an action based on the player's block selection and input.
@@ -156,16 +226,28 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 {
 	var bPos = new Vector( Math.floor( this.pos.x ), Math.floor( this.pos.y ), Math.floor( this.pos.z ) );
 	var block = this.canvas.renderer.pickAt( new Vector( bPos.x - 4, bPos.y - 4, bPos.z - 4 ), new Vector( bPos.x + 4, bPos.y + 4, bPos.z + 4 ), x, y );
-	
+
 	if ( block != false )
 	{
 		var obj = this.client ? this.client : this.world;
-		
+
 		if ( destroy )
 			obj.setBlock( block.x, block.y, block.z, BLOCK.AIR );
 		else
 			obj.setBlock( block.x + block.n.x, block.y + block.n.y, block.z + block.n.z, this.buildMaterial );
 	}
+}
+
+// doBlockActionAtCenter()
+//
+// Called to perform an action at the center of the screen (crosshair position).
+
+Player.prototype.doBlockActionAtCenter = function( destroy )
+{
+	var canvas = this.canvas;
+	var centerX = canvas.width / 2;
+	var centerY = canvas.height / 2;
+	this.doBlockAction( centerX, centerY, destroy );
 }
 
 // getEyePos()

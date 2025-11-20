@@ -1,10 +1,10 @@
 <!DOCTYPE HTML>
-<html>
+<html lang="es">
 	<head>
-		<title>WebCraft</title>
+		<title>minecraft web edition 0.0.0</title>
 		
 		<!-- Character encoding -->
-		<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+		<meta http-equiv="content-type" content="text/html" charset="UTF-8">
 		
 		<!-- Stylesheet -->
 		<link href="style/main.css" rel="stylesheet" type="text/css">
@@ -22,53 +22,159 @@
 	<body oncontextmenu="return false">
 		<!-- Render surface -->
 		<canvas id="renderSurface"></canvas>
-		
+
+		<img id="cursor" class="cursor" src="media/gui/cursor.png" />
+		<img id="crosshair" class="crosshair" src="media/gui/cursor.png" />
+
 		<!-- Material selection -->
 		<table id="materialSelector">
 			<tr></tr>
 		</table>
+
+		<!-- Pause overlay -->
+		<div id="pauseOverlay" class="gui-overlay" style="display: none;"></div>
+
+		<!-- Pause menu -->
+		<div id="pauseMenu" class="gui" style="display: none;">
+			<div class="mainmenu">
+				<button id="resumeButton" class="button">Volver al juego</button>
+				<button id="pauseSettingsButton" class="button">Ajustes</button>
+				<button id="exitButton" class="button">Salir al menu principal</button>
+			</div>
+		</div>
+
+		<!-- Pause settings menu -->
+		<div id="pauseSettingsMenu" class="gui" style="display: none;">
+			<div class="mainmenu">
+				<button class="button" id="pauseSettingsBackButton">Volver</button>
+				<div style="margin: 20px 0;">
+					<label for="pauseRenderDistanceSlider" style="color: white; font-family: Minecraftia;">Render Distance: <span id="pauseRenderDistanceValue">8</span> chunks</label><br>
+					<input type="range" id="pauseRenderDistanceSlider" min="5" max="16" value="8" step="1" style="width: 200px; margin-top: 10px;">
+				</div>
+				<div style="margin: 20px 0;">
+					<label style="color: white; font-family: Minecraftia;">
+						<input type="checkbox" id="pauseFpsToggle" style="margin-right: 10px;">Mostrar FPS
+					</label>
+				</div>
+			</div>
+		</div>
 		
 		<!-- Initialisation code -->
-		<script type="text/javascript">			
+		<script type="text/javascript">
 			// Create a new flat world
-			var world = new World( 16, 16, 16 );
-			world.createFlatWorld( 6 );
-			
+			var world = new World( 64, 64, 255 );
+			world.createFlatWorld( 64 );
+
 			// Set up renderer
 			var render = new Renderer( "renderSurface" );
 			render.setWorld( world, 8 );
 			render.setPerspective( 60, 0.01, 200 );
-			
+
 			// Create physics simulator
 			var physics = new Physics();
 			physics.setWorld( world );
-			
+
 			// Create new local player
 			var player = new Player();
 			player.setWorld( world );
 			player.setInputCanvas( "renderSurface" );
 			player.setMaterialSelector( "materialSelector" );
-			
-			// Render loop			
-			setInterval( function()
-			{
-				var time = new Date().getTime() / 1000.0;
-				
-				// Simulate physics
-				physics.simulate();
-				
-				// Update local player
-				player.update();
-				
-				// Build a chunk
-				render.buildChunks( 1 );
-				
-				// Draw world
-				render.setCamera( player.getEyePos().toArray(), player.angles );
-				render.draw();
-				
-				while ( new Date().getTime() / 1000 - time < 0.016 );
-			}, 1 );
+
+			// Game state
+			var paused = false;
+			var gameLoopInterval;
+
+			// Function to start the render loop
+			function startGameLoop() {
+				gameLoopInterval = setInterval( function()
+				{
+					if (!paused) {
+						var time = new Date().getTime() / 1000.0;
+
+						// Simulate physics
+						physics.simulate();
+
+						// Update local player
+						player.update();
+
+						// Build a chunk
+						render.buildChunks( 32 );
+
+						// Draw world
+						render.setCamera( player.getEyePos().toArray(), player.angles );
+						render.draw();
+
+						while ( new Date().getTime() / 1000 - time < 0.016 );
+					}
+				}, 1 );
+			}
+
+			// Function to pause the game
+			function pauseGame() {
+				paused = true;
+				document.getElementById('pauseOverlay').style.display = 'block';
+				document.getElementById('pauseMenu').style.display = 'flex';
+				document.getElementById('crosshair').style.display = 'none';
+				document.getElementById('cursor').style.display = 'block';
+				player.pointerLocked = false;
+				player.dragging = false;
+			}
+
+			// Function to resume the game
+			function resumeGame() {
+				paused = false;
+				document.getElementById('pauseOverlay').style.display = 'none';
+				document.getElementById('pauseMenu').style.display = 'none';
+				document.getElementById('pauseSettingsMenu').style.display = 'none';
+				player.canvas.requestPointerLock();
+			}
+
+			// Start the game loop initially
+			startGameLoop();
+
+			// Pause menu event handlers
+			document.getElementById('resumeButton').onclick = function() {
+				resumeGame();
+			};
+
+			document.getElementById('pauseSettingsButton').onclick = function() {
+				document.getElementById('pauseMenu').style.display = 'none';
+				document.getElementById('pauseSettingsMenu').style.display = 'flex';
+			};
+
+			document.getElementById('exitButton').onclick = function() {
+				window.location.href = 'index.html';
+			};
+
+			// Pause settings menu event handlers
+			document.getElementById('pauseSettingsBackButton').onclick = function() {
+				document.getElementById('pauseSettingsMenu').style.display = 'none';
+				document.getElementById('pauseMenu').style.display = 'flex';
+			};
+
+			// Load settings for pause menu
+			var pauseRenderDistanceSlider = document.getElementById('pauseRenderDistanceSlider');
+			var pauseRenderDistanceValue = document.getElementById('pauseRenderDistanceValue');
+			var pauseFpsToggle = document.getElementById('pauseFpsToggle');
+
+			var savedRenderDistance = localStorage.getItem('renderDistance') || '8';
+			pauseRenderDistanceSlider.value = savedRenderDistance;
+			pauseRenderDistanceValue.textContent = savedRenderDistance;
+
+			var savedShowFPS = localStorage.getItem('showFPS') || 'false';
+			pauseFpsToggle.checked = savedShowFPS === 'true';
+
+			pauseRenderDistanceSlider.oninput = function() {
+				var value = parseInt(this.value);
+				pauseRenderDistanceValue.textContent = value;
+				localStorage.setItem('renderDistance', value);
+				// Note: In a full implementation, this would update the renderer's render distance
+			};
+
+			pauseFpsToggle.onchange = function() {
+				localStorage.setItem('showFPS', pauseFpsToggle.checked);
+				// Note: In a full implementation, this would toggle FPS display
+			};
 		</script>
 	</body>
-</html>
+</html lang="es">

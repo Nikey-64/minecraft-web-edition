@@ -1,34 +1,105 @@
 /* Minecraft font */
 @font-face {
 	font-family: minecraftia;
-	src: url( 'minecraftia.ttf' );
+	src: url('./minecraftia.ttf') format('truetype');
 }
 
 /* General page style */
 
 body {
-	height: 100%;
+	height: 100vh;
+	margin: 0;
+	padding: 0;
+	filter: none;
+	image-rendering: pixelated;
 	font-family: minecraftia;
 	font-size: 16px;
-
-	background: url( '../media/gui/background.png' ) repeat;
+	
+	text-shadow: #3f3f3f 2px 2px 0px;
+	background-attachment: scroll;
+            background-repeat: repeat;
+	background: url( '../media/gui/background.png' );
+            background-size: 5%;
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	align-items: center;
 }
 
 /* Render surface */
+
 #renderSurface {
+
 	position: absolute;
 	left: 0;
 	top: 0;
-	
+
 	width: 100%;
 	height: 100%;
+}
+
+/* Cursor icon */
+
+#cursorIcon {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	pointer-events: none;
+	z-index: 5;
+	width: 32px;
+	height: 32px;
+	image-rendering: pixelated; /* Prevents blurriness for pixel art */
+	filter: none;
+}
+
+/* Crosshair */
+
+.crosshair {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	width: 20px;
+	height: 20px;
+	z-index: 1001;
+	pointer-events: none;
+	display: none;
+	image-rendering: pixelated;
+	filter: none;
+}
+
+.crosshair::before {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: 0;
+	width: 100%;
+	height: 1px;
+	background: white;
+	transform: translateY(-50%);
+}
+
+.crosshair::after {
+	content: '';
+	position: absolute;
+	left: 50%;
+	top: 0;
+	width: 1px;
+	height: 100%;
+	background: white;
+	transform: translateX(-50%);
 }
 
 /* Material selector */
 
 #materialSelector {
-	position: relative;
-	margin: auto;
+	position: fixed;
+	bottom: 0;
+	left: 50%;
+	transform: translateX(-50%);
+	margin: 0;
+	z-index: 10;
 	
 	background: rgba( 0, 0, 0, 0.6 );
 }
@@ -41,11 +112,7 @@ body {
 	width: 70px;
 	margin: 0;
 	padding: 0;
-	
-	cursor: pointer;
-	
 	opacity: 0.3;
-	
 	background: url( '../media/blockthumbs.png' );
 	background-position: 0px 0px;
 }
@@ -70,12 +137,12 @@ body {
 
 #nickname input {
 	width: 100%;
-	
+	align-items: center;
 	background: none;
 	border: none;
 	border-bottom: 1px solid #888;
 	outline: none;
-	
+	align-content: center;
 	color: white;
 	
 	font-family: minecraftia;
@@ -143,108 +210,178 @@ body {
 	font-family: minecraftia;
 	font-size: 16px;
 }
-
-/* GUI design */
-
-.Titlelogo {
-	position: absolute;
-	left: 50%;
-	top: 10%;
-	width: 512px;
-	height: 256px;
-	margin-left: -11%;
-
-	background: url( '../media/gui/logo.png' ) no-repeat;
+.gui{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: minecraftia;
+    font-size: 16px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 20;
 }
 
-.menu {
-	position: absolute;
-	left: 50%;
-	top: 50%;
+.gui-overlay{
+    background: rgba(0, 0, 0, 0.5);
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 19;
+}
+.mainmenu{
+    display: flex;
+    flex-direction: column;
 
-	transform: translate(-50%, -50%);
-	align-content: center;
-	text-align: center;
+    gap: 5px;
+}
+.button{
+    color: #cccccc;
+    margin: 5px;
+    padding-bottom: 5px;
+    padding-top: 5px;
+    padding-left: 20%;
+    padding-right: 20%;
+    background-size: 20px 200px;
+    border: none;
+    border-radius: 0px;
+    background: url( '../media/gui/button.png' );
+    background-repeat: no-repeat;
+    background-size: cover;
+    border-radius: 0px;
+    cursor: pointer;
+    font-family: minecraftia;
+    font-size: 15px;
+    min-width: 400px;
+    max-width: 400px;
+    min-height: 40px;
+    max-height: 40px;
+}
+.button:hover {
+      background: url( '../media/gui/button_hover.png' );
+      background-repeat: no-repeat;
+      background-size: cover;
+      
+}
+.button:disabled {
+      background: url( '../media/gui/button_disabled.png' );
+      background-repeat: no-repeat;
+      background-size: cover;
 }
 
-.menu .Button {
-	display: block;
-	margin: 30px auto;
+/* World manager styles */
+
+.worlds-menu .mainmenu {
+    align-items: stretch;
+}
+
+#worldListContainer {
+    margin-top: 20px;
+    max-height: 260px;
+    overflow-y: auto;
+    width: 420px; /* roughly matches main button width */
+}
+
+.world-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 6px 8px;
+    background: rgba(0, 0, 0, 0.6);
+    box-sizing: border-box;
+}
+
+.world-row + .world-row {
+    margin-top: 4px;
+}
+
+.world-info {
+    flex: 1;
+    color: #ffffff;
+    font-family: minecraftia;
+    font-size: 12px;
+}
+
+.world-info-name {
+    font-size: 14px;
+}
+
+.world-info-meta {
+    font-size: 10px;
+    opacity: 0.8;
+}
+
+.world-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 4px;
+}
+
+.world-empty {
+    color: #ffffff;
+    font-family: minecraftia;
+    font-size: 12px;
+    text-align: center;
+    padding: 8px 0;
+}
+
+.button-small {
+    color: #cccccc;
+    padding: 3px 8px;
+    background: url( '../media/gui/button.png' );
+    background-repeat: no-repeat;
+    background-size: cover;
+    border: none;
+    border-radius: 0;
+    cursor: pointer;
+    font-family: minecraftia;
+    font-size: 10px;
+    min-width: 60px;
+    min-height: 24px;
+}
+
+.button-small:hover {
+    background: url( '../media/gui/button_hover.png' );
+    background-repeat: no-repeat;
+    background-size: cover;
+}
+
+.button-small:disabled {
+    background: url( '../media/gui/button_disabled.png' );
+    background-repeat: no-repeat;
+    background-size: cover;
+}
+
+.logo{
+    background: url( '../media/gui/logo.png' );
+    background-repeat: no-repeat;
+    background-size: cover;
+    border: none;
+    position: relative;
+    margin: auto;
+    margin-top: 30px;
+    border-radius: 0px;
+    width: 256px;
+    height: 128px;
+}
+.separar{padding-bottom: 5%;}
+.separar1{padding-bottom: 22%;}
+.separar2{padding-bottom: 40%;}
+.version{
+    font-family: minecraftia;
+    font-size: 12px;
+    color: #ffffff;
+    position: fixed;
+    bottom: 10px;
+    left: 10px;
+    margin: 0;
+    padding: 5px;
+    text-shadow: #3f3f3f 2px 2px 0px;
 	
-}
-
-.Button { /*here goes the button style*/
-	background: url('../media/gui/button.png') no-repeat;display: flex; 
-	width: 200%;
-	height: 100%;
-	cursor: default;
-	align-items: center;
-	font-family: minecraftia;
-	font-size: 16px;
-	color: white;
-	border: none;
-	outline: none;
-	filter: none;
-	padding-left: auto;
-	padding-right: auto;
-}
-.Button:hover {
-	background: url('../media/gui/button_hover.png') no-repeat;
-	cursor: default;
-	filter: none;
-	padding-left: 20%;
-	padding-right: 20%;
-}
-.Button:disabled {
-	background: url('../media/gui/button_disabled.png') no-repeat;
-	cursor: default;
-	filter: none;
-	padding-left: 20%;
-	padding-right: 20%;
-}
-.cursorPointer {
-	background: url(/media/gui/cursor.png);
-}
-.versionString {
-	position: absolute;
-	bottom: 5px;
-	left: 10px;
-	
-	color: #fff;
-	font-size: 12px;
-	
-	text-shadow: #3f3f3f 1px 1px 0px;
-}
-.Copyrightstring {
-	position: absolute;
-	bottom: 5px;
-	right: 10px;
-	
-	color: #fff;
-	font-size: 12px;
-	
-	text-shadow: #3f3f3f 1px 1px 0px;
-}
-.separator {
-	width: 100%;
-	height: 4px;
-	margin: 10px 0;
-	background-size: contain;
-}
-
-.separator1 {
-	width: 100%;
-	height: 2px;
-	margin: 10px 0;
-}
-
-.gui {
-	position: absolute;
-	left: 0;
-	top: 0;
-	
-	width: 100%;
-	height: 100%;
-	
-	pointer-events: none;
 }
