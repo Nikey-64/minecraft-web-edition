@@ -13,15 +13,31 @@ DIRECTION.RIGHT = 4;
 DIRECTION.FORWARD = 5;
 DIRECTION.BACK = 6;
 
-BLOCK = {};
+// Ensure BLOCK is global
+if ( typeof BLOCK === 'undefined' ) {
+	BLOCK = {};
+}
 
 BLOCK.PICK_PASS_POSITION = 0;
 BLOCK.PICK_PASS_DEPTH = 1;
 BLOCK.pickingPass = BLOCK.PICK_PASS_POSITION;
 
+// Define setPickingPass function explicitly - use BLOCK directly instead of this
 BLOCK.setPickingPass = function( pass )
 {
+	if ( !BLOCK.pickingPass ) {
+		BLOCK.pickingPass = BLOCK.PICK_PASS_POSITION;
+	}
 	BLOCK.pickingPass = ( pass === BLOCK.PICK_PASS_DEPTH ) ? BLOCK.PICK_PASS_DEPTH : BLOCK.PICK_PASS_POSITION;
+}
+
+// Ensure it's available on window object for browser context
+if ( typeof window !== 'undefined' ) {
+	window.BLOCK = BLOCK;
+	// Also ensure the function is directly accessible
+	if ( !window.BLOCK.setPickingPass ) {
+		window.BLOCK.setPickingPass = BLOCK.setPickingPass;
+	}
 }
 
 BLOCK.getPickingColor = function( x, y, z, faceId )
@@ -76,13 +92,17 @@ BLOCK.DIRT = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	useGrassColor: true, // Flag to indicate this block uses grass color filtering
 	texture: function( world, lightmap, lit, x, y, z, dir )
 	{
 		if ( dir == DIRECTION.UP && lit )
-			return [ 14/16, 0/16, 15/16, 1/16 ];
+			// Grass top texture - posición (0, 0) en el atlas de texturas
+			return [ 0/16, 0/16, 1/16, 1/16 ];
 		else if ( dir == DIRECTION.DOWN || !lit ) 
+			// Dirt texture - posición (2, 0) en el atlas de texturas
 			return [ 2/16, 0/16, 3/16, 1/16 ];
 		else
+			// Grass side texture - posición (3, 0) en el atlas de texturas
 			return [ 3/16, 0/16, 4/16, 1/16 ];
 	}
 };
@@ -313,12 +333,25 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		var lightMultiplier = z >= lightmap[x][y] ? 1.0 : 0.6;
 		if ( block.selflit ) lightMultiplier = 1.0;
 		
+		// Apply grass color filter if this is a grass block top face
+		var grassColor = [ 1.0, 1.0, 1.0 ]; // Default white
+		if ( block.useGrassColor && blockLit && world.renderer ) {
+			// Use integer block coordinates for consistent coloring
+			// All blocks at the same (x, y) will have the same color
+			grassColor = world.renderer.getGrassColor( x, y );
+		}
+		
+		// Multiply grass color with light multiplier
+		var r = grassColor[0] * lightMultiplier;
+		var g = grassColor[1] * lightMultiplier;
+		var b = grassColor[2] * lightMultiplier;
+		
 		pushQuad(
 			vertices,
-			[ x, y, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0, y, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0, y + 1.0, z + bH, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x, y + 1.0, z + bH, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x, y, z + bH, c[0], c[1], r, g, b, 1.0 ],
+			[ x + 1.0, y, z + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x + 1.0, y + 1.0, z + bH, c[2], c[3], r, g, b, 1.0 ],
+			[ x, y + 1.0, z + bH, c[0], c[3], r, g, b, 1.0 ]
 		);
 	}
 	
@@ -476,4 +509,17 @@ BLOCK.pushPickingVertices = function( vertices, x, y, z )
 if ( typeof( exports ) != "undefined" )
 {
 	exports.BLOCK = BLOCK;
+}
+
+// Final verification - ensure setPickingPass is defined
+if ( typeof BLOCK.setPickingPass !== 'function' ) {
+	console.error( 'BLOCK.setPickingPass was not defined correctly!' );
+	BLOCK.setPickingPass = function( pass ) {
+		BLOCK.pickingPass = ( pass === BLOCK.PICK_PASS_DEPTH ) ? BLOCK.PICK_PASS_DEPTH : BLOCK.PICK_PASS_POSITION;
+	};
+}
+
+// Ensure it's available globally one more time
+if ( typeof window !== 'undefined' ) {
+	window.BLOCK = BLOCK;
 }

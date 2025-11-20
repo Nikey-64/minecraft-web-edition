@@ -86,6 +86,49 @@
 			var lastTime = performance.now();
 			var frameCount = 0;
 
+			// Performance profiling
+			var performanceStats = {
+				physics: { total: 0, count: 0, max: 0 },
+				playerUpdate: { total: 0, count: 0, max: 0 },
+				buildChunks: { total: 0, count: 0, max: 0 },
+				updateChunks: { total: 0, count: 0, max: 0 },
+				setCamera: { total: 0, count: 0, max: 0 },
+				draw: { total: 0, count: 0, max: 0 },
+				total: { total: 0, count: 0, max: 0 }
+			};
+
+			function measureTime(statName, fn) {
+				var start = performance.now();
+				var result = fn();
+				var elapsed = performance.now() - start;
+				var stat = performanceStats[statName];
+				if (stat) {
+					stat.total += elapsed;
+					stat.count++;
+					if (elapsed > stat.max) stat.max = elapsed;
+				}
+				return result;
+			}
+
+			// Make performance stats available globally for debugging
+			window.performanceStats = performanceStats;
+
+			function logPerformanceStats() {
+				if (performanceStats.total.count === 0) return;
+				console.log("=== Performance Stats (last second) ===");
+				for (var key in performanceStats) {
+					var stat = performanceStats[key];
+					if (stat.count > 0) {
+						var avg = stat.total / stat.count;
+						console.log(key + ": avg=" + avg.toFixed(2) + "ms, max=" + stat.max.toFixed(2) + "ms, calls=" + stat.count);
+					}
+				}
+				// Reset stats
+				for (var key in performanceStats) {
+					performanceStats[key] = { total: 0, count: 0, max: 0 };
+				}
+			}
+
 			var pauseRenderDistanceSlider = document.getElementById('pauseRenderDistanceSlider');
 			var pauseRenderDistanceValue = document.getElementById('pauseRenderDistanceValue');
 			var pauseFpsToggle = document.getElementById('pauseFpsToggle');
@@ -215,20 +258,50 @@
 				gameLoopInterval = setInterval( function()
 				{
 					if (!paused) {
+						var frameStart = performance.now();
 						var time = new Date().getTime() / 1000.0;
 
 						// Simulate physics
-						physics.simulate();
+						measureTime('physics', function() {
+							physics.simulate();
+						});
 
 						// Update local player
-						player.update();
+						measureTime('playerUpdate', function() {
+							player.update();
+						});
 
 						// Build a chunk
-						render.buildChunks( 32 );
+						measureTime('buildChunks', function() {
+							render.buildChunks( 32 );
+						});
 
 						// Draw world
-						render.setCamera( player.getEyePos().toArray(), player.angles );
-						render.draw();
+						measureTime('setCamera', function() {
+							render.setCamera( player.getEyePos().toArray(), player.angles );
+						});
+
+						measureTime('draw', function() {
+							render.draw();
+							// Also capture updateChunks time if available
+							if (render._updateChunksStats && render._updateChunksStats.count > 0) {
+								var stat = render._updateChunksStats;
+								var avg = stat.total / stat.count;
+								if (!performanceStats.updateChunks) {
+									performanceStats.updateChunks = { total: 0, count: 0, max: 0 };
+								}
+								performanceStats.updateChunks.total += avg * stat.count;
+								performanceStats.updateChunks.count += stat.count;
+								if (stat.max > performanceStats.updateChunks.max) {
+									performanceStats.updateChunks.max = stat.max;
+								}
+								// Reset renderer stats
+								render._updateChunksStats = { total: 0, count: 0, max: 0 };
+							}
+						});
+
+						var frameTime = performance.now() - frameStart;
+						measureTime('total', function() { return frameTime; });
 
 						// Calculate FPS
 						var currentTime = performance.now();
@@ -240,6 +313,8 @@
 							if (document.getElementById('fpsDisplay').style.display !== 'none') {
 								document.getElementById('fpsDisplay').textContent = 'FPS: ' + fps;
 							}
+							// Log performance stats every second
+							logPerformanceStats();
 						}
 
 						while ( new Date().getTime() / 1000 - time < 0.016 );
@@ -272,6 +347,12 @@
 				// Reset FPS tracking when resuming
 				lastTime = performance.now();
 				frameCount = 0;
+				
+				// Reset player's lastUpdate to prevent large delta when resuming
+				// This prevents the player from falling through the world
+				if ( player && player.lastUpdate ) {
+					player.lastUpdate = new Date().getTime();
+				}
 			}
 
 			function playClickSound() { // detects when the player touches a button in the gui

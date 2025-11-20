@@ -118,6 +118,33 @@ function Renderer( id )
 	};
 	terrainTexture.image.src = "media/terrain.png";
 	
+	// Load grass color texture for biome coloring
+	var grassColorTexture = this.texGrassColor = gl.createTexture();
+	grassColorTexture.image = new Image();
+	grassColorTexture.image.onload = function()
+	{
+		gl.bindTexture( gl.TEXTURE_2D, grassColorTexture );
+		gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, grassColorTexture.image );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT );
+		
+		// Create canvas to read pixel data from grass color texture
+		var canvas = document.createElement( "canvas" );
+		canvas.width = grassColorTexture.image.width;
+		canvas.height = grassColorTexture.image.height;
+		var ctx = canvas.getContext( "2d" );
+		ctx.drawImage( grassColorTexture.image, 0, 0 );
+		grassColorTexture.imageData = ctx.getImageData( 0, 0, canvas.width, canvas.height );
+	};
+	grassColorTexture.image.onerror = function()
+	{
+		console.warn( "Failed to load grasscolor.png, grass blocks will appear white" );
+		grassColorTexture.imageData = null;
+	};
+	grassColorTexture.image.src = "media/misc/grasscolor.png";
+	
 	// Create canvas used to draw name tags
 	var textCanvas = this.textCanvas = document.createElement( "canvas" );
 	textCanvas.width = 256;
@@ -143,8 +170,22 @@ Renderer.prototype.draw = function()
 	gl.viewport( 0, 0, gl.viewportWidth, gl.viewportHeight );
 	gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
 
-	// Update chunks based on player position
-	this.updateChunks();
+	// Update chunks based on player position (only every N frames to reduce overhead)
+	if (!this._updateChunksFrameCount) this._updateChunksFrameCount = 0;
+	this._updateChunksFrameCount++;
+	if (this._updateChunksFrameCount >= 5) { // Update chunks every 5 frames instead of every frame
+		var updateStart = performance.now();
+		this.updateChunks();
+		var updateTime = performance.now() - updateStart;
+		if (this._updateChunksStats) {
+			this._updateChunksStats.total += updateTime;
+			this._updateChunksStats.count++;
+			if (updateTime > this._updateChunksStats.max) this._updateChunksStats.max = updateTime;
+		} else {
+			this._updateChunksStats = { total: updateTime, count: 1, max: updateTime };
+		}
+		this._updateChunksFrameCount = 0;
+	}
 
 	// Draw level chunks
 	var chunks = this.chunks;
@@ -312,6 +353,13 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	var gl = this.gl;
 	var world = this.world;
 	
+	// Ensure BLOCK is available - try window.BLOCK first, then global BLOCK
+	var blockObj = ( typeof window !== 'undefined' && window.BLOCK ) ? window.BLOCK : ( typeof BLOCK !== 'undefined' ? BLOCK : null );
+	if ( !blockObj ) {
+		console.error( 'BLOCK is not defined!' );
+		return false;
+	}
+	
 	// Create framebuffer for picking render
 	var fbo = gl.createFramebuffer();
 	gl.bindFramebuffer( gl.FRAMEBUFFER, fbo );
@@ -335,8 +383,8 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 		for ( var x = min.x; x <= max.x; x++ ) {
 			for ( var y = min.y; y <= max.y; y++ ) {
 				for ( var z = min.z; z <= max.z; z++ ) {
-					if ( world.getBlock( x, y, z ) != BLOCK.AIR )
-						BLOCK.pushPickingVertices( vertices, x, y, z );
+					if ( world.getBlock( x, y, z ) != blockObj.AIR )
+						blockObj.pushPickingVertices( vertices, x, y, z );
 				}
 			}
 		}
@@ -358,7 +406,8 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	
 	for ( var pass = 0; pass < 2; pass++ )
 	{
-		BLOCK.setPickingPass( pass === 0 ? BLOCK.PICK_PASS_POSITION : BLOCK.PICK_PASS_DEPTH );
+		// Set picking pass directly - this is what setPickingPass does anyway
+		blockObj.pickingPass = ( pass === 0 ) ? ( blockObj.PICK_PASS_POSITION || 0 ) : ( blockObj.PICK_PASS_DEPTH || 1 );
 		var buffer = buildPickingBuffer();
 		
 		gl.bindTexture( gl.TEXTURE_2D, this.texWhite );
@@ -383,7 +432,8 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 		}
 	}
 	
-	BLOCK.setPickingPass( BLOCK.PICK_PASS_POSITION );
+	// Reset picking pass directly - this is what setPickingPass does anyway
+	blockObj.pickingPass = blockObj.PICK_PASS_POSITION || 0;
 	
 	// Reset states
 	gl.bindTexture( gl.TEXTURE_2D, this.texTerrain );
@@ -510,6 +560,7 @@ Renderer.prototype.setWorld = function( world, chunkSize )
 	if ( world.setChunking ) world.setChunking( chunkSize );
 	this.chunkLookup = {};
 	this.loadedChunks = new Set();
+	this.dirtyChunks = []; // List of chunks that need to be rebuilt
 
 	// Create chunk list
 	var chunks = this.chunks = [];
@@ -546,6 +597,7 @@ Renderer.prototype.setWorld = function( world, chunkSize )
 			 chunk.start[2] >= spawnZ - chunkSize * this.renderDistance &&
 			 chunk.start[2] <= spawnZ + chunkSize * this.renderDistance ) {
 			this.loadChunk( chunk );
+			// loadChunk already adds to dirtyChunks, so we're good
 		}
 	}
 }
@@ -615,6 +667,10 @@ Renderer.prototype.loadChunk = function( chunkIndexOrChunk )
 	chunk.loaded = true;
 	chunk.dirty = true;
 	if ( this.loadedChunks ) this.loadedChunks.add( chunk.key );
+	// Add to dirty queue if not already there
+	if ( this.dirtyChunks && this.dirtyChunks.indexOf( chunk ) === -1 ) {
+		this.dirtyChunks.push( chunk );
+	}
 };
 
 // updateChunks()
@@ -669,19 +725,28 @@ Renderer.prototype.updateChunks = function()
 Renderer.prototype.onBlockChanged = function( x, y, z )
 {
 	var chunks = this.chunks;
+	var dirtyChunks = this.dirtyChunks;
 	
 	for ( var i = 0; i < chunks.length; i++ )
 	{
+		var chunk = chunks[i];
+		var wasDirty = chunk.dirty;
+		
 		// Neighbouring chunks are updated as well if the block is on a chunk border
 		// Also, all chunks below the block are updated because of lighting
-		if ( x >= chunks[i].start[0] && x < chunks[i].end[0] && y >= chunks[i].start[1] && y < chunks[i].end[1] && z >= chunks[i].start[2] && z < chunks[i].end[2] )
-			chunks[i].dirty = true;
-		else if ( x >= chunks[i].start[0] && x < chunks[i].end[0] && y >= chunks[i].start[1] && y < chunks[i].end[1] && ( z >= chunks[i].end[2] || z == chunks[i].start[2] - 1 ) )
-			chunks[i].dirty = true;
-		else if ( x >= chunks[i].start[0] && x < chunks[i].end[0] && z >= chunks[i].start[2] && z < chunks[i].end[2] && ( y == chunks[i].end[1] || y == chunks[i].start[1] - 1 ) )
-			chunks[i].dirty = true;
-		else if ( y >= chunks[i].start[1] && y < chunks[i].end[1] && z >= chunks[i].start[2] && z < chunks[i].end[2] && ( x == chunks[i].end[0] || x == chunks[i].start[0] - 1 ) )
-			chunks[i].dirty = true;
+		if ( x >= chunk.start[0] && x < chunk.end[0] && y >= chunk.start[1] && y < chunk.end[1] && z >= chunk.start[2] && z < chunk.end[2] )
+			chunk.dirty = true;
+		else if ( x >= chunk.start[0] && x < chunk.end[0] && y >= chunk.start[1] && y < chunk.end[1] && ( z >= chunk.end[2] || z == chunk.start[2] - 1 ) )
+			chunk.dirty = true;
+		else if ( x >= chunk.start[0] && x < chunk.end[0] && z >= chunk.start[2] && z < chunk.end[2] && ( y == chunk.end[1] || y == chunk.start[1] - 1 ) )
+			chunk.dirty = true;
+		else if ( y >= chunk.start[1] && y < chunk.end[1] && z >= chunk.start[2] && z < chunk.end[2] && ( x == chunk.end[0] || x == chunk.start[0] - 1 ) )
+			chunk.dirty = true;
+		
+		// If chunk became dirty and is loaded, add to dirty queue
+		if ( chunk.dirty && !wasDirty && chunk.loaded && dirtyChunks && dirtyChunks.indexOf( chunk ) === -1 ) {
+			dirtyChunks.push( chunk );
+		}
 	}
 }
 
@@ -703,18 +768,28 @@ function pushQuad( v, p1, p2, p3, p4 )
 Renderer.prototype.buildChunks = function( count )
 {
 	var gl = this.gl;
-	var chunks = this.chunks;
 	var world = this.world;
+	var dirtyChunks = this.dirtyChunks;
 	
-	for ( var i = 0; i < chunks.length; i++ )
+	// Process dirty chunks from the queue
+	for ( var i = 0; i < dirtyChunks.length && count > 0; i++ )
 	{
-		var chunk = chunks[i];
+		var chunk = dirtyChunks[i];
+		
+		// Skip if chunk is no longer loaded or no longer dirty
 		if ( !chunk.loaded || !chunk.dirty )
+		{
+			// Remove from queue
+			dirtyChunks.splice( i, 1 );
+			i--;
 			continue;
+		}
 
 		var vertices = [];
 		
 		// Create map of lowest blocks that are still lit
+		// Optimize: only check up to a reasonable height instead of entire world
+		var maxLightCheckZ = Math.min( world.sz - 1, chunk.end[2] + 32 );
 		var lightmap = {};
 		for ( var x = chunk.start[0] - 1; x < chunk.end[0] + 1; x++ )
 		{
@@ -722,7 +797,8 @@ Renderer.prototype.buildChunks = function( count )
 			
 			for ( var y = chunk.start[1] - 1; y < chunk.end[1] + 1; y++ )
 			{
-				for ( var z = world.sz - 1; z >= 0; z-- )
+				// Start from maxLightCheckZ and go down instead of from world.sz-1
+				for ( var z = maxLightCheckZ; z >= 0; z-- )
 				{
 					lightmap[x][y] = z;
 					if ( !world.getBlock( x, y, z ).transparent ) break;
@@ -749,9 +825,10 @@ Renderer.prototype.buildChunks = function( count )
 		gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STATIC_DRAW );
 		
 		chunk.dirty = false;
+		// Remove from queue
+		dirtyChunks.splice( i, 1 );
+		i--;
 		count--;
-		
-		if ( count == 0 ) break;
 	}
 }
 
@@ -806,6 +883,43 @@ Renderer.prototype.drawBuffer = function( buffer )
 	gl.vertexAttribPointer( this.aTexCoord, 2, gl.FLOAT, false, 9*4, 3*4 );
 	
 	gl.drawArrays( gl.TRIANGLES, 0, buffer.vertices );
+}
+
+// getGrassColor( x, y )
+//
+// Returns the grass color from grasscolor.png at the specified world coordinates.
+// Returns [1, 1, 1] (white) if grasscolor.png is not loaded.
+
+Renderer.prototype.getGrassColor = function( x, y )
+{
+	var grassColorTex = this.texGrassColor;
+	if ( !grassColorTex || !grassColorTex.imageData ) {
+		return [ 1.0, 1.0, 1.0 ]; // White if not loaded
+	}
+	
+	var imageData = grassColorTex.imageData;
+	var width = imageData.width;
+	var height = imageData.height;
+	
+	// Use a single fixed pixel for all blocks to ensure uniform coloring
+	// Using the center pixel of the texture (or top-left if preferred)
+	var texX = Math.floor( width / 2 ); // Center X
+	var texY = Math.floor( height / 2 ); // Center Y
+	
+	// Ensure coordinates are within valid range
+	if ( texX >= width ) texX = width - 1;
+	if ( texY >= height ) texY = height - 1;
+	if ( texX < 0 ) texX = 0;
+	if ( texY < 0 ) texY = 0;
+	
+	var index = ( texY * width + texX ) * 4;
+	
+	// Get RGB values and normalize to 0-1 range
+	var r = imageData.data[index] / 255.0;
+	var g = imageData.data[index + 1] / 255.0;
+	var b = imageData.data[index + 2] / 255.0;
+	
+	return [ r, g, b ];
 }
 
 // loadPlayerHeadModel()
