@@ -45,7 +45,7 @@ function Renderer( id )
 	canvas.height = canvas.clientHeight;
 
 	this.renderDistance = parseInt(localStorage.getItem('renderDistance')) || 8; // chunks default radius
-	this.chunkSize = 16; // Default chunk size (16x16x16 preferred for optimal performance)
+	this.chunkSize = 16; // Default chunk size (16x16x16 preferred for optimal performance) (8 is better for laptops and mobile devices)
 	this.camPos = [0, 0, 0]; // Initialize camera position
 	this.camAng = [0, 0, 0]; // Initialize camera angles
 	this.renderBehind = false; // Option to not render chunks behind the player (disabled by default)
@@ -66,6 +66,7 @@ function Renderer( id )
 	gl.enable( gl.DEPTH_TEST );
 	gl.enable( gl.CULL_FACE );
 	gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+	
 	
 	// Load shaders
 	this.loadShaders();
@@ -302,13 +303,9 @@ Renderer.prototype.buildPlayerName = function( nickname )
 // Returns the block at mouse position mx and my.
 // The blocks that can be reached lie between min and max.
 //
-// Each side is rendered with the X, Y and Z position of the
-// block in the RGB color values and the normal of the side is
-// stored in the color alpha value. In that way, all information
-// can be retrieved by simply reading the pixel the mouse is over.
-//
-// WARNING: This implies that the level can never be larger than
-// 254x254x254 blocks! (Value 255 is used for sky.) ((sky should use 2048 to allow bigger worlds in future))
+// Each side is rendered twice so that up to 16 bits of precision can be stored
+// per axis in the picking buffers. The first pass stores the X/Y coordinates,
+// the second pass stores Z and the face index which is later mapped to a normal.
 
 Renderer.prototype.pickAt = function( min, max, mx, my )
 {
@@ -332,35 +329,61 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, bt, 0 );
 	gl.framebufferRenderbuffer( gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer );
 	
-	// Build buffer with block pick candidates
-	var vertices = [];
-	
-	for ( var x = min.x; x <= max.x; x++ ) {
-		for ( var y = min.y; y <= max.y; y++ ) {
-			for ( var z = min.z; z <= max.z; z++ ) {
-				if ( world.getBlock( x, y, z ) != BLOCK.AIR )
-					BLOCK.pushPickingVertices( vertices, x, y, z );
+	var buildPickingBuffer = function()
+	{
+		var vertices = [];
+		for ( var x = min.x; x <= max.x; x++ ) {
+			for ( var y = min.y; y <= max.y; y++ ) {
+				for ( var z = min.z; z <= max.z; z++ ) {
+					if ( world.getBlock( x, y, z ) != BLOCK.AIR )
+						BLOCK.pushPickingVertices( vertices, x, y, z );
+				}
 			}
+		}
+		
+		if ( vertices.length === 0 ) return null;
+		
+		var buffer = gl.createBuffer();
+		buffer.vertices = vertices.length / 9;
+		gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
+		gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STREAM_DRAW );
+		return buffer;
+	};
+	
+	var pixelXY = new Uint8Array( 4 );
+	var pixelZ = new Uint8Array( 4 );
+	var hitDetected = false;
+	var readX = mx / gl.viewportWidth * 512;
+	var readY = ( 1 - my / gl.viewportHeight ) * 512;
+	
+	for ( var pass = 0; pass < 2; pass++ )
+	{
+		BLOCK.setPickingPass( pass === 0 ? BLOCK.PICK_PASS_POSITION : BLOCK.PICK_PASS_DEPTH );
+		var buffer = buildPickingBuffer();
+		
+		gl.bindTexture( gl.TEXTURE_2D, this.texWhite );
+		gl.viewport( 0, 0, 512, 512 );
+		gl.clearColor( 1.0, 1.0, 1.0, 1.0 );
+		gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+		
+		if ( buffer )
+		{
+			this.drawBuffer( buffer );
+		}
+		
+		var target = pass === 0 ? pixelXY : pixelZ;
+		gl.readPixels( readX, readY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, target );
+		
+		if ( buffer )
+			gl.deleteBuffer( buffer );
+		
+		if ( !hitDetected )
+		{
+			hitDetected = !( target[0] === 255 && target[1] === 255 && target[2] === 255 && target[3] === 255 );
 		}
 	}
 	
-	var buffer = gl.createBuffer();
-	buffer.vertices = vertices.length / 9;
-	gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
-	gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STREAM_DRAW );
-	
-	// Draw buffer
-	gl.bindTexture( gl.TEXTURE_2D, this.texWhite );
-	
-	gl.viewport( 0, 0, 512, 512 );
-	gl.clearColor( 1.0, 1.0, 1.0, 1.0 );
-	gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
-	
-	this.drawBuffer( buffer );
-	
-	// Read pixel
-	var pixel = new Uint8Array( 4 );
-	gl.readPixels( mx/gl.viewportWidth*512, (1-my/gl.viewportHeight)*512, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel );
+	BLOCK.setPickingPass( BLOCK.PICK_PASS_POSITION );
 	
 	// Reset states
 	gl.bindTexture( gl.TEXTURE_2D, this.texTerrain );
@@ -368,30 +391,32 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	gl.clearColor( 0.62, 0.81, 1.0, 1.0 );
 	
 	// Clean up
-	gl.deleteBuffer( buffer );
 	gl.deleteRenderbuffer( renderbuffer );
 	gl.deleteTexture( bt );
 	gl.deleteFramebuffer( fbo );
 	
-	// Build result
-	if ( pixel[0] != 255 )
-	{
-		var normal;
-		if ( pixel[3] == 1 ) normal = new Vector( 0, 0, 1 );
-		else if ( pixel[3] == 2 ) normal = new Vector( 0, 0, -1 );
-		else if ( pixel[3] == 3 ) normal = new Vector( 0, -1, 0 );
-		else if ( pixel[3] == 4 ) normal = new Vector( 0, 1, 0 );
-		else if ( pixel[3] == 5 ) normal = new Vector( -1, 0, 0 );
-		else if ( pixel[3] == 6 ) normal = new Vector( 1, 0, 0 );
-		
-		return {
-			x: pixel[0],
-			y: pixel[1],
-			z: pixel[2],
-			n: normal
-		}
-	} else {
+	if ( !hitDetected )
 		return false;
+	
+	var x = pixelXY[0] | ( pixelXY[1] << 8 );
+	var y = pixelXY[2] | ( pixelXY[3] << 8 );
+	var z = pixelZ[0] | ( pixelZ[1] << 8 );
+	var face = pixelZ[2];
+	
+	var normal;
+	if ( face == 1 ) normal = new Vector( 0, 0, 1 );
+	else if ( face == 2 ) normal = new Vector( 0, 0, -1 );
+	else if ( face == 3 ) normal = new Vector( 0, -1, 0 );
+	else if ( face == 4 ) normal = new Vector( 0, 1, 0 );
+	else if ( face == 5 ) normal = new Vector( -1, 0, 0 );
+	else if ( face == 6 ) normal = new Vector( 1, 0, 0 );
+	else normal = new Vector( 0, 0, 0 );
+	
+	return {
+		x: x,
+		y: y,
+		z: z,
+		n: normal
 	}
 }
 

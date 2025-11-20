@@ -15,6 +15,44 @@ DIRECTION.BACK = 6;
 
 BLOCK = {};
 
+BLOCK.PICK_PASS_POSITION = 0;
+BLOCK.PICK_PASS_DEPTH = 1;
+BLOCK.pickingPass = BLOCK.PICK_PASS_POSITION;
+
+BLOCK.setPickingPass = function( pass )
+{
+	BLOCK.pickingPass = ( pass === BLOCK.PICK_PASS_DEPTH ) ? BLOCK.PICK_PASS_DEPTH : BLOCK.PICK_PASS_POSITION;
+}
+
+BLOCK.getPickingColor = function( x, y, z, faceId )
+{
+	var pass = BLOCK.pickingPass || BLOCK.PICK_PASS_POSITION;
+	if ( pass === BLOCK.PICK_PASS_POSITION )
+	{
+		var xLow = x & 0xFF;
+		var xHigh = ( x >> 8 ) & 0xFF;
+		var yLow = y & 0xFF;
+		var yHigh = ( y >> 8 ) & 0xFF;
+		return [
+			xLow / 255,
+			xHigh / 255,
+			yLow / 255,
+			yHigh / 255
+		];
+	}
+	else
+	{
+		var zLow = z & 0xFF;
+		var zHigh = ( z >> 8 ) & 0xFF;
+		return [
+			zLow / 255,
+			zHigh / 255,
+			( faceId || 0 ) / 255,
+			0
+		];
+	}
+}
+
 // Air
 BLOCK.AIR = {
 	id: 0,
@@ -373,60 +411,64 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 
 BLOCK.pushPickingVertices = function( vertices, x, y, z )
 {
-	var color = { r: x/255, g: y/255, b: z/255 };
-	
 	// Top
+	var colorTop = BLOCK.getPickingColor( x, y, z, 1 );
 	pushQuad(
 		vertices,
-		[ x, y, z + 1, 0, 0, color.r, color.g, color.b, 1/255 ],
-		[ x + 1, y, z + 1, 1, 0, color.r, color.g, color.b, 1/255 ],
-		[ x + 1, y + 1, z + 1, 1, 1, color.r, color.g, color.b, 1/255 ],
-		[ x, y + 1, z + 1, 0, 0, color.r, color.g, color.b, 1/255 ]
+		[ x, y, z + 1, 0, 0, colorTop[0], colorTop[1], colorTop[2], colorTop[3] ],
+		[ x + 1, y, z + 1, 1, 0, colorTop[0], colorTop[1], colorTop[2], colorTop[3] ],
+		[ x + 1, y + 1, z + 1, 1, 1, colorTop[0], colorTop[1], colorTop[2], colorTop[3] ],
+		[ x, y + 1, z + 1, 0, 0, colorTop[0], colorTop[1], colorTop[2], colorTop[3] ]
 	);
 	
 	// Bottom
+	var colorBottom = BLOCK.getPickingColor( x, y, z, 2 );
 	pushQuad(
 		vertices,
-		[ x, y + 1, z, 0, 0, color.r, color.g, color.b, 2/255 ],
-		[ x + 1, y + 1, z, 1, 0, color.r, color.g, color.b, 2/255 ],
-		[ x + 1, y, z, 1, 1, color.r, color.g, color.b, 2/255 ],
-		[ x, y, z, 0, 0, color.r, color.g, color.b, 2/255 ]
+		[ x, y + 1, z, 0, 0, colorBottom[0], colorBottom[1], colorBottom[2], colorBottom[3] ],
+		[ x + 1, y + 1, z, 1, 0, colorBottom[0], colorBottom[1], colorBottom[2], colorBottom[3] ],
+		[ x + 1, y, z, 1, 1, colorBottom[0], colorBottom[1], colorBottom[2], colorBottom[3] ],
+		[ x, y, z, 0, 0, colorBottom[0], colorBottom[1], colorBottom[2], colorBottom[3] ]
 	);
 	
 	// Front
+	var colorFront = BLOCK.getPickingColor( x, y, z, 3 );
 	pushQuad(
 		vertices,
-		[ x, y, z, 0, 0, color.r, color.g, color.b, 3/255 ],
-		[ x + 1, y, z, 1, 0, color.r, color.g, color.b, 3/255 ],
-		[ x + 1, y, z + 1, 1, 1, color.r, color.g, color.b, 3/255 ],
-		[ x, y, z + 1, 0, 0, color.r, color.g, color.b, 3/255 ]
+		[ x, y, z, 0, 0, colorFront[0], colorFront[1], colorFront[2], colorFront[3] ],
+		[ x + 1, y, z, 1, 0, colorFront[0], colorFront[1], colorFront[2], colorFront[3] ],
+		[ x + 1, y, z + 1, 1, 1, colorFront[0], colorFront[1], colorFront[2], colorFront[3] ],
+		[ x, y, z + 1, 0, 0, colorFront[0], colorFront[1], colorFront[2], colorFront[3] ]
 	);
 	
 	// Back
+	var colorBack = BLOCK.getPickingColor( x, y, z, 4 );
 	pushQuad(
 		vertices,
-		[ x, y + 1, z + 1, 0, 0, color.r, color.g, color.b, 4/255 ],
-		[ x + 1, y + 1, z + 1, 1, 0, color.r, color.g, color.b, 4/255 ],
-		[ x + 1, y + 1, z, 1, 1, color.r, color.g, color.b, 4/255 ],
-		[ x, y + 1, z, 0, 0, color.r, color.g, color.b, 4/255 ]
+		[ x, y + 1, z + 1, 0, 0, colorBack[0], colorBack[1], colorBack[2], colorBack[3] ],
+		[ x + 1, y + 1, z + 1, 1, 0, colorBack[0], colorBack[1], colorBack[2], colorBack[3] ],
+		[ x + 1, y + 1, z, 1, 1, colorBack[0], colorBack[1], colorBack[2], colorBack[3] ],
+		[ x, y + 1, z, 0, 0, colorBack[0], colorBack[1], colorBack[2], colorBack[3] ]
 	);
 	
 	// Left
+	var colorLeft = BLOCK.getPickingColor( x, y, z, 5 );
 	pushQuad(
 		vertices,
-		[ x, y, z + 1, 0, 0, color.r, color.g, color.b, 5/255 ],
-		[ x, y + 1, z + 1, 1, 0, color.r, color.g, color.b, 5/255 ],
-		[ x, y + 1, z, 1, 1, color.r, color.g, color.b, 5/255 ],
-		[ x, y, z, 0, 0, color.r, color.g, color.b, 5/255 ]
+		[ x, y, z + 1, 0, 0, colorLeft[0], colorLeft[1], colorLeft[2], colorLeft[3] ],
+		[ x, y + 1, z + 1, 1, 0, colorLeft[0], colorLeft[1], colorLeft[2], colorLeft[3] ],
+		[ x, y + 1, z, 1, 1, colorLeft[0], colorLeft[1], colorLeft[2], colorLeft[3] ],
+		[ x, y, z, 0, 0, colorLeft[0], colorLeft[1], colorLeft[2], colorLeft[3] ]
 	);
 	
 	// Right
+	var colorRight = BLOCK.getPickingColor( x, y, z, 6 );
 	pushQuad(
 		vertices,
-		[ x + 1, y, z, 0, 0, color.r, color.g, color.b, 6/255 ],
-		[ x + 1, y + 1, z, 1, 0, color.r, color.g, color.b, 6/255 ],
-		[ x + 1, y + 1, z + 1, 1, 1, color.r, color.g, color.b, 6/255 ],
-		[ x + 1, y, z + 1, 0, 0, color.r, color.g, color.b, 6/255 ]
+		[ x + 1, y, z, 0, 0, colorRight[0], colorRight[1], colorRight[2], colorRight[3] ],
+		[ x + 1, y + 1, z, 1, 0, colorRight[0], colorRight[1], colorRight[2], colorRight[3] ],
+		[ x + 1, y + 1, z + 1, 1, 1, colorRight[0], colorRight[1], colorRight[2], colorRight[3] ],
+		[ x + 1, y, z + 1, 0, 0, colorRight[0], colorRight[1], colorRight[2], colorRight[3] ]
 	);
 }
 
