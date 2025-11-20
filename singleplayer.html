@@ -67,26 +67,15 @@
 		<!-- Initialisation code -->
 		<script type="text/javascript">
 			
-			// Create a new flat world
-			var world = new World( 128, 128, 128 );
-			world.createFlatWorld( 64 );
+			const DEFAULT_SEED_NAME = "flat_default_seed";
+			const SEED_API_ENDPOINT = "api/seeds.php";
+			const ACTIVE_SEED_KEY = "activeSeedName";
+			const SEED_SELECTION_KEY = "selectedSeed";
 
-			// Set up renderer
-			var render = new Renderer( "renderSurface" );
-			render.setWorld( world, 8 );
-			render.setPerspective( 60, 0.01, 200 );
-
-			// Create physics simulator
-			var physics = new Physics();
-			physics.setWorld( world );
-
-			// Create new local player
-			var player = new Player();
-			player.setWorld( world );
-			player.setInputCanvas( "renderSurface" );
-			player.setMaterialSelector( "materialSelector" );
-
-			    
+			var world;
+			var render;
+			var physics;
+			var player;
 
 			// Game state
 			var paused = false;
@@ -96,6 +85,130 @@
 			var fps = 0;
 			var lastTime = performance.now();
 			var frameCount = 0;
+
+			var pauseRenderDistanceSlider = document.getElementById('pauseRenderDistanceSlider');
+			var pauseRenderDistanceValue = document.getElementById('pauseRenderDistanceValue');
+			var pauseFpsToggle = document.getElementById('pauseFpsToggle');
+
+			initGame();
+
+			async function initGame() {
+				try {
+					var seedName = localStorage.getItem( SEED_SELECTION_KEY ) || DEFAULT_SEED_NAME;
+					var seedDefinition = await fetchSeedDefinition( seedName );
+					world = buildWorldFromSeed( seedDefinition, seedName );
+					localStorage.setItem( SEED_SELECTION_KEY, seedName );
+				} catch ( error ) {
+					console.warn( "Fallo la carga de la seed remota, se usará un mundo plano local.", error );
+					world = buildFallbackWorld();
+				}
+
+				setupGameSystems();
+				initialisePauseSettings();
+				startGameLoop();
+			}
+
+			function fetchSeedDefinition( seedName ) {
+				return fetch( SEED_API_ENDPOINT + "?name=" + encodeURIComponent( seedName ), { cache: "no-store" } )
+					.then( function( response ) {
+						if ( !response.ok ) {
+							throw new Error( "Seed API devolvió " + response.status );
+						}
+						return response.json();
+					} );
+			}
+
+			function buildWorldFromSeed( seedDefinition, seedName ) {
+				var sx = seedDefinition.sx || 255;
+				var sy = seedDefinition.sy || 255;
+				var sz = seedDefinition.sz || 255;
+				var chunkSize = seedDefinition.chunkSize || 16;
+				var w = new World( sx, sy, sz );
+				if ( w.setChunking ) w.setChunking( chunkSize );
+
+				if ( Array.isArray( seedDefinition.chunks ) && seedDefinition.chunks.length ) {
+					preloadSeedChunks( w, seedDefinition.chunks, seedName );
+				} else if ( typeof seedDefinition.blocks === "string" && seedDefinition.blocks.length ) {
+					w.createFromString( seedDefinition.blocks );
+				} else if ( typeof seedDefinition.height === "number" ) {
+					w.createFlatWorld( seedDefinition.height );
+				} else {
+					w.createFlatWorld( 64 );
+				}
+
+				var spawn = seedDefinition.spawn || [ sx / 2 + 0.5, sy / 2 + 0.5, 64 ];
+				w.spawn = new Vector( spawn[0], spawn[1], spawn[2] );
+				return w;
+			}
+
+			function preloadSeedChunks( worldInstance, chunks, seedName ) {
+				if ( typeof localStorage === "undefined" ) return;
+
+				var previousSeed = localStorage.getItem( ACTIVE_SEED_KEY );
+				if ( previousSeed !== seedName ) {
+					clearStoredChunkCache( worldInstance.chunkStoragePrefix );
+				}
+
+				for ( var i = 0; i < chunks.length; i++ ) {
+					var chunkDef = chunks[i];
+					if ( typeof chunkDef.data !== "string" ) continue;
+					var key = chunkDef.cx + "|" + chunkDef.cy + "|" + chunkDef.cz;
+					try {
+						localStorage.setItem( worldInstance.chunkStoragePrefix + key, chunkDef.data );
+						if ( worldInstance.chunkStates ) worldInstance.chunkStates[key] = "stored";
+					} catch ( e ) {
+						console.warn( "No se pudo guardar el chunk " + key + " en localStorage.", e );
+						break;
+					}
+				}
+
+				localStorage.setItem( ACTIVE_SEED_KEY, seedName );
+			}
+
+			function clearStoredChunkCache( prefix ) {
+				if ( typeof localStorage === "undefined" ) return;
+				var keysToDelete = [];
+				for ( var i = 0; i < localStorage.length; i++ ) {
+					var key = localStorage.key( i );
+					if ( key && key.indexOf( prefix ) === 0 ) keysToDelete.push( key );
+				}
+				for ( var k = 0; k < keysToDelete.length; k++ ) {
+					localStorage.removeItem( keysToDelete[k] );
+				}
+			}
+
+			function buildFallbackWorld() {
+				var fallbackWorld = new World( 128, 128, 128 );
+				fallbackWorld.createFlatWorld( 64 );
+				return fallbackWorld;
+			}
+
+			function setupGameSystems() {
+				render = new Renderer( "renderSurface" );
+				render.setWorld( world, 8 );
+				render.setPerspective( 60, 0.01, 200 );
+
+				physics = new Physics();
+				physics.setWorld( world );
+
+				player = new Player();
+				player.setWorld( world );
+				player.setInputCanvas( "renderSurface" );
+				player.setMaterialSelector( "materialSelector" );
+			}
+
+			function initialisePauseSettings() {
+				var savedRenderDistance = localStorage.getItem('renderDistance') || '8';
+				pauseRenderDistanceSlider.value = savedRenderDistance;
+				pauseRenderDistanceValue.textContent = savedRenderDistance;
+				render.setRenderDistance(parseInt(savedRenderDistance));
+
+				var savedShowFPS = localStorage.getItem('showFPS') || 'false';
+				pauseFpsToggle.checked = savedShowFPS === 'true';
+				if (savedShowFPS === 'true') {
+					document.getElementById('fpsDisplay').style.display = 'block';
+				}
+			}
 
 			// Function to start the render loop
 			function startGameLoop() {
@@ -134,8 +247,6 @@
 				}, 1 );
 			}
 
-			
-
 			// Function to pause the game
 			function pauseGame() {
 				paused = true;
@@ -143,8 +254,10 @@
 				document.getElementById('pauseMenu').style.display = 'flex';
 				document.getElementById('crosshair').style.display = 'none';
 				document.getElementById('cursor').style.display = 'block';
-				player.pointerLocked = false;
-				player.dragging = false;
+				if ( player ) {
+					player.pointerLocked = false;
+					player.dragging = false;
+				}
 			}
 
 			// Function to resume the game
@@ -153,16 +266,15 @@
 				document.getElementById('pauseOverlay').style.display = 'none';
 				document.getElementById('pauseMenu').style.display = 'none';
 				document.getElementById('pauseSettingsMenu').style.display = 'none';
-				player.canvas.requestPointerLock();
+				if ( player && player.canvas ) {
+					player.canvas.requestPointerLock();
+				}
 				// Reset FPS tracking when resuming
 				lastTime = performance.now();
 				frameCount = 0;
 			}
 
-			// Start the game loop initially
-			startGameLoop();
-
-			function playClickSound() { // detects when the player touchs a button in the gui
+			function playClickSound() { // detects when the player touches a button in the gui
                 clickSound.currentTime = 0;
                 clickSound.play().catch(function(e) { console.log('Audio play failed:', e); });
             }
@@ -187,27 +299,11 @@
 				document.getElementById('pauseMenu').style.display = 'flex';
 			};
 
-			// Load settings for pause menu
-			var pauseRenderDistanceSlider = document.getElementById('pauseRenderDistanceSlider');
-			var pauseRenderDistanceValue = document.getElementById('pauseRenderDistanceValue');
-			var pauseFpsToggle = document.getElementById('pauseFpsToggle');
-
-			var savedRenderDistance = localStorage.getItem('renderDistance') || '8';
-			pauseRenderDistanceSlider.value = savedRenderDistance;
-			pauseRenderDistanceValue.textContent = savedRenderDistance;
-			render.setRenderDistance(parseInt(savedRenderDistance));
-
-			var savedShowFPS = localStorage.getItem('showFPS') || 'false';
-			pauseFpsToggle.checked = savedShowFPS === 'true';
-			if (savedShowFPS === 'true') {
-				document.getElementById('fpsDisplay').style.display = 'block';
-			}
-
 			pauseRenderDistanceSlider.oninput = function() {
 				var value = parseInt(this.value);
 				pauseRenderDistanceValue.textContent = value;
 				localStorage.setItem('renderDistance', value);
-				render.setRenderDistance(value);
+				if ( render ) render.setRenderDistance(value);
 			};
 
 			pauseFpsToggle.onchange = function() {

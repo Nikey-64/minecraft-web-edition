@@ -482,18 +482,27 @@ Renderer.prototype.setWorld = function( world, chunkSize )
 	this.world = world;
 	world.renderer = this;
 	this.chunkSize = chunkSize;
+	if ( world.setChunking ) world.setChunking( chunkSize );
+	this.chunkLookup = {};
+	this.loadedChunks = new Set();
 
 	// Create chunk list
 	var chunks = this.chunks = [];
 	for ( var x = 0; x < world.sx; x += chunkSize ) {
 		for ( var y = 0; y < world.sy; y += chunkSize ) {
 			for ( var z = 0; z < world.sz; z += chunkSize ) {
-				chunks.push( {
+				var chunk = {
 					start: [ x, y, z ],
 					end: [ Math.min( world.sx, x + chunkSize ), Math.min( world.sy, y + chunkSize ), Math.min( world.sz, z + chunkSize ) ],
+					cx: x / chunkSize,
+					cy: y / chunkSize,
+					cz: z / chunkSize,
 					dirty: true,
 					loaded: false
-				} );
+				};
+				chunk.key = this.getChunkKey( chunk.cx, chunk.cy, chunk.cz );
+				this.chunkLookup[chunk.key] = chunk;
+				chunks.push( chunk );
 			}
 		}
 	}
@@ -511,9 +520,14 @@ Renderer.prototype.setWorld = function( world, chunkSize )
 			 chunk.start[1] <= spawnY + chunkSize * this.renderDistance &&
 			 chunk.start[2] >= spawnZ - chunkSize * this.renderDistance &&
 			 chunk.start[2] <= spawnZ + chunkSize * this.renderDistance ) {
-			chunk.loaded = true;
+			this.loadChunk( chunk );
 		}
 	}
+}
+
+Renderer.prototype.getChunkKey = function( cx, cy, cz )
+{
+	return cx + "|" + cy + "|" + cz;
 }
 
 // isChunkInRange( chunkX, chunkY, chunkZ, playerX, playerY, playerZ )
@@ -537,15 +551,19 @@ Renderer.prototype.isChunkInRange = function( chunkX, chunkY, chunkZ, playerX, p
 //
 // Unloads the chunk at the specified index by setting loaded to false and deleting the buffer.
 
-Renderer.prototype.unloadChunk = function( chunkIndex )
+Renderer.prototype.unloadChunk = function( chunkIndexOrChunk )
 {
-	var chunk = this.chunks[chunkIndex];
+	var chunk = typeof chunkIndexOrChunk === "number" ? this.chunks[chunkIndexOrChunk] : chunkIndexOrChunk;
+	if ( !chunk ) return;
+	if ( this.world && this.world.persistChunk )
+		this.world.persistChunk( chunk, this.chunkSize );
 	chunk.loaded = false;
 	if ( chunk.buffer != null )
 	{
 		this.gl.deleteBuffer( chunk.buffer );
 		chunk.buffer = null;
 	}
+	if ( this.loadedChunks ) this.loadedChunks.delete( chunk.key );
 };
 
 // setRenderDistance( distance )
@@ -563,11 +581,15 @@ Renderer.prototype.setRenderDistance = function( distance )
 //
 // Loads the chunk at the specified index by setting loaded to true and marking it as dirty.
 
-Renderer.prototype.loadChunk = function( chunkIndex )
+Renderer.prototype.loadChunk = function( chunkIndexOrChunk )
 {
-	var chunk = this.chunks[chunkIndex];
+	var chunk = typeof chunkIndexOrChunk === "number" ? this.chunks[chunkIndexOrChunk] : chunkIndexOrChunk;
+	if ( !chunk ) return;
+	if ( this.world && this.world.ensureChunkLoaded )
+		this.world.ensureChunkLoaded( chunk, this.chunkSize );
 	chunk.loaded = true;
 	chunk.dirty = true;
+	if ( this.loadedChunks ) this.loadedChunks.add( chunk.key );
 };
 
 // updateChunks()
@@ -577,27 +599,39 @@ Renderer.prototype.loadChunk = function( chunkIndex )
 
 Renderer.prototype.updateChunks = function()
 {
+	if ( !this.world || !this.chunks ) return;
+
 	var playerX = this.camPos[0];
 	var playerY = this.camPos[1];
 	var playerZ = this.camPos[2];
-	var chunks = this.chunks;
+	var playerChunkX = Math.floor( playerX / this.chunkSize );
+	var playerChunkY = Math.floor( playerY / this.chunkSize );
+	var playerChunkZ = Math.floor( playerZ / this.chunkSize );
+	var targetKeys = new Set();
 
-	for ( var i = 0; i < chunks.length; i++ )
-	{
-		var chunk = chunks[i];
-		var chunkX = chunk.start[0] / this.chunkSize;
-		var chunkY = chunk.start[1] / this.chunkSize;
-		var chunkZ = chunk.start[2] / this.chunkSize;
-
-		var inRange = this.isChunkInRange( chunkX, chunkY, chunkZ, playerX, playerY, playerZ );
-
-		if ( inRange && !chunk.loaded )
-		{
-			this.loadChunk( i );
+	for ( var dx = -this.renderDistance; dx <= this.renderDistance; dx++ ) {
+		for ( var dy = -this.renderDistance; dy <= this.renderDistance; dy++ ) {
+			for ( var dz = -this.renderDistance; dz <= this.renderDistance; dz++ ) {
+				var cx = playerChunkX + dx;
+				var cy = playerChunkY + dy;
+				var cz = playerChunkZ + dz;
+				if ( !this.isChunkInRange( cx, cy, cz, playerX, playerY, playerZ ) ) continue;
+				var key = this.getChunkKey( cx, cy, cz );
+				targetKeys.add( key );
+				var chunk = this.chunkLookup && this.chunkLookup[key];
+				if ( chunk && !chunk.loaded ) this.loadChunk( chunk );
+			}
 		}
-		else if ( !inRange && chunk.loaded )
-		{
-			this.unloadChunk( i );
+	}
+
+	if ( this.loadedChunks && this.loadedChunks.size ) {
+		var unloadQueue = [];
+		this.loadedChunks.forEach( function( key ) {
+			if ( !targetKeys.has( key ) ) unloadQueue.push( key );
+		} );
+		for ( var i = 0; i < unloadQueue.length; i++ ) {
+			var chunk = this.chunkLookup[ unloadQueue[i] ];
+			if ( chunk ) this.unloadChunk( chunk );
 		}
 	}
 };
@@ -650,48 +684,47 @@ Renderer.prototype.buildChunks = function( count )
 	for ( var i = 0; i < chunks.length; i++ )
 	{
 		var chunk = chunks[i];
+		if ( !chunk.loaded || !chunk.dirty )
+			continue;
+
+		var vertices = [];
 		
-		if ( chunk.dirty )
+		// Create map of lowest blocks that are still lit
+		var lightmap = {};
+		for ( var x = chunk.start[0] - 1; x < chunk.end[0] + 1; x++ )
 		{
-			var vertices = [];
+			lightmap[x] = {};
 			
-			// Create map of lowest blocks that are still lit
-			var lightmap = {};
-			for ( var x = chunk.start[0] - 1; x < chunk.end[0] + 1; x++ )
+			for ( var y = chunk.start[1] - 1; y < chunk.end[1] + 1; y++ )
 			{
-				lightmap[x] = {};
-				
-				for ( var y = chunk.start[1] - 1; y < chunk.end[1] + 1; y++ )
+				for ( var z = world.sz - 1; z >= 0; z-- )
 				{
-					for ( var z = world.sz - 1; z >= 0; z-- )
-					{
-						lightmap[x][y] = z;
-						if ( !world.getBlock( x, y, z ).transparent ) break;
-					}
+					lightmap[x][y] = z;
+					if ( !world.getBlock( x, y, z ).transparent ) break;
 				}
 			}
-			
-			// Add vertices for blocks
-			for ( var x = chunk.start[0]; x < chunk.end[0]; x++ ) {
-				for ( var y = chunk.start[1]; y < chunk.end[1]; y++ ) {
-					for ( var z = chunk.start[2]; z < chunk.end[2]; z++ ) {
-						if ( world.blocks[x][y][z] == BLOCK.AIR ) continue;
-						BLOCK.pushVertices( vertices, world, lightmap, x, y, z );
-					}
-				}
-			}
-			
-			// Create WebGL buffer
-			if ( chunk.buffer ) gl.deleteBuffer( chunk.buffer );
-			
-			var buffer = chunk.buffer = gl.createBuffer();
-			buffer.vertices = vertices.length / 9;
-			gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
-			gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STATIC_DRAW );
-			
-			chunk.dirty = false;
-			count--;
 		}
+		
+		// Add vertices for blocks
+		for ( var x = chunk.start[0]; x < chunk.end[0]; x++ ) {
+			for ( var y = chunk.start[1]; y < chunk.end[1]; y++ ) {
+				for ( var z = chunk.start[2]; z < chunk.end[2]; z++ ) {
+					if ( world.blocks[x][y][z] == BLOCK.AIR ) continue;
+					BLOCK.pushVertices( vertices, world, lightmap, x, y, z );
+				}
+			}
+		}
+		
+		// Create WebGL buffer
+		if ( chunk.buffer ) gl.deleteBuffer( chunk.buffer );
+		
+		var buffer = chunk.buffer = gl.createBuffer();
+		buffer.vertices = vertices.length / 9;
+		gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
+		gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STATIC_DRAW );
+		
+		chunk.dirty = false;
+		count--;
 		
 		if ( count == 0 ) break;
 	}

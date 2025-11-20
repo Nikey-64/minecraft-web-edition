@@ -18,4 +18,4 @@ Warning: make sure you do step by step (i mean, do not try to do all at the same
 - [Done!] Modify draw() to call updateChunks() and only render loaded chunks
 - [Done!] Modify buildChunks() to only build loaded chunks (effectively done via dirty flag on loaded chunks)
 - [Done!] Add createChunkFromString() method to World class (world.js)
-- [ ] Test the implementation by running (start singleplayer.html)
+- [ ] Test the implementation by running copyng on xampp and going to localhost

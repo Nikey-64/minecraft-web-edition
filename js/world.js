@@ -32,6 +32,9 @@ function World( sx, sy, sz )
 	this.sz = sz;
 	
 	this.players = {};
+	this.chunkSize = 16;
+	this.chunkStates = {};
+	this.chunkStoragePrefix = "minecraft_chunk_";
 }
 
 // createFlatWorld()
@@ -127,6 +130,108 @@ World.prototype.setBlock = function( x, y, z, type )
 {
 	this.blocks[x][y][z] = type;
 	if ( this.renderer != null ) this.renderer.onBlockChanged( x, y, z );
+}
+
+World.prototype.setChunking = function( chunkSize )
+{
+	if ( chunkSize ) this.chunkSize = chunkSize;
+	if ( !this.chunkStates ) this.chunkStates = {};
+}
+
+World.prototype.getChunkKeyFromCoords = function( x, y, z )
+{
+	var cx = Math.floor( x / this.chunkSize );
+	var cy = Math.floor( y / this.chunkSize );
+	var cz = Math.floor( z / this.chunkSize );
+	return cx + "|" + cy + "|" + cz;
+}
+
+World.prototype.getChunkKeyFromChunk = function( chunk )
+{
+	return this.getChunkKeyFromCoords( chunk.start[0], chunk.start[1], chunk.start[2] );
+}
+
+World.prototype.ensureChunkLoaded = function( chunk, chunkSize )
+{
+	if ( !chunk ) return;
+	var size = chunkSize || this.chunkSize;
+	var key = this.getChunkKeyFromChunk( chunk );
+	if ( this.chunkStates && this.chunkStates[key] === "loaded" ) return;
+	var data = this.readChunkFromStorage( key );
+	if ( data )
+	{
+		this.applyChunkString( chunk.start, size, data );
+	}
+	if ( !this.chunkStates ) this.chunkStates = {};
+	this.chunkStates[key] = "loaded";
+}
+
+World.prototype.persistChunk = function( chunk, chunkSize )
+{
+	if ( !chunk ) return;
+	var size = chunkSize || this.chunkSize;
+	var key = this.getChunkKeyFromChunk( chunk );
+	var serialized = this.toChunkString( chunk.start[0], chunk.start[1], chunk.start[2], size );
+	var stored = this.writeChunkToStorage( key, serialized );
+	if ( stored )
+	{
+		this.clearChunkInMemory( chunk.start, size );
+		if ( !this.chunkStates ) this.chunkStates = {};
+		this.chunkStates[key] = "stored";
+	}
+}
+
+World.prototype.clearChunkInMemory = function( start, chunkSize )
+{
+	for ( var x = start[0]; x < start[0] + chunkSize; x++ )
+	{
+		for ( var y = start[1]; y < start[1] + chunkSize; y++ )
+		{
+			for ( var z = start[2]; z < start[2] + chunkSize; z++ )
+			{
+				this.blocks[x][y][z] = BLOCK.AIR;
+			}
+		}
+	}
+}
+
+World.prototype.applyChunkString = function( start, chunkSize, data )
+{
+	if ( !data ) return;
+	var i = 0;
+	for ( var x = start[0]; x < start[0] + chunkSize; x++ )
+	{
+		for ( var y = start[1]; y < start[1] + chunkSize; y++ )
+		{
+			for ( var z = start[2]; z < start[2] + chunkSize; z++ )
+			{
+				if ( i >= data.length ) return;
+				this.blocks[x][y][z] = BLOCK.fromId( data.charCodeAt( i ) - 97 );
+				i++;
+			}
+		}
+	}
+}
+
+World.prototype.readChunkFromStorage = function( key )
+{
+	if ( typeof localStorage === "undefined" ) return null;
+	return localStorage.getItem( this.chunkStoragePrefix + key );
+}
+
+World.prototype.writeChunkToStorage = function( key, data )
+{
+	if ( typeof localStorage === "undefined" ) return false;
+	try
+	{
+		localStorage.setItem( this.chunkStoragePrefix + key, data );
+		return true;
+	}
+	catch ( e )
+	{
+		console.warn( "Failed to store chunk", key, e );
+		return false;
+	}
 }
 
 // toNetworkString()
