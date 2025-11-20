@@ -273,6 +273,13 @@ Player.prototype.update = function()
 	if ( this.lastUpdate != null )
 	{
 		var delta = ( new Date().getTime() - this.lastUpdate ) / 1000;
+		
+		// Limit delta to prevent large jumps when game is paused/resumed
+		// This prevents the player from falling through the world or moving too fast
+		var maxDelta = 0.1; // Maximum 100ms delta (10 FPS equivalent)
+		if ( delta > maxDelta ) {
+			delta = maxDelta;
+		}
 
 		// View
 		if ( this.dragging )
