@@ -139,9 +139,14 @@
 				// Spawn local player
 				client.on( "spawn", function()
 				{
+					// Set up physics
+					physics = new Physics();
+					physics.setWorld( world );
+					
 					// Set up local player
 					player = new Player();
 					player.setWorld( world );
+					player.setPhysics( physics );
 					player.setClient( client );
 					player.setInputCanvas( "renderSurface" );
 					player.setMaterialSelector( "materialSelector" );

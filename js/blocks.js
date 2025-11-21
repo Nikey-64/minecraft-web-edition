@@ -332,6 +332,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 	var blockLeft = world.getBlock( x - 1, y, z );
 	var blockRight = world.getBlock( x + 1, y, z );
 	
+	// Small offset to eliminate gaps between blocks (texture bleeding)
+	// This extends blocks slightly to cover any precision gaps
+	var OFFSET = 0.001;
+	
 	var bH = block.fluid && ( z == world.sz - 1 || !blockTop.fluid ) ? 0.9 : 1.0;
 	
 	// Top - only render if adjacent block is transparent or doesn't exist (AIR)
@@ -357,10 +361,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		
 		pushQuad(
 			vertices,
-			[ x, y, z + bH, c[0], c[1], r, g, b, 1.0 ],
-			[ x + 1.0, y, z + bH, c[2], c[1], r, g, b, 1.0 ],
-			[ x + 1.0, y + 1.0, z + bH, c[2], c[3], r, g, b, 1.0 ],
-			[ x, y + 1.0, z + bH, c[0], c[3], r, g, b, 1.0 ]
+			[ x - OFFSET, y - OFFSET, z + bH, c[0], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, y - OFFSET, z + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z + bH, c[2], c[3], r, g, b, 1.0 ],
+			[ x - OFFSET, y + 1.0 + OFFSET, z + bH, c[0], c[3], r, g, b, 1.0 ]
 		);
 	}
 	
@@ -373,10 +377,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		
 		pushQuad(
 			vertices,							
-			[ x, y + 1.0, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0, y + 1.0, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0, y, z, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x, y, z, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, y + 1.0 + OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y - OFFSET, z, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y - OFFSET, z, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
 	
@@ -390,10 +394,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		
 		pushQuad(
 			vertices,
-			[ x, y, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0, y, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0, y, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x, y, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, y - OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y - OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y - OFFSET, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y - OFFSET, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
 	
@@ -406,10 +410,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		
 		pushQuad(
 			vertices,
-			[ x, y + 1.0, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0, y + 1.0, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0, y + 1.0, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x, y + 1.0, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, y + 1.0 + OFFSET, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y + 1.0 + OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
 	
@@ -422,10 +426,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		
 		pushQuad(
 			vertices,
-			[ x, y, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x, y + 1.0, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x, y + 1.0, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x, y, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, y - OFFSET, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y + 1.0 + OFFSET, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y + 1.0 + OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y - OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
 	
@@ -439,10 +443,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		
 		pushQuad(
 			vertices,
-			[ x + 1.0, y, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0, y + 1.0, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0, y + 1.0, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0, y, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x + 1.0 + OFFSET, y - OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y - OFFSET, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
 }

@@ -44,6 +44,15 @@ Player.prototype.setClient = function( client )
 	this.client = client;
 }
 
+// setPhysics( physics )
+//
+// Assign the physics simulator to this player.
+
+Player.prototype.setPhysics = function( physics )
+{
+	this.physics = physics;
+}
+
 // setInputCanvas( id )
 //
 // Set the canvas the renderer uses for some input operations.
@@ -234,7 +243,43 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 		if ( destroy )
 			obj.setBlock( block.x, block.y, block.z, BLOCK.AIR );
 		else
-			obj.setBlock( block.x + block.n.x, block.y + block.n.y, block.z + block.n.z, this.buildMaterial );
+		{
+			// Calcular la posición donde se colocará el bloque
+			var placeX = block.x + block.n.x;
+			var placeY = block.y + block.n.y;
+			var placeZ = block.z + block.n.z;
+			
+			// Verificar si el bloque se colocaría dentro de la hitbox del jugador
+			// Hitbox del jugador: tamaño 0.25 en X e Y, altura 1.7 en Z
+			var playerSize = 0.25;
+			var playerHeight = 1.7;
+			var playerMinX = this.pos.x - playerSize;
+			var playerMaxX = this.pos.x + playerSize;
+			var playerMinY = this.pos.y - playerSize;
+			var playerMaxY = this.pos.y + playerSize;
+			var playerMinZ = this.pos.z;
+			var playerMaxZ = this.pos.z + playerHeight;
+			
+			// El bloque ocupa desde (placeX, placeY, placeZ) hasta (placeX+1, placeY+1, placeZ+1)
+			var blockMinX = placeX;
+			var blockMaxX = placeX + 1;
+			var blockMinY = placeY;
+			var blockMaxY = placeY + 1;
+			var blockMinZ = placeZ;
+			var blockMaxZ = placeZ + 1;
+			
+			// Verificar intersección entre la hitbox del jugador y el bloque a colocar
+			var intersects = ( playerMaxX > blockMinX && playerMinX < blockMaxX &&
+			                   playerMaxY > blockMinY && playerMinY < blockMaxY &&
+			                   playerMaxZ > blockMinZ && playerMinZ < blockMaxZ );
+			
+			// Si hay intersección, no permitir colocar el bloque
+			if ( intersects ) {
+				return; // No colocar el bloque dentro del jugador
+			}
+			
+			obj.setBlock( placeX, placeY, placeZ, this.buildMaterial );
+		}
 	}
 }
 
@@ -356,6 +401,10 @@ Player.prototype.update = function()
 Player.prototype.resolveCollision = function( pos, bPos, velocity )
 {
 	var world = this.world;
+	
+	// El sistema de colisiones original ya maneja las colisiones correctamente
+	// Solo necesitamos confiar en él y no agregar verificaciones adicionales que bloqueen el movimiento
+	
 	var playerRect = { x: pos.x + velocity.x, y: pos.y + velocity.y, size: 0.25 };
 
 	// Collect XY collision sides
