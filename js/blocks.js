@@ -323,10 +323,19 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 	var blocks = world.blocks;
 	var blockLit = z >= lightmap[x][y];
 	var block = blocks[x][y][z];
-	var bH = block.fluid && ( z == world.sz - 1 || !blocks[x][y][z+1].fluid ) ? 0.9 : 1.0;
 	
-	// Top
-	if ( z == world.sz - 1 || world.blocks[x][y][z+1].transparent || block.fluid )
+	// Use getBlock() to safely check adjacent blocks (handles out-of-bounds and unloaded chunks)
+	var blockTop = world.getBlock( x, y, z + 1 );
+	var blockBottom = world.getBlock( x, y, z - 1 );
+	var blockFront = world.getBlock( x, y - 1, z );
+	var blockBack = world.getBlock( x, y + 1, z );
+	var blockLeft = world.getBlock( x - 1, y, z );
+	var blockRight = world.getBlock( x + 1, y, z );
+	
+	var bH = block.fluid && ( z == world.sz - 1 || !blockTop.fluid ) ? 0.9 : 1.0;
+	
+	// Top - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( z == world.sz - 1 || blockTop.transparent || block.fluid )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.UP );
 		
@@ -355,8 +364,8 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		);
 	}
 	
-	// Bottom
-	if ( z == 0 || world.blocks[x][y][z-1].transparent )
+	// Bottom - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( z == 0 || blockBottom.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.DOWN );
 		
@@ -371,8 +380,8 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		);
 	}
 	
-	// Front
-	if ( y == 0 || world.blocks[x][y-1][z].transparent )
+	// Front - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( y == 0 || blockFront.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.FORWARD );
 		
@@ -388,8 +397,8 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		);
 	}
 	
-	// Back
-	if ( y == world.sy - 1 || world.blocks[x][y+1][z].transparent )
+	// Back - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( y == world.sy - 1 || blockBack.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.BACK );
 		
@@ -404,8 +413,8 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		);
 	}
 	
-	// Left
-	if ( x == 0 || world.blocks[x-1][y][z].transparent )
+	// Left - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( x == 0 || blockLeft.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.LEFT );
 		
@@ -420,8 +429,8 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		);
 	}
 	
-	// Right
-	if ( x == world.sx - 1 || world.blocks[x+1][y][z].transparent )
+	// Right - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( x == world.sx - 1 || blockRight.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.RIGHT );
 		
