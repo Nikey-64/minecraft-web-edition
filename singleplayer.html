@@ -332,13 +332,19 @@
 				}
 			}
 
-			// Function to start the render loop
+			// Function to start the render loop (optimizado con requestAnimationFrame)
 			function startGameLoop() {
-				gameLoopInterval = setInterval( function()
-				{
+				var animationFrameId;
+				var lastFrameTime = performance.now();
+				
+				function gameLoop(currentTime) {
 					if (!paused) {
 						var frameStart = performance.now();
-						var time = new Date().getTime() / 1000.0;
+						var deltaTime = (currentTime - lastFrameTime) / 1000.0;
+						lastFrameTime = currentTime;
+						
+						// Limitar deltaTime para evitar saltos grandes
+						if (deltaTime > 0.1) deltaTime = 0.016;
 
 						// Simulate physics
 						measureTime('physics', function() {
@@ -350,9 +356,9 @@
 							player.update();
 						});
 
-						// Build a chunk
+						// Build chunks (reducido a 1 para máximo rendimiento)
 						measureTime('buildChunks', function() {
-							render.buildChunks( 32 );
+							render.buildChunks( 1 );
 						});
 
 						// Draw world
@@ -387,7 +393,6 @@
 						measureTime('total', function() { return frameTime; });
 
 						// Calculate FPS
-						var currentTime = performance.now();
 						frameCount++;
 						if (currentTime - lastTime >= 1000) {
 							fps = frameCount;
@@ -399,10 +404,13 @@
 							// Log performance stats every second
 							logPerformanceStats();
 						}
-
-						while ( new Date().getTime() / 1000 - time < 0.016 );
 					}
-				}, 1 );
+					
+					animationFrameId = requestAnimationFrame(gameLoop);
+				}
+				
+				animationFrameId = requestAnimationFrame(gameLoop);
+				gameLoopInterval = animationFrameId; // Guardar para poder cancelarlo
 			}
 
 			// Function to pause the game

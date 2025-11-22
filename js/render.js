@@ -170,10 +170,10 @@ Renderer.prototype.draw = function()
 	gl.viewport( 0, 0, gl.viewportWidth, gl.viewportHeight );
 	gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
 
-	// Update chunks based on player position (only every N frames to reduce overhead)
+	// Update chunks based on player position (optimizado: solo cada 20 frames para reducir overhead)
 	if (!this._updateChunksFrameCount) this._updateChunksFrameCount = 0;
 	this._updateChunksFrameCount++;
-	if (this._updateChunksFrameCount >= 5) { // Update chunks every 5 frames
+	if (this._updateChunksFrameCount >= 20) { // Update chunks every 20 frames (muy reducido para mejor FPS)
 		var updateStart = performance.now();
 		this.updateChunks();
 		var updateTime = performance.now() - updateStart;
@@ -188,35 +188,91 @@ Renderer.prototype.draw = function()
 	}
 	
 	// Actualizar buffer de bloques animados solo si hay cambios o cada N frames (optimizado)
-	if ( !this._animatedBlocksFrameCount ) this._animatedBlocksFrameCount = 0;
-	this._animatedBlocksFrameCount++;
-	var hasAnimations = this.world.blockAnimations && Object.keys(this.world.blockAnimations).length > 0;
-	// Actualizar cada 2 frames o si hay cambios marcados (más frecuente para animaciones suaves)
-	if ( hasAnimations && ( this._animatedBlocksFrameCount >= 2 || this._animatedBlocksDirty ) ) {
-		this.updateAnimatedBlocksBuffer();
-		this._animatedBlocksFrameCount = 0;
-		this._animatedBlocksDirty = false;
-	} else if ( !hasAnimations && this.animatedBlocksBuffer ) {
-		// Limpiar buffer si no hay animaciones
-		this.updateAnimatedBlocksBuffer();
+	// Optimización: verificar solo si blockAnimations existe, no calcular length cada frame
+	var hasAnimations = this.world.blockAnimations && this.world._hasAnimations;
+	if ( hasAnimations ) {
+		// Solo verificar length si realmente hay un objeto de animaciones
+		if ( !this._animatedBlocksFrameCount ) this._animatedBlocksFrameCount = 0;
+		this._animatedBlocksFrameCount++;
+		// Actualizar cada 3 frames para reducir overhead
+		if ( this._animatedBlocksFrameCount >= 3 || this._animatedBlocksDirty ) {
+			this.updateAnimatedBlocksBuffer();
+			this._animatedBlocksFrameCount = 0;
+			this._animatedBlocksDirty = false;
+		}
+	} else if ( this.animatedBlocksBuffer ) {
+		// Limpiar buffer una sola vez si no hay animaciones
+		var gl = this.gl;
+		try {
+			gl.deleteBuffer( this.animatedBlocksBuffer );
+		} catch ( e ) {
+			// Ignorar errores
+		}
+		this.animatedBlocksBuffer = null;
 	}
 
-	// Draw level chunks
+	// Draw level chunks (optimizado: solo dibujar chunks visibles)
 	var chunks = this.chunks;
 
 	gl.bindTexture( gl.TEXTURE_2D, this.texTerrain );
 
 	if ( chunks != null )
 	{
+		// Cachear posición de cámara para frustum culling (optimizado)
+		var camX = this.camPos[0];
+		var camY = this.camPos[1];
+		var camZ = this.camPos[2];
+		var renderDistSq = (this.renderDistance * this.chunkSize) * (this.renderDistance * this.chunkSize);
+		var chunkSize = this.chunkSize;
+		
+		// Pre-calcular límites de render distance para early exit
+		var minX = camX - this.renderDistance * chunkSize;
+		var maxX = camX + this.renderDistance * chunkSize;
+		var minY = camY - this.renderDistance * chunkSize;
+		var maxY = camY + this.renderDistance * chunkSize;
+		var minZ = camZ - this.renderDistance * chunkSize;
+		var maxZ = camZ + this.renderDistance * chunkSize;
+		
 		for ( var i = 0; i < chunks.length; i++ )
 		{
-			if ( chunks[i].loaded && chunks[i].buffer != null )
-				this.drawBuffer( chunks[i].buffer );
+			var chunk = chunks[i];
+			if ( !chunk.loaded || !chunk.buffer || chunk.buffer.vertices <= 0 ) continue;
+			
+			// Early exit: verificar límites antes de calcular distancia
+			var chunkStartX = chunk.start[0];
+			var chunkEndX = chunk.end[0];
+			var chunkStartY = chunk.start[1];
+			var chunkEndY = chunk.end[1];
+			var chunkStartZ = chunk.start[2];
+			var chunkEndZ = chunk.end[2];
+			
+			// Verificar si el chunk está fuera de los límites (más rápido que calcular distancia)
+			if ( chunkEndX < minX || chunkStartX > maxX ||
+			     chunkEndY < minY || chunkStartY > maxY ||
+			     chunkEndZ < minZ || chunkStartZ > maxZ ) {
+				continue; // Chunk está fuera de rango, saltar
+			}
+			
+			// Frustum culling: calcular distancia solo si está cerca de los límites
+			var chunkCenterX = (chunkStartX + chunkEndX) * 0.5;
+			var chunkCenterY = (chunkStartY + chunkEndY) * 0.5;
+			var chunkCenterZ = (chunkStartZ + chunkEndZ) * 0.5;
+			
+			var dx = chunkCenterX - camX;
+			var dy = chunkCenterY - camY;
+			var dz = chunkCenterZ - camZ;
+			var distSq = dx * dx + dy * dy + dz * dz;
+			
+			// Solo dibujar si está dentro del render distance
+			if ( distSq <= renderDistSq * 1.5 ) {
+				this.drawBuffer( chunk.buffer );
+			}
 		}
 	}
 	
 	// Dibujar bloques animados (buffer separado, más eficiente)
-	if ( this.animatedBlocksBuffer && this.animatedBlocksBuffer.vertices > 0 )
+	// Optimización: solo dibujar si realmente hay animaciones
+	if ( this.world._hasAnimations && this.animatedBlocksBuffer && this.animatedBlocksBuffer.vertices > 0 )
 	{
 		this.drawBuffer( this.animatedBlocksBuffer );
 	}
@@ -709,10 +765,16 @@ Renderer.prototype.updateChunks = function()
 	var playerChunkY = Math.floor( playerY / this.chunkSize );
 	var playerChunkZ = Math.floor( playerZ / this.chunkSize );
 	var targetKeys = new Set();
+	var renderDist = this.renderDistance;
 
-	for ( var dx = -this.renderDistance; dx <= this.renderDistance; dx++ ) {
-		for ( var dy = -this.renderDistance; dy <= this.renderDistance; dy++ ) {
-			for ( var dz = -this.renderDistance; dz <= this.renderDistance; dz++ ) {
+	// Optimización: pre-calcular límites y usar early exit
+	var maxChunksToCheck = renderDist * renderDist * renderDist * 8; // Límite aproximado
+	var chunksChecked = 0;
+
+	for ( var dx = -renderDist; dx <= renderDist && chunksChecked < maxChunksToCheck; dx++ ) {
+		for ( var dy = -renderDist; dy <= renderDist && chunksChecked < maxChunksToCheck; dy++ ) {
+			for ( var dz = -renderDist; dz <= renderDist && chunksChecked < maxChunksToCheck; dz++ ) {
+				chunksChecked++;
 				var cx = playerChunkX + dx;
 				var cy = playerChunkY + dy;
 				var cz = playerChunkZ + dz;
@@ -725,14 +787,18 @@ Renderer.prototype.updateChunks = function()
 		}
 	}
 
-	if ( this.loadedChunks && this.loadedChunks.size ) {
+	// Optimización: solo des-cargar chunks si hay muchos cargados (evitar thrashing)
+	if ( this.loadedChunks && this.loadedChunks.size > targetKeys.size * 1.2 ) {
 		var unloadQueue = [];
+		var self = this;
 		this.loadedChunks.forEach( function( key ) {
 			if ( !targetKeys.has( key ) ) unloadQueue.push( key );
 		} );
-		for ( var i = 0; i < unloadQueue.length; i++ ) {
-			var chunk = this.chunkLookup[ unloadQueue[i] ];
-			if ( chunk ) this.unloadChunk( chunk );
+		// Limitar cantidad de chunks a des-cargar por frame
+		var maxUnloads = Math.min( unloadQueue.length, 5 );
+		for ( var i = 0; i < maxUnloads; i++ ) {
+			var chunk = self.chunkLookup[ unloadQueue[i] ];
+			if ( chunk ) self.unloadChunk( chunk );
 		}
 	}
 };
@@ -791,8 +857,41 @@ Renderer.prototype.buildChunks = function( count )
 	var world = this.world;
 	var dirtyChunks = this.dirtyChunks;
 	
+	// Limitar la cantidad de chunks construidos por frame para mantener FPS
+	var maxChunksPerFrame = Math.min( count, 1 ); // Reducido a 1 chunk por frame para máximo rendimiento
+	
+	// Optimización: ordenar chunks por distancia al jugador (más cercanos primero)
+	if ( dirtyChunks.length > 1 && this.camPos ) {
+		var camX = this.camPos[0];
+		var camY = this.camPos[1];
+		var camZ = this.camPos[2];
+		
+		// Calcular distancias y ordenar (solo si hay muchos chunks)
+		if ( dirtyChunks.length > 5 ) {
+			for ( var i = 0; i < dirtyChunks.length; i++ ) {
+				var chunk = dirtyChunks[i];
+				if ( !chunk.loaded || !chunk.dirty ) continue;
+				
+				var cx = (chunk.start[0] + chunk.end[0]) * 0.5;
+				var cy = (chunk.start[1] + chunk.end[1]) * 0.5;
+				var cz = (chunk.start[2] + chunk.end[2]) * 0.5;
+				var dx = cx - camX;
+				var dy = cy - camY;
+				var dz = cz - camZ;
+				chunk._sortDist = dx * dx + dy * dy + dz * dz;
+			}
+			
+			// Ordenar por distancia (más cercanos primero)
+			dirtyChunks.sort( function( a, b ) {
+				if ( !a.loaded || !a.dirty ) return 1;
+				if ( !b.loaded || !b.dirty ) return -1;
+				return (a._sortDist || Infinity) - (b._sortDist || Infinity);
+			} );
+		}
+	}
+	
 	// Process dirty chunks from the queue
-	for ( var i = 0; i < dirtyChunks.length && count > 0; i++ )
+	for ( var i = 0; i < dirtyChunks.length && maxChunksPerFrame > 0; i++ )
 	{
 		var chunk = dirtyChunks[i];
 		
@@ -809,27 +908,46 @@ Renderer.prototype.buildChunks = function( count )
 		
 		// Create map of lowest blocks that are still lit
 		// Optimize: only check up to a reasonable height instead of entire world
-		var maxLightCheckZ = Math.min( world.sz - 1, chunk.end[2] + 32 );
+		var maxLightCheckZ = Math.min( world.sz - 1, chunk.end[2] + 8 ); // Reducido a 8 para mejor rendimiento
 		var lightmap = {};
-		for ( var x = chunk.start[0] - 1; x < chunk.end[0] + 1; x++ )
+		
+		// Optimización: pre-calcular límites y usar acceso directo a bloques
+		var startX = Math.max( 0, chunk.start[0] - 1 );
+		var endX = Math.min( world.sx, chunk.end[0] + 1 );
+		var startY = Math.max( 0, chunk.start[1] - 1 );
+		var endY = Math.min( world.sy, chunk.end[1] + 1 );
+		var blocks = world.blocks;
+		
+		for ( var x = startX; x < endX; x++ )
 		{
 			lightmap[x] = {};
+			var blocksX = blocks[x];
+			if ( !blocksX ) continue;
 			
-			for ( var y = chunk.start[1] - 1; y < chunk.end[1] + 1; y++ )
+			for ( var y = startY; y < endY; y++ )
 			{
-				// Start from maxLightCheckZ and go down instead of from world.sz-1
+				var blocksXY = blocksX[y];
+				if ( !blocksXY ) {
+					lightmap[x][y] = 0;
+					continue;
+				}
+				
+				// Start from maxLightCheckZ and go down - usar acceso directo
 				for ( var z = maxLightCheckZ; z >= 0; z-- )
 				{
 					lightmap[x][y] = z;
-					if ( !world.getBlock( x, y, z ).transparent ) break;
+					var block = blocksXY[z];
+					if ( block && !block.transparent ) break;
 				}
 			}
 		}
 		
 		// Crear un mapa rápido de posiciones animadas para verificación O(1)
-		var animatedPositions = {};
-		if ( world.blockAnimations )
+		// Optimización: solo crear el mapa si realmente hay animaciones
+		var animatedPositions = null;
+		if ( world.blockAnimations && world._hasAnimations )
 		{
+			animatedPositions = {};
 			for ( var animKey in world.blockAnimations )
 			{
 				var coords = animKey.split( "," );
@@ -841,15 +959,35 @@ Renderer.prototype.buildChunks = function( count )
 		}
 		
 		// Add vertices for blocks (solo bloques normales, los animados se dibujan por separado)
-		for ( var x = chunk.start[0]; x < chunk.end[0]; x++ ) {
-			for ( var y = chunk.start[1]; y < chunk.end[1]; y++ ) {
-				for ( var z = chunk.start[2]; z < chunk.end[2]; z++ ) {
-					var block = world.blocks[x][y][z];
-					if ( block == BLOCK.AIR ) continue;
+		// Optimización: cachear referencias y validar límites una vez
+		var blocks = world.blocks;
+		var startX = chunk.start[0];
+		var endX = chunk.end[0];
+		var startY = chunk.start[1];
+		var endY = chunk.end[1];
+		var startZ = chunk.start[2];
+		var endZ = chunk.end[2];
+		
+		for ( var x = startX; x < endX; x++ ) {
+			if ( x < 0 || x >= world.sx ) continue;
+			var blocksX = blocks[x];
+			if ( !blocksX ) continue;
+			
+			for ( var y = startY; y < endY; y++ ) {
+				if ( y < 0 || y >= world.sy ) continue;
+				var blocksXY = blocksX[y];
+				if ( !blocksXY ) continue;
+				
+				for ( var z = startZ; z < endZ; z++ ) {
+					if ( z < 0 || z >= world.sz ) continue;
+					var block = blocksXY[z];
+					if ( !block || block == BLOCK.AIR ) continue;
 					
-					// Verificar si este bloque está siendo animado (verificación O(1))
-					var posKey = x + "," + y + "," + z;
-					if ( animatedPositions[posKey] ) continue;
+					// Verificar si este bloque está siendo animado (solo si hay animaciones)
+					if ( animatedPositions ) {
+						var posKey = x + "," + y + "," + z;
+						if ( animatedPositions[posKey] ) continue;
+					}
 					
 					// Dibujar el bloque en su posición normal
 					BLOCK.pushVertices( vertices, world, lightmap, x, y, z );
@@ -871,7 +1009,7 @@ Renderer.prototype.buildChunks = function( count )
 		// Remove from queue
 		dirtyChunks.splice( i, 1 );
 		i--;
-		count--;
+		maxChunksPerFrame--;
 	}
 }
 
@@ -883,7 +1021,8 @@ Renderer.prototype.updateAnimatedBlocksBuffer = function()
 {
 	var gl = this.gl;
 	
-	if ( !this.world || !this.world.blockAnimations ) 
+	// Optimización: verificar flag en lugar de calcular length
+	if ( !this.world || !this.world.blockAnimations || !this.world._hasAnimations ) 
 	{
 		// Si no hay animaciones, limpiar el buffer
 		if ( this.animatedBlocksBuffer )
