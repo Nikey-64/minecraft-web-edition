@@ -815,6 +815,20 @@ Renderer.prototype.buildChunks = function( count )
 			}
 		}
 		
+		// Crear un mapa rápido de posiciones animadas para verificación O(1)
+		var animatedPositions = {};
+		if ( world.blockAnimations )
+		{
+			for ( var animKey in world.blockAnimations )
+			{
+				var coords = animKey.split( "," );
+				var animX = parseInt( coords[0] );
+				var animY = parseInt( coords[1] );
+				var animFromZ = parseInt( coords[2] );
+				animatedPositions[animX + "," + animY + "," + animFromZ] = true;
+			}
+		}
+		
 		// Add vertices for blocks (solo bloques normales, los animados se dibujan por separado)
 		for ( var x = chunk.start[0]; x < chunk.end[0]; x++ ) {
 			for ( var y = chunk.start[1]; y < chunk.end[1]; y++ ) {
@@ -822,27 +836,9 @@ Renderer.prototype.buildChunks = function( count )
 					var block = world.blocks[x][y][z];
 					if ( block == BLOCK.AIR ) continue;
 					
-					// Verificar si este bloque está siendo animado (no dibujarlo aquí)
-					var isAnimated = false;
-					if ( world.blockAnimations )
-					{
-						for ( var animKey in world.blockAnimations )
-						{
-							var anim = world.blockAnimations[animKey];
-							var coords = animKey.split( "," );
-							var animX = parseInt( coords[0] );
-							var animY = parseInt( coords[1] );
-							var animFromZ = parseInt( coords[2] );
-							// Verificar si esta posición está siendo animada
-							if ( animX == x && animY == y && animFromZ == z )
-							{
-								isAnimated = true;
-								break;
-							}
-						}
-					}
-					
-					if ( isAnimated ) continue;
+					// Verificar si este bloque está siendo animado (verificación O(1))
+					var posKey = x + "," + y + "," + z;
+					if ( animatedPositions[posKey] ) continue;
 					
 					// Dibujar el bloque en su posición normal
 					BLOCK.pushVertices( vertices, world, lightmap, x, y, z );
@@ -850,13 +846,45 @@ Renderer.prototype.buildChunks = function( count )
 			}
 		}
 		
-		// Create WebGL buffer
-		if ( chunk.buffer ) gl.deleteBuffer( chunk.buffer );
-		
-		var buffer = chunk.buffer = gl.createBuffer();
-		buffer.vertices = vertices.length / 9;
-		gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
-		gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STATIC_DRAW );
+		// Create WebGL buffer de forma segura
+		try {
+			if ( chunk.buffer ) {
+				try {
+					gl.deleteBuffer( chunk.buffer );
+				} catch ( e ) {
+					// Ignorar errores al eliminar buffer antiguo
+				}
+			}
+			
+			var buffer = gl.createBuffer();
+			if ( !buffer ) {
+				console.error( "No se pudo crear el buffer del chunk" );
+				chunk.dirty = false;
+				dirtyChunks.splice( i, 1 );
+				i--;
+				count--;
+				continue;
+			}
+			
+			chunk.buffer = buffer;
+			buffer.vertices = vertices.length / 9;
+			
+			gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
+			gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STATIC_DRAW );
+			
+			// Verificar errores
+			var error = gl.getError();
+			if ( error != gl.NO_ERROR ) {
+				console.warn( "Error de WebGL al crear buffer del chunk:", error );
+			}
+		} catch ( e ) {
+			console.error( "Error creando buffer del chunk:", e );
+			chunk.dirty = false;
+			dirtyChunks.splice( i, 1 );
+			i--;
+			count--;
+			continue;
+		}
 		
 		chunk.dirty = false;
 		// Remove from queue
@@ -872,70 +900,132 @@ Renderer.prototype.buildChunks = function( count )
 
 Renderer.prototype.updateAnimatedBlocksBuffer = function()
 {
+	var gl = this.gl;
+	
 	if ( !this.world || !this.world.blockAnimations ) 
 	{
 		// Si no hay animaciones, limpiar el buffer
 		if ( this.animatedBlocksBuffer )
 		{
-			var gl = this.gl;
-			gl.deleteBuffer( this.animatedBlocksBuffer );
+			try {
+				gl.deleteBuffer( this.animatedBlocksBuffer );
+			} catch ( e ) {
+				// Ignorar errores al eliminar buffer
+			}
 			this.animatedBlocksBuffer = null;
 		}
 		return;
 	}
 	
-	var gl = this.gl;
 	var world = this.world;
 	var vertices = [];
-	var currentTime = new Date().getTime();
 	
-	// Crear lightmap simple para bloques animados (usar iluminación básica)
+	// Limitar el número de bloques animados para evitar sobrecarga
+	var maxAnimatedBlocks = 500;
+	var blockCount = 0;
+	
+	// Crear lightmap optimizado (una sola pasada)
 	var lightmap = {};
-	for ( var key in world.blockAnimations )
+	var animKeys = Object.keys( world.blockAnimations );
+	
+	// Pre-calcular lightmap para todos los bloques animados
+	for ( var i = 0; i < animKeys.length && blockCount < maxAnimatedBlocks; i++ )
 	{
+		var key = animKeys[i];
 		var anim = world.blockAnimations[key];
+		if ( !anim ) continue;
+		
 		var coords = key.split( "," );
 		var x = parseInt( coords[0] );
 		var y = parseInt( coords[1] );
+		var currentZ = anim.currentZ !== undefined ? anim.currentZ : anim.fromZ;
 		
 		if ( !lightmap[x] ) lightmap[x] = {};
-		// Usar una altura de iluminación simple (asumir que está iluminado si está alto)
-		var currentZ = anim.currentZ !== undefined ? anim.currentZ : anim.fromZ;
+		// Usar altura de iluminación basada en la posición Z
 		lightmap[x][y] = Math.floor( currentZ ) + 1;
 	}
 	
-	// Dibujar todos los bloques animados
-	for ( var key in world.blockAnimations )
+	// Dibujar todos los bloques animados (una sola pasada)
+	for ( var i = 0; i < animKeys.length && blockCount < maxAnimatedBlocks; i++ )
 	{
+		var key = animKeys[i];
 		var anim = world.blockAnimations[key];
+		if ( !anim ) continue;
+		
 		var coords = key.split( "," );
 		var x = parseInt( coords[0] );
 		var y = parseInt( coords[1] );
 		var currentZ = anim.currentZ !== undefined ? anim.currentZ : anim.fromZ;
 		
-		// Usar lightmap simple
+		// Validar coordenadas
+		if ( isNaN( x ) || isNaN( y ) || isNaN( currentZ ) ) continue;
+		if ( x < 0 || x >= world.sx || y < 0 || y >= world.sy ) continue;
+		
+		// Asegurar que lightmap existe
 		if ( !lightmap[x] ) lightmap[x] = {};
 		if ( !lightmap[x][y] ) lightmap[x][y] = Math.floor( currentZ ) + 1;
 		
 		// Dibujar el bloque animado
-		BLOCK.pushVerticesAtPosition( vertices, world, lightmap, x, y, currentZ, anim.blockType );
+		try {
+			BLOCK.pushVerticesAtPosition( vertices, world, lightmap, x, y, currentZ, anim.blockType );
+			blockCount++;
+		} catch ( e ) {
+			// Ignorar errores al dibujar bloques individuales
+			console.warn( "Error dibujando bloque animado:", e );
+		}
 	}
 	
-	// Crear o actualizar el buffer
-	if ( !this.animatedBlocksBuffer )
-	{
-		this.animatedBlocksBuffer = gl.createBuffer();
-	}
-	
-	if ( vertices.length > 0 )
-	{
-		this.animatedBlocksBuffer.vertices = vertices.length / 9;
-		gl.bindBuffer( gl.ARRAY_BUFFER, this.animatedBlocksBuffer );
-		gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.DYNAMIC_DRAW );
-	}
-	else
-	{
-		this.animatedBlocksBuffer.vertices = 0;
+	// Crear o actualizar el buffer de forma segura
+	try {
+		if ( !this.animatedBlocksBuffer )
+		{
+			this.animatedBlocksBuffer = gl.createBuffer();
+			if ( !this.animatedBlocksBuffer )
+			{
+				console.error( "No se pudo crear el buffer de bloques animados" );
+				return;
+			}
+		}
+		
+		if ( vertices.length > 0 )
+		{
+			this.animatedBlocksBuffer.vertices = vertices.length / 9;
+			gl.bindBuffer( gl.ARRAY_BUFFER, this.animatedBlocksBuffer );
+			
+			// Verificar que el buffer es válido antes de actualizar
+			var error = gl.getError();
+			if ( error != gl.NO_ERROR )
+			{
+				console.warn( "Error de WebGL antes de actualizar buffer:", error );
+				gl.bindBuffer( gl.ARRAY_BUFFER, null );
+				return;
+			}
+			
+			gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.DYNAMIC_DRAW );
+			
+			// Verificar errores después de actualizar
+			error = gl.getError();
+			if ( error != gl.NO_ERROR )
+			{
+				console.warn( "Error de WebGL al actualizar buffer:", error );
+			}
+		}
+		else
+		{
+			this.animatedBlocksBuffer.vertices = 0;
+		}
+	} catch ( e ) {
+		console.error( "Error actualizando buffer de bloques animados:", e );
+		// Limpiar buffer en caso de error
+		if ( this.animatedBlocksBuffer )
+		{
+			try {
+				gl.deleteBuffer( this.animatedBlocksBuffer );
+			} catch ( deleteError ) {
+				// Ignorar
+			}
+			this.animatedBlocksBuffer = null;
+		}
 	}
 }
 
@@ -981,15 +1071,36 @@ Renderer.prototype.setCamera = function( pos, ang )
 
 Renderer.prototype.drawBuffer = function( buffer )
 {
+	if ( !buffer || !buffer.vertices || buffer.vertices <= 0 ) return;
+	
 	var gl = this.gl;
 	
-	gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
-	
-	gl.vertexAttribPointer( this.aPos, 3, gl.FLOAT, false, 9*4, 0 );
-	gl.vertexAttribPointer( this.aColor, 4, gl.FLOAT, false, 9*4, 5*4 );
-	gl.vertexAttribPointer( this.aTexCoord, 2, gl.FLOAT, false, 9*4, 3*4 );
-	
-	gl.drawArrays( gl.TRIANGLES, 0, buffer.vertices );
+	try {
+		gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
+		
+		// Verificar que el buffer es válido
+		var error = gl.getError();
+		if ( error != gl.NO_ERROR )
+		{
+			console.warn( "Error de WebGL al bindear buffer:", error );
+			return;
+		}
+		
+		gl.vertexAttribPointer( this.aPos, 3, gl.FLOAT, false, 9*4, 0 );
+		gl.vertexAttribPointer( this.aColor, 4, gl.FLOAT, false, 9*4, 5*4 );
+		gl.vertexAttribPointer( this.aTexCoord, 2, gl.FLOAT, false, 9*4, 3*4 );
+		
+		gl.drawArrays( gl.TRIANGLES, 0, buffer.vertices );
+		
+		// Verificar errores después de dibujar
+		error = gl.getError();
+		if ( error != gl.NO_ERROR && error != gl.CONTEXT_LOST_WEBGL )
+		{
+			console.warn( "Error de WebGL al dibujar:", error );
+		}
+	} catch ( e ) {
+		console.error( "Error dibujando buffer:", e );
+	}
 }
 
 // getGrassColor( x, y )
