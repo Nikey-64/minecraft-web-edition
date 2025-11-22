@@ -320,7 +320,10 @@ BLOCK.fromId = function( id )
 
 BLOCK.pushVerticesAtPosition = function( vertices, world, lightmap, x, y, z, blockType )
 {
-	var blockLit = Math.floor( z ) >= lightmap[x][y];
+	// Validar y obtener lightmap de forma segura
+	var floorZ = Math.floor( z );
+	var lightValue = ( lightmap[x] && lightmap[x][y] !== undefined ) ? lightmap[x][y] : ( floorZ + 1 );
+	var blockLit = floorZ >= lightValue;
 	var block = blockType;
 	
 	// Use getBlock() to safely check adjacent blocks (handles out-of-bounds and unloaded chunks)
@@ -383,7 +386,8 @@ BLOCK.pushVerticesAtPosition = function( vertices, world, lightmap, x, y, z, blo
 	if ( y == 0 || blockFront.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, Math.floor( z ), DIRECTION.FORWARD );
-		var lightMultiplier = ( y == 0 || Math.floor( z ) >= lightmap[x][y-1] ) ? 1.0 : 0.6;
+		var frontLight = ( lightmap[x] && lightmap[x][y-1] !== undefined ) ? lightmap[x][y-1] : ( Math.floor( z ) + 1 );
+		var lightMultiplier = ( y == 0 || Math.floor( z ) >= frontLight ) ? 1.0 : 0.6;
 		if ( block.selflit ) lightMultiplier = 1.0;
 		
 		pushQuad(
@@ -429,7 +433,8 @@ BLOCK.pushVerticesAtPosition = function( vertices, world, lightmap, x, y, z, blo
 	if ( x == world.sx - 1 || blockRight.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, Math.floor( z ), DIRECTION.RIGHT );
-		var lightMultiplier = ( x == world.sx - 1 || Math.floor( z ) >= lightmap[x+1][y] ) ? 1.0 : 0.6;
+		var rightLight = ( lightmap[x+1] && lightmap[x+1][y] ) ? lightmap[x+1][y] : ( Math.floor( z ) + 1 );
+		var lightMultiplier = ( x == world.sx - 1 || Math.floor( z ) >= rightLight ) ? 1.0 : 0.6;
 		if ( block.selflit ) lightMultiplier = 1.0;
 		
 		pushQuad(

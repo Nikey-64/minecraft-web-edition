@@ -238,22 +238,32 @@ Physics.prototype.checkPlayerCollision = function( x, y, z )
 
 Physics.prototype.updateBlockAnimations = function()
 {
-	if ( !this.world ) return;
+	if ( !this.world || !this.world.blockAnimations ) return;
 	
 	var world = this.world;
 	var currentTime = new Date().getTime();
 	var animsToRemove = [];
 	var blocks = world.blocks;
+	var animKeys = Object.keys( world.blockAnimations );
+	var animCount = animKeys.length;
 	
-	for ( var key in world.blockAnimations )
+	// Limitar actualizaciones por frame para rendimiento
+	var maxUpdates = 50;
+	var updatesDone = 0;
+	
+	for ( var i = 0; i < animCount && updatesDone < maxUpdates; i++ )
 	{
+		var key = animKeys[i];
 		var anim = world.blockAnimations[key];
+		if ( !anim ) continue;
+		
+		// Parsear coordenadas una sola vez
 		var coords = key.split( "," );
-		var x = parseInt( coords[0] );
-		var y = parseInt( coords[1] );
+		var x = parseInt( coords[0], 10 );
+		var y = parseInt( coords[1], 10 );
 		
 		// Calcular delta time desde la última actualización
-		var deltaTime = ( currentTime - anim.lastUpdateTime ) / 1000.0; // Convertir a segundos
+		var deltaTime = ( currentTime - anim.lastUpdateTime ) / 1000.0;
 		anim.lastUpdateTime = currentTime;
 		
 		// Calcular nueva posición basada en la velocidad de caída
@@ -266,33 +276,25 @@ Physics.prototype.updateBlockAnimations = function()
 		
 		if ( floorZ < 0 )
 		{
-			// Llegó al fondo del mundo
 			hasGround = true;
 			newZ = 0;
 		}
 		else
 		{
-			// Verificar si hay un bloque sólido debajo
-			var blockBelow = world.getBlock( x, y, floorZ );
-			if ( blockBelow != BLOCK.AIR && !blockBelow.transparent )
-			{
-				hasGround = true;
-				newZ = floorZ + 1; // Colocar justo encima del bloque
-			}
-			// También verificar si el bloque está ocupando el espacio donde debería estar
-			else if ( floorZ >= 0 && blocks[x][y][floorZ] != BLOCK.AIR && !blocks[x][y][floorZ].transparent )
+			// Verificar si hay un bloque sólido debajo (optimizado: solo una verificación)
+			var blockBelow = blocks[x] && blocks[x][y] && blocks[x][y][floorZ];
+			if ( blockBelow && blockBelow != BLOCK.AIR && !blockBelow.transparent )
 			{
 				hasGround = true;
 				newZ = floorZ + 1;
 			}
 		}
 		
-		// Verificar si el bloque caería sobre el jugador
+		// Verificar colisión con jugador solo si no hay suelo
 		if ( !hasGround && this.checkPlayerCollision( x, y, floorZ ) )
 		{
-			// Detener la animación justo antes del jugador
 			hasGround = true;
-			newZ = Math.floor( newZ ) + 1;
+			newZ = floorZ + 1;
 		}
 		
 		// Actualizar posición actual
@@ -302,29 +304,23 @@ Physics.prototype.updateBlockAnimations = function()
 		if ( hasGround )
 		{
 			var finalZ = Math.floor( newZ );
-			
-			// Asegurarse de que la posición final sea válida
 			if ( finalZ < 0 ) finalZ = 0;
 			if ( finalZ >= world.sz ) finalZ = world.sz - 1;
 			
 			// Verificar que la posición final esté libre
 			if ( world.getBlock( x, y, finalZ ) == BLOCK.AIR )
 			{
-				// Mover el bloque a su posición final
 				world.setBlock( x, y, finalZ, anim.blockType );
 			}
-			else
+			else if ( finalZ + 1 < world.sz && world.getBlock( x, y, finalZ + 1 ) == BLOCK.AIR )
 			{
-				// Si la posición final está ocupada, intentar una posición arriba
-				if ( finalZ + 1 < world.sz && world.getBlock( x, y, finalZ + 1 ) == BLOCK.AIR )
-				{
-					world.setBlock( x, y, finalZ + 1, anim.blockType );
-				}
+				world.setBlock( x, y, finalZ + 1, anim.blockType );
 			}
 			
-			// Eliminar la animación
 			animsToRemove.push( key );
 		}
+		
+		updatesDone++;
 	}
 	
 	// Eliminar animaciones completadas

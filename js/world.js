@@ -135,6 +135,12 @@ World.prototype.setBlock = function( x, y, z, type )
 	this.blocks[x][y][z] = type;
 	if ( this.renderer != null ) this.renderer.onBlockChanged( x, y, z );
 	
+	// Marcar que los bloques animados necesitan actualización
+	if ( this.renderer && this.renderer._animatedBlocksDirty !== undefined )
+	{
+		this.renderer._animatedBlocksDirty = true;
+	}
+	
 	// Si se colocó un bloque con gravedad o se removió un bloque, agregar a la cola de verificación de física
 	if ( this.physics && this.physics.gravityCheckQueue )
 	{
