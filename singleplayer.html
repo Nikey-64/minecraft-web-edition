@@ -240,10 +240,10 @@
 			}
 
 			function buildWorldFromSeed( seedDefinition, seedName ) {
-				var sx = seedDefinition.sx || 255;
-				var sy = seedDefinition.sy || 255;
-				var sz = seedDefinition.sz || 255;
-				var chunkSize = seedDefinition.chunkSize || 16;
+				var sx = seedDefinition.sx || 256;
+				var sy = seedDefinition.sy || 256;
+				var sz = seedDefinition.sz || 256;
+				var chunkSize = seedDefinition.chunkSize || 8;
 				var w = new World( sx, sy, sz );
 				if ( w.setChunking ) w.setChunking( chunkSize );
 
