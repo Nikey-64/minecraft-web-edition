@@ -35,6 +35,9 @@ function World( sx, sy, sz )
 	this.chunkSize = 16;
 	this.chunkStates = {};
 	this.chunkStoragePrefix = "minecraft_chunk_";
+	
+	// Sistema de animaciones para bloques
+	this.blockAnimations = {}; // key: "x,y,z", value: { fromZ, toZ, startTime, duration }
 }
 
 // createFlatWorld()

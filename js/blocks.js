@@ -313,6 +313,135 @@ BLOCK.fromId = function( id )
 	return null;
 }
 
+// pushVerticesAtPosition( vertices, world, lightmap, x, y, z, blockType )
+//
+// Pushes the vertices for a block at a specific position with a specific block type.
+// Used for animated blocks that are moving.
+
+BLOCK.pushVerticesAtPosition = function( vertices, world, lightmap, x, y, z, blockType )
+{
+	var blockLit = Math.floor( z ) >= lightmap[x][y];
+	var block = blockType;
+	
+	// Use getBlock() to safely check adjacent blocks (handles out-of-bounds and unloaded chunks)
+	// For animated blocks, check blocks at the interpolated position
+	var blockTop = world.getBlock( x, y, Math.floor( z + 1 ) );
+	var blockBottom = world.getBlock( x, y, Math.floor( z - 1 ) );
+	var blockFront = world.getBlock( x, y - 1, Math.floor( z ) );
+	var blockBack = world.getBlock( x, y + 1, Math.floor( z ) );
+	var blockLeft = world.getBlock( x - 1, y, Math.floor( z ) );
+	var blockRight = world.getBlock( x + 1, y, Math.floor( z ) );
+	
+	// Small offset to eliminate gaps between blocks (texture bleeding)
+	var OFFSET = 0.001;
+	
+	var bH = block.fluid && ( Math.floor( z ) == world.sz - 1 || !blockTop.fluid ) ? 0.9 : 1.0;
+	
+	// Top - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( Math.floor( z ) == world.sz - 1 || blockTop.transparent || block.fluid )
+	{
+		var c = block.texture( world, lightmap, blockLit, x, y, Math.floor( z ), DIRECTION.UP );
+		
+		var lightMultiplier = Math.floor( z ) >= lightmap[x][y] ? 1.0 : 0.6;
+		if ( block.selflit ) lightMultiplier = 1.0;
+		
+		// Apply grass color filter if this is a grass block top face
+		var grassColor = [ 1.0, 1.0, 1.0 ]; // Default white
+		if ( block.useGrassColor && blockLit && world.renderer ) {
+			grassColor = world.renderer.getGrassColor( x, y );
+		}
+		
+		var r = grassColor[0] * lightMultiplier;
+		var g = grassColor[1] * lightMultiplier;
+		var b = grassColor[2] * lightMultiplier;
+		
+		pushQuad(
+			vertices,
+			[ x - OFFSET, y - OFFSET, z + bH, c[0], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, y - OFFSET, z + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z + bH, c[2], c[3], r, g, b, 1.0 ],
+			[ x - OFFSET, y + 1.0 + OFFSET, z + bH, c[0], c[3], r, g, b, 1.0 ]
+		);
+	}
+	
+	// Bottom - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( Math.floor( z ) == 0 || blockBottom.transparent )
+	{
+		var c = block.texture( world, lightmap, blockLit, x, y, Math.floor( z ), DIRECTION.DOWN );
+		var lightMultiplier = block.selflit ? 1.0 : 0.6;
+		
+		pushQuad(
+			vertices,
+			[ x - OFFSET, y + 1.0 + OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y - OFFSET, z, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y - OFFSET, z, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+		);
+	}
+	
+	// Front - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( y == 0 || blockFront.transparent )
+	{
+		var c = block.texture( world, lightmap, blockLit, x, y, Math.floor( z ), DIRECTION.FORWARD );
+		var lightMultiplier = ( y == 0 || Math.floor( z ) >= lightmap[x][y-1] ) ? 1.0 : 0.6;
+		if ( block.selflit ) lightMultiplier = 1.0;
+		
+		pushQuad(
+			vertices,
+			[ x - OFFSET, y - OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y - OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y - OFFSET, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y - OFFSET, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+		);
+	}
+	
+	// Back - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( y == world.sy - 1 || blockBack.transparent )
+	{
+		var c = block.texture( world, lightmap, blockLit, x, y, Math.floor( z ), DIRECTION.BACK );
+		var lightMultiplier = block.selflit ? 1.0 : 0.6;
+		
+		pushQuad(
+			vertices,
+			[ x - OFFSET, y + 1.0 + OFFSET, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y + 1.0 + OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+		);
+	}
+	
+	// Left - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( x == 0 || blockLeft.transparent )
+	{
+		var c = block.texture( world, lightmap, blockLit, x, y, Math.floor( z ), DIRECTION.LEFT );
+		var lightMultiplier = block.selflit ? 1.0 : 0.6;
+		
+		pushQuad(
+			vertices,
+			[ x - OFFSET, y - OFFSET, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y + 1.0 + OFFSET, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y + 1.0 + OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, y - OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+		);
+	}
+	
+	// Right - only render if adjacent block is transparent or doesn't exist (AIR)
+	if ( x == world.sx - 1 || blockRight.transparent )
+	{
+		var c = block.texture( world, lightmap, blockLit, x, y, Math.floor( z ), DIRECTION.RIGHT );
+		var lightMultiplier = ( x == world.sx - 1 || Math.floor( z ) >= lightmap[x+1][y] ) ? 1.0 : 0.6;
+		if ( block.selflit ) lightMultiplier = 1.0;
+		
+		pushQuad(
+			vertices,
+			[ x + 1.0 + OFFSET, y - OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y + 1.0 + OFFSET, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, y - OFFSET, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+		);
+	}
+}
+
 // pushVertices( vertices, world, lightmap, x, y, z )
 //
 // Pushes the vertices necessary for rendering a

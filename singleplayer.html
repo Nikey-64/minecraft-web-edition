@@ -30,6 +30,7 @@
 
 		<!-- FPS Display -->
 		<div id="fpsDisplay" style="position: absolute; top: 10px; left: 10px; color: white; font-family: Minecraftia; display: none;"></div>
+		<div id="debugOverlay" class="debug-overlay" style="display: none;"></div>
 
 		<!-- Material selection -->
 		<table id="materialSelector">
@@ -86,6 +87,10 @@
 			var lastTime = performance.now();
 			var frameCount = 0;
 
+			var debugInfoVisible = false;
+			var debugOverlay = document.getElementById('debugOverlay');
+			var fpsDisplayEl = document.getElementById('fpsDisplay');
+
 			// Performance profiling
 			var performanceStats = {
 				physics: { total: 0, count: 0, max: 0 },
@@ -126,6 +131,79 @@
 				// Reset stats
 				for (var key in performanceStats) {
 					performanceStats[key] = { total: 0, count: 0, max: 0 };
+				}
+			}
+
+			function toggleDebugOverlay() {
+				debugInfoVisible = !debugInfoVisible;
+				if (debugOverlay) {
+					debugOverlay.style.display = debugInfoVisible ? 'block' : 'none';
+				}
+				if (debugInfoVisible) {
+					updateDebugOverlay();
+				} else {
+					updateFpsDisplayPosition();
+				}
+			}
+
+			function getBlockName(block) {
+				if (!block) return 'Desconocido';
+				// Buscar el nombre del bloque comparando con los objetos BLOCK
+				for (var key in BLOCK) {
+					if (typeof BLOCK[key] === 'object' && BLOCK[key] === block) {
+						return key;
+					}
+				}
+				// Si no se encuentra por referencia, buscar por ID
+				if (block.id !== undefined) {
+					for (var key in BLOCK) {
+						if (typeof BLOCK[key] === 'object' && BLOCK[key].id === block.id) {
+							return key;
+						}
+					}
+				}
+				return 'Desconocido';
+			}
+
+			function updateDebugOverlay() {
+				if (!debugInfoVisible || !debugOverlay || !player || !player.pos) return;
+				var pos = player.pos;
+				var yaw = player.angles ? player.angles[1] : 0;
+				var direction = getFacingDirection(yaw);
+				
+				// Obtener el bloque en la posición del jugador
+				var blockX = Math.floor(pos.x);
+				var blockY = Math.floor(pos.y);
+				var blockZ = Math.floor(pos.z);
+				var block = player.world ? player.world.getBlock(blockX, blockY, blockZ) : null;
+				var blockName = block ? getBlockName(block) : 'Desconocido';
+				
+				debugOverlay.innerHTML =
+					'XYZ: ' + pos.x.toFixed(2) + ', ' + pos.y.toFixed(2) + ', ' + pos.z.toFixed(2) + '<br>' +
+					'Dirección: ' + direction + '<br>' +
+					'Bloque: ' + blockName + ' (' + blockX + ', ' + blockY + ', ' + blockZ + ')';
+				updateFpsDisplayPosition();
+			}
+
+			function getFacingDirection(yaw) {
+				if (typeof yaw !== 'number') return 'Norte';
+				var forwardX = Math.sin(yaw);
+				var forwardY = Math.cos(yaw);
+				if (Math.abs(forwardX) > Math.abs(forwardY)) {
+					return forwardX > 0 ? 'Este' : 'Oeste';
+				}
+				return forwardY > 0 ? 'Norte' : 'Sur';
+			}
+
+			function updateFpsDisplayPosition() {
+				if (!fpsDisplayEl) return;
+				var baseTop = 10;
+				var spacing = 10;
+				if (debugInfoVisible && debugOverlay && debugOverlay.style.display !== 'none') {
+					var overlayHeight = debugOverlay.offsetHeight || 0;
+					fpsDisplayEl.style.top = (baseTop + overlayHeight + spacing) + 'px';
+				} else {
+					fpsDisplayEl.style.top = baseTop + 'px';
 				}
 			}
 
@@ -301,6 +379,10 @@
 							}
 						});
 
+						if (debugInfoVisible) {
+							updateDebugOverlay();
+						}
+
 						var frameTime = performance.now() - frameStart;
 						measureTime('total', function() { return frameTime; });
 
@@ -397,6 +479,7 @@
 				} else {
 					document.getElementById('fpsDisplay').style.display = 'none';
 				}
+				updateFpsDisplayPosition();
 			};
 		</script>
 	</body>

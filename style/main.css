@@ -91,6 +91,23 @@ body {
 	transform: translateX(-50%);
 }
 
+#debugOverlay {
+	position: absolute;
+	top: 10px;
+	left: 10px;
+	min-width: 180px;
+	background: rgba(0, 0, 0, 0.65);
+	color: #ffffff;
+	padding: 8px 12px;
+	font-family: minecraftia;
+	font-size: 14px;
+	line-height: 1.4;
+	z-index: 1002;
+	pointer-events: none;
+	text-shadow: none;
+	white-space: nowrap;
+}
+
 /* Material selector */
 
 #materialSelector {
