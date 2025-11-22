@@ -30,7 +30,6 @@
 
 		<!-- FPS Display -->
 		<div id="fpsDisplay" style="position: absolute; top: 10px; left: 10px; color: white; font-family: Minecraftia; display: none;"></div>
-		<div id="debugOverlay" class="debug-overlay" style="display: none;"></div>
 
 		<!-- Material selection -->
 		<table id="materialSelector">
@@ -87,10 +86,6 @@
 			var lastTime = performance.now();
 			var frameCount = 0;
 
-			var debugInfoVisible = false;
-			var debugOverlay = document.getElementById('debugOverlay');
-			var fpsDisplayEl = document.getElementById('fpsDisplay');
-
 			// Performance profiling
 			var performanceStats = {
 				physics: { total: 0, count: 0, max: 0 },
@@ -134,79 +129,6 @@
 				}
 			}
 
-			function toggleDebugOverlay() {
-				debugInfoVisible = !debugInfoVisible;
-				if (debugOverlay) {
-					debugOverlay.style.display = debugInfoVisible ? 'block' : 'none';
-				}
-				if (debugInfoVisible) {
-					updateDebugOverlay();
-				} else {
-					updateFpsDisplayPosition();
-				}
-			}
-
-			function getBlockName(block) {
-				if (!block) return 'Desconocido';
-				// Buscar el nombre del bloque comparando con los objetos BLOCK
-				for (var key in BLOCK) {
-					if (typeof BLOCK[key] === 'object' && BLOCK[key] === block) {
-						return key;
-					}
-				}
-				// Si no se encuentra por referencia, buscar por ID
-				if (block.id !== undefined) {
-					for (var key in BLOCK) {
-						if (typeof BLOCK[key] === 'object' && BLOCK[key].id === block.id) {
-							return key;
-						}
-					}
-				}
-				return 'Desconocido';
-			}
-
-			function updateDebugOverlay() {
-				if (!debugInfoVisible || !debugOverlay || !player || !player.pos) return;
-				var pos = player.pos;
-				var yaw = player.angles ? player.angles[1] : 0;
-				var direction = getFacingDirection(yaw);
-				
-				// Obtener el bloque en la posición del jugador
-				var blockX = Math.floor(pos.x);
-				var blockY = Math.floor(pos.y);
-				var blockZ = Math.floor(pos.z);
-				var block = player.world ? player.world.getBlock(blockX, blockY, blockZ) : null;
-				var blockName = block ? getBlockName(block) : 'Desconocido';
-				
-				debugOverlay.innerHTML =
-					'XYZ: ' + pos.x.toFixed(2) + ', ' + pos.y.toFixed(2) + ', ' + pos.z.toFixed(2) + '<br>' +
-					'Dirección: ' + direction + '<br>' +
-					'Bloque: ' + blockName + ' (' + blockX + ', ' + blockY + ', ' + blockZ + ')';
-				updateFpsDisplayPosition();
-			}
-
-			function getFacingDirection(yaw) {
-				if (typeof yaw !== 'number') return 'Norte';
-				var forwardX = Math.sin(yaw);
-				var forwardY = Math.cos(yaw);
-				if (Math.abs(forwardX) > Math.abs(forwardY)) {
-					return forwardX > 0 ? 'Este' : 'Oeste';
-				}
-				return forwardY > 0 ? 'Norte' : 'Sur';
-			}
-
-			function updateFpsDisplayPosition() {
-				if (!fpsDisplayEl) return;
-				var baseTop = 10;
-				var spacing = 10;
-				if (debugInfoVisible && debugOverlay && debugOverlay.style.display !== 'none') {
-					var overlayHeight = debugOverlay.offsetHeight || 0;
-					fpsDisplayEl.style.top = (baseTop + overlayHeight + spacing) + 'px';
-				} else {
-					fpsDisplayEl.style.top = baseTop + 'px';
-				}
-			}
-
 			var pauseRenderDistanceSlider = document.getElementById('pauseRenderDistanceSlider');
 			var pauseRenderDistanceValue = document.getElementById('pauseRenderDistanceValue');
 			var pauseFpsToggle = document.getElementById('pauseFpsToggle');
@@ -240,10 +162,10 @@
 			}
 
 			function buildWorldFromSeed( seedDefinition, seedName ) {
-				var sx = seedDefinition.sx || 256;
-				var sy = seedDefinition.sy || 256;
-				var sz = seedDefinition.sz || 256;
-				var chunkSize = seedDefinition.chunkSize || 8;
+				var sx = seedDefinition.sx || 255;
+				var sy = seedDefinition.sy || 255;
+				var sz = seedDefinition.sz || 255;
+				var chunkSize = seedDefinition.chunkSize || 16;
 				var w = new World( sx, sy, sz );
 				if ( w.setChunking ) w.setChunking( chunkSize );
 
@@ -379,10 +301,6 @@
 							}
 						});
 
-						if (debugInfoVisible) {
-							updateDebugOverlay();
-						}
-
 						var frameTime = performance.now() - frameStart;
 						measureTime('total', function() { return frameTime; });
 
@@ -479,7 +397,6 @@
 				} else {
 					document.getElementById('fpsDisplay').style.display = 'none';
 				}
-				updateFpsDisplayPosition();
 			};
 		</script>
 	</body>

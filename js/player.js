@@ -26,7 +26,7 @@ Player.prototype.setWorld = function( world )
 {
 	this.world = world;
 	this.world.localPlayer = this;
-	this.pos = world.spawnPoint;
+	this.pos = world.spawn;
 	this.velocity = new Vector( 0, 0, 0 );
 	this.angles = [ 0, Math.PI, 0 ];
 	this.falling = false;
@@ -44,6 +44,15 @@ Player.prototype.setClient = function( client )
 	this.client = client;
 }
 
+// setPhysics( physics )
+//
+// Assign the physics simulator to this player.
+
+Player.prototype.setPhysics = function( physics )
+{
+	this.physics = physics;
+}
+
 // setInputCanvas( id )
 //
 // Set the canvas the renderer uses for some input operations.
@@ -58,6 +67,58 @@ Player.prototype.setInputCanvas = function( id )
 	canvas.onmousedown = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.DOWN, e.which == 3 ); return false; }
 	canvas.onmouseup = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.UP, e.which == 3 ); return false; }
 	canvas.onmousemove = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.MOVE, e.which == 3 ); return false; }
+
+	// Pointer lock for mouse capture
+	canvas.onclick = function() {
+		canvas.requestPointerLock();
+	}
+
+	document.addEventListener('pointerlockchange', function() {
+		if (document.pointerLockElement === canvas) {
+			document.getElementById('crosshair').style.display = 'block';
+			document.getElementById('cursor').style.display = 'none';
+			t.pointerLocked = true;
+			t.dragging = true;
+			t.targetPitch = t.angles[0];
+			t.targetYaw = t.angles[1];
+			// Disable old mouse events
+			canvas.onmousedown = null;
+			canvas.onmouseup = null;
+			canvas.onmousemove = null;
+		} else {
+			document.getElementById('crosshair').style.display = 'none';
+			document.getElementById('cursor').style.display = 'block';
+			t.pointerLocked = false;
+			t.dragging = false;
+			t.angles[0] = t.targetPitch;
+			t.angles[1] = t.targetYaw;
+			// Re-enable old mouse events
+			canvas.onmousedown = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.DOWN, e.which == 3 ); return false; }
+			canvas.onmouseup = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.UP, e.which == 3 ); return false; }
+			canvas.onmousemove = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.MOVE, e.which == 3 ); return false; }
+			// Pause the game when mouse is uncaptured
+			if (typeof pauseGame === 'function') {
+				pauseGame();
+			}
+		}
+	});
+
+	document.addEventListener('mousemove', function(e) {
+		if (t.pointerLocked) {
+			t.onMouseMove(e.movementX, e.movementY);
+		}
+	});
+
+	document.addEventListener('mousedown', function(e) {
+		if (t.pointerLocked) {
+			if (e.button === 0) { // Left click
+				t.doBlockActionAtCenter(true); // Destroy
+			} else if (e.button === 2) { // Right click
+				t.doBlockActionAtCenter(false); // Place
+			}
+			e.preventDefault();
+		}
+	});
 }
 
 // setMaterialSelector( id )
@@ -117,8 +178,15 @@ Player.prototype.onKeyEvent = function( keyCode, down )
 	var key = String.fromCharCode( keyCode ).toLowerCase();
 	this.keys[key] = down;
 	this.keys[keyCode] = down;
-	
+
 	if ( !down && key == "t" && this.eventHandlers["openChat"] ) this.eventHandlers.openChat();
+	if ( !down && keyCode == 27 ) { // ESC key
+		if (this.pointerLocked) {
+			document.exitPointerLock();
+		} else if (typeof pauseGame === 'function') {
+			pauseGame();
+		}
+	}
 }
 
 // onMouseEvent( x, y, type, rmb )
@@ -133,7 +201,7 @@ Player.prototype.onMouseEvent = function( x, y, type, rmb )
 		this.yawStart = this.targetYaw = this.angles[1];
 		this.pitchStart = this.targetPitch = this.angles[0];
 	} else if ( type == MOUSE.UP ) {
-		if ( Math.abs( this.dragStart.x - x ) + Math.abs( this.dragStart.y - y ) < 4 )	
+		if ( Math.abs( this.dragStart.x - x ) + Math.abs( this.dragStart.y - y ) < 4 )
 			this.doBlockAction( x, y, !rmb );
 
 		this.dragging = false;
@@ -148,6 +216,17 @@ Player.prototype.onMouseEvent = function( x, y, type, rmb )
 	}
 }
 
+// onMouseMove( deltaX, deltaY )
+//
+// Hook for mouse movement in pointer lock mode.
+
+Player.prototype.onMouseMove = function( deltaX, deltaY )
+{
+	this.targetPitch = this.angles[0] - deltaY / 200;
+	this.targetYaw = this.angles[1] + deltaX / 200;
+	this.dragging = true;
+}
+
 // doBlockAction( x, y )
 //
 // Called to perform an action based on the player's block selection and input.
@@ -156,16 +235,64 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 {
 	var bPos = new Vector( Math.floor( this.pos.x ), Math.floor( this.pos.y ), Math.floor( this.pos.z ) );
 	var block = this.canvas.renderer.pickAt( new Vector( bPos.x - 4, bPos.y - 4, bPos.z - 4 ), new Vector( bPos.x + 4, bPos.y + 4, bPos.z + 4 ), x, y );
-	
+
 	if ( block != false )
 	{
 		var obj = this.client ? this.client : this.world;
-		
+
 		if ( destroy )
 			obj.setBlock( block.x, block.y, block.z, BLOCK.AIR );
 		else
-			obj.setBlock( block.x + block.n.x, block.y + block.n.y, block.z + block.n.z, this.buildMaterial );
+		{
+			// Calcular la posición donde se colocará el bloque
+			var placeX = block.x + block.n.x;
+			var placeY = block.y + block.n.y;
+			var placeZ = block.z + block.n.z;
+			
+			// Verificar si el bloque se colocaría dentro de la hitbox del jugador
+			// Hitbox del jugador: tamaño 0.25 en X e Y, altura 1.7 en Z
+			var playerSize = 0.25;
+			var playerHeight = 1.7;
+			var playerMinX = this.pos.x - playerSize;
+			var playerMaxX = this.pos.x + playerSize;
+			var playerMinY = this.pos.y - playerSize;
+			var playerMaxY = this.pos.y + playerSize;
+			var playerMinZ = this.pos.z;
+			var playerMaxZ = this.pos.z + playerHeight;
+			
+			// El bloque ocupa desde (placeX, placeY, placeZ) hasta (placeX+1, placeY+1, placeZ+1)
+			var blockMinX = placeX;
+			var blockMaxX = placeX + 1;
+			var blockMinY = placeY;
+			var blockMaxY = placeY + 1;
+			var blockMinZ = placeZ;
+			var blockMaxZ = placeZ + 1;
+			
+			// Verificar intersección entre la hitbox del jugador y el bloque a colocar
+			var intersects = ( playerMaxX > blockMinX && playerMinX < blockMaxX &&
+			                   playerMaxY > blockMinY && playerMinY < blockMaxY &&
+			                   playerMaxZ > blockMinZ && playerMinZ < blockMaxZ );
+			
+			// Si hay intersección, no permitir colocar el bloque
+			if ( intersects ) {
+				return; // No colocar el bloque dentro del jugador
+			}
+			
+			obj.setBlock( placeX, placeY, placeZ, this.buildMaterial );
+		}
 	}
+}
+
+// doBlockActionAtCenter()
+//
+// Called to perform an action at the center of the screen (crosshair position).
+
+Player.prototype.doBlockActionAtCenter = function( destroy )
+{
+	var canvas = this.canvas;
+	var centerX = canvas.width / 2;
+	var centerY = canvas.height / 2;
+	this.doBlockAction( centerX, centerY, destroy );
 }
 
 // getEyePos()
@@ -191,6 +318,13 @@ Player.prototype.update = function()
 	if ( this.lastUpdate != null )
 	{
 		var delta = ( new Date().getTime() - this.lastUpdate ) / 1000;
+		
+		// Limit delta to prevent large jumps when game is paused/resumed
+		// This prevents the player from falling through the world or moving too fast
+		var maxDelta = 0.1; // Maximum 100ms delta (10 FPS equivalent)
+		if ( delta > maxDelta ) {
+			delta = maxDelta;
+		}
 
 		// View
 		if ( this.dragging )
@@ -241,6 +375,20 @@ Player.prototype.update = function()
 
 		// Resolve collision
 		this.pos = this.resolveCollision( pos, bPos, velocity.mul( delta ) );
+		
+		// Clamp player position to world bounds to prevent falling through
+		// Keep player slightly inside bounds (0.1 margin) to avoid edge cases
+		var margin = 0.1;
+		if ( this.pos.x < margin ) this.pos.x = margin;
+		if ( this.pos.y < margin ) this.pos.y = margin;
+		if ( this.pos.z < margin ) this.pos.z = margin;
+		if ( this.pos.x > world.sx - 1 - margin ) this.pos.x = world.sx - 1 - margin;
+		if ( this.pos.y > world.sy - 1 - margin ) this.pos.y = world.sy - 1 - margin;
+		if ( this.pos.z > world.sz - 1.7 - margin ) {
+			this.pos.z = world.sz - 1.7 - margin;
+			this.velocity.z = 0;
+			this.falling = false;
+		}
 	}
 
 	this.lastUpdate = new Date().getTime();
@@ -253,6 +401,10 @@ Player.prototype.update = function()
 Player.prototype.resolveCollision = function( pos, bPos, velocity )
 {
 	var world = this.world;
+	
+	// El sistema de colisiones original ya maneja las colisiones correctamente
+	// Solo necesitamos confiar en él y no agregar verificaciones adicionales que bloqueen el movimiento
+	
 	var playerRect = { x: pos.x + velocity.x, y: pos.y + velocity.y, size: 0.25 };
 
 	// Collect XY collision sides
