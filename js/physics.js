@@ -12,8 +12,6 @@
 function Physics()
 {
 	this.lastStep = -1;
-	this.gravityCheckQueue = []; // Cola de bloques a verificar para gravedad
-	this.lastGravityCheck = {}; // Última verificación por posición (para evitar verificaciones duplicadas)
 }
 
 // setWorld( world )
@@ -23,8 +21,6 @@ function Physics()
 Physics.prototype.setWorld = function( world )
 {
 	this.world = world;
-	// Darle al world una referencia al physics para que pueda agregar bloques a la cola
-	world.physics = this;
 }
 
 // simulate()
@@ -41,113 +37,40 @@ Physics.prototype.simulate = function()
 	if ( step == this.lastStep ) return;
 	this.lastStep = step;
 	
-	// Gravity - Sistema optimizado
+	// Gravity
 	if ( step % 1 == 0 )
 	{
-		// Agregar bloques recién colocados o modificados a la cola de verificación
-		// Esto se hace cuando se coloca un bloque (se llamará desde setBlock)
-		
-		// Procesar cola de verificación de gravedad
-		var processedThisStep = {};
-		var queue = this.gravityCheckQueue;
-		var maxChecks = 100; // Limitar verificaciones por step para rendimiento
-		var checksDone = 0;
-		
-		while ( queue.length > 0 && checksDone < maxChecks )
-		{
-			var checkPos = queue.shift();
-			var key = checkPos.x + "," + checkPos.y + "," + checkPos.z;
-			
-			// Evitar procesar la misma posición múltiples veces en el mismo step
-			if ( processedThisStep[key] ) continue;
-			processedThisStep[key] = true;
-			
-			var x = checkPos.x;
-			var y = checkPos.y;
-			var z = checkPos.z;
-			
-			// Verificar que las coordenadas sean válidas
-			if ( x < 0 || x >= world.sx || y < 0 || y >= world.sy || z < 0 || z >= world.sz )
-				continue;
-			
-			// Solo procesar bloques que no están siendo animados
-			var animKey = x + "," + y + "," + z;
-			if ( world.blockAnimations && world.blockAnimations[animKey] ) continue;
-			
-			var block = blocks[x][y][z];
-			
-			// Verificar si el bloque tiene gravedad y puede caer
-			if ( block.gravity && z > 0 )
-			{
-				var blockBelow = world.getBlock( x, y, z - 1 );
-				if ( blockBelow == BLOCK.AIR )
-				{
-					// Verificar si el bloque caería sobre el jugador
-					if ( !this.checkPlayerCollision( x, y, z - 1 ) )
+		for ( var x = 0; x < world.sx; x++ ) {
+			for ( var y = 0; y < world.sy; y++ ) {
+				for ( var z = 0; z < world.sz; z++ ) {
+					// Solo procesar bloques que no están siendo animados
+					var animKey = x + "," + y + "," + z;
+					if ( world.blockAnimations && world.blockAnimations[animKey] ) continue;
+					
+					if ( blocks[x][y][z].gravity && z > 0 && blocks[x][y][z-1] == BLOCK.AIR )
 					{
-						// Crear animación que continuará hasta detectar suelo
-						var fallSpeed = 2.0; // Bloques por segundo
-						
-						// Iniciar animación sin duración fija
-						world.blockAnimations[animKey] = {
-							fromZ: z,
-							currentZ: z,
-							targetZ: z - 1,
-							startTime: new Date().getTime(),
-							fallSpeed: fallSpeed,
-							blockType: block,
-							lastUpdateTime: new Date().getTime()
-						};
-						
-						// Marcar la posición original como AIR
-						world.setBlock( x, y, z, BLOCK.AIR );
-						
-						// Agregar bloques adyacentes arriba a la cola (pueden caer ahora)
-						if ( z + 1 < world.sz )
+						// Verificar si el bloque caería sobre el jugador
+						// Si es así, no permitir que caiga (evita ahogamiento en arena)
+						if ( !this.checkPlayerCollision( x, y, z - 1 ) )
 						{
-							var aboveKey = x + "," + y + "," + (z + 1);
-							if ( !processedThisStep[aboveKey] )
-							{
-								queue.push( { x: x, y: y, z: z + 1 } );
-							}
-						}
-					}
-				}
-			}
-			
-			checksDone++;
-		}
-		
-		// Si la cola está vacía, hacer una verificación inicial limitada (solo parte superior del mundo)
-		// Esto solo se ejecuta cuando no hay cambios recientes
-		if ( queue.length == 0 && Object.keys( processedThisStep ).length == 0 )
-		{
-			// Verificar solo la parte superior del mundo (últimas 10 capas)
-			var topLayers = 10;
-			for ( var x = 0; x < world.sx && checksDone < maxChecks; x++ ) {
-				for ( var y = 0; y < world.sy && checksDone < maxChecks; y++ ) {
-					for ( var z = world.sz - 1; z >= world.sz - topLayers && z >= 0 && checksDone < maxChecks; z-- ) {
-						var animKey = x + "," + y + "," + z;
-						if ( world.blockAnimations && world.blockAnimations[animKey] ) continue;
-						
-						var block = blocks[x][y][z];
-						if ( block.gravity && z > 0 && blocks[x][y][z-1] == BLOCK.AIR )
-						{
-							if ( !this.checkPlayerCollision( x, y, z - 1 ) )
-							{
-								var fallSpeed = 2.0;
-								world.blockAnimations[animKey] = {
-									fromZ: z,
-									currentZ: z,
-									targetZ: z - 1,
-									startTime: new Date().getTime(),
-									fallSpeed: fallSpeed,
-									blockType: block,
-									lastUpdateTime: new Date().getTime()
-								};
-								world.setBlock( x, y, z, BLOCK.AIR );
-								checksDone++;
-							}
+							// Crear animación que continuará hasta detectar suelo
+							var blockType = blocks[x][y][z];
+							var fallSpeed = 2.0; // Bloques por segundo
+							
+							// Iniciar animación sin duración fija
+							world.blockAnimations[animKey] = {
+								fromZ: z,
+								currentZ: z,
+								targetZ: z - 1,
+								startTime: new Date().getTime(),
+								fallSpeed: fallSpeed, // Velocidad de caída en bloques/segundo
+								blockType: blockType,
+								lastUpdateTime: new Date().getTime()
+							};
+							
+							// Marcar la posición original como AIR temporalmente
+							// El bloque se dibujará en la posición animada
+							world.setBlock( x, y, z, BLOCK.AIR );
 						}
 					}
 				}

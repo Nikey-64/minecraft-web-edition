@@ -131,28 +131,8 @@ World.prototype.getBlock = function( x, y, z )
 
 World.prototype.setBlock = function( x, y, z, type )
 {
-	var oldType = this.blocks[x][y][z];
 	this.blocks[x][y][z] = type;
 	if ( this.renderer != null ) this.renderer.onBlockChanged( x, y, z );
-	
-	// Si se colocó un bloque con gravedad o se removió un bloque, agregar a la cola de verificación de física
-	if ( this.physics && this.physics.gravityCheckQueue )
-	{
-		// Agregar este bloque y bloques adyacentes arriba a la cola
-		this.physics.gravityCheckQueue.push( { x: x, y: y, z: z } );
-		
-		// Si se removió un bloque (ahora es AIR), verificar bloques arriba
-		if ( type == BLOCK.AIR && z + 1 < this.sz )
-		{
-			this.physics.gravityCheckQueue.push( { x: x, y: y, z: z + 1 } );
-		}
-		
-		// Si se colocó un bloque con gravedad, también verificar
-		if ( type.gravity )
-		{
-			this.physics.gravityCheckQueue.push( { x: x, y: y, z: z } );
-		}
-	}
 }
 
 World.prototype.setChunking = function( chunkSize )
