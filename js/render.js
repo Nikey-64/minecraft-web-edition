@@ -171,13 +171,9 @@ Renderer.prototype.draw = function()
 	gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
 
 	// Update chunks based on player position (only every N frames to reduce overhead)
-	// Pero actualizar cada frame si hay animaciones activas
-	var hasActiveAnimations = this.world.blockAnimations && Object.keys(this.world.blockAnimations).length > 0;
-	var updateInterval = hasActiveAnimations ? 1 : 5; // Actualizar cada frame si hay animaciones
-	
 	if (!this._updateChunksFrameCount) this._updateChunksFrameCount = 0;
 	this._updateChunksFrameCount++;
-	if (this._updateChunksFrameCount >= updateInterval) {
+	if (this._updateChunksFrameCount >= 5) { // Update chunks every 5 frames
 		var updateStart = performance.now();
 		this.updateChunks();
 		var updateTime = performance.now() - updateStart;
@@ -189,12 +185,10 @@ Renderer.prototype.draw = function()
 			this._updateChunksStats = { total: updateTime, count: 1, max: updateTime };
 		}
 		this._updateChunksFrameCount = 0;
-		
-		// Si hay animaciones activas, marcar chunks afectados como dirty
-		if (hasActiveAnimations) {
-			this.markChunksDirtyForAnimations();
-		}
 	}
+	
+	// Actualizar buffer de bloques animados cada frame (más eficiente que reconstruir chunks)
+	this.updateAnimatedBlocksBuffer();
 
 	// Draw level chunks
 	var chunks = this.chunks;
@@ -208,6 +202,12 @@ Renderer.prototype.draw = function()
 			if ( chunks[i].loaded && chunks[i].buffer != null )
 				this.drawBuffer( chunks[i].buffer );
 		}
+	}
+	
+	// Dibujar bloques animados (buffer separado, más eficiente)
+	if ( this.animatedBlocksBuffer && this.animatedBlocksBuffer.vertices > 0 )
+	{
+		this.drawBuffer( this.animatedBlocksBuffer );
 	}
 
 	// Draw players
@@ -815,46 +815,14 @@ Renderer.prototype.buildChunks = function( count )
 			}
 		}
 		
-		// Add vertices for blocks
-		var currentTime = new Date().getTime();
-		var drawnAnims = {}; // Rastrear animaciones ya dibujadas para evitar duplicados
-		
-		// Primero, dibujar bloques animados
-		if ( world.blockAnimations )
-		{
-			for ( var animKey in world.blockAnimations )
-			{
-				var anim = world.blockAnimations[animKey];
-				var coords = animKey.split( "," );
-				var x = parseInt( coords[0] );
-				var y = parseInt( coords[1] );
-				var fromZ = parseInt( coords[2] );
-				
-				// Verificar si está dentro del chunk
-				if ( x >= chunk.start[0] && x < chunk.end[0] &&
-				     y >= chunk.start[1] && y < chunk.end[1] &&
-				     ( fromZ >= chunk.start[2] || anim.toZ >= chunk.start[2] ) &&
-				     ( fromZ < chunk.end[2] || anim.toZ < chunk.end[2] ) )
-				{
-					// Usar la posición actual de la animación (se actualiza continuamente)
-					var currentZ = anim.currentZ !== undefined ? anim.currentZ : anim.fromZ;
-					
-					// Dibujar el bloque animado en la posición interpolada
-					// Usar un método especial que dibuje el bloque en una posición específica
-					BLOCK.pushVerticesAtPosition( vertices, world, lightmap, x, y, currentZ, anim.blockType );
-					drawnAnims[animKey] = true;
-				}
-			}
-		}
-		
-		// Luego, dibujar bloques normales (que no están animándose)
+		// Add vertices for blocks (solo bloques normales, los animados se dibujan por separado)
 		for ( var x = chunk.start[0]; x < chunk.end[0]; x++ ) {
 			for ( var y = chunk.start[1]; y < chunk.end[1]; y++ ) {
 				for ( var z = chunk.start[2]; z < chunk.end[2]; z++ ) {
 					var block = world.blocks[x][y][z];
 					if ( block == BLOCK.AIR ) continue;
 					
-					// Verificar si este bloque está siendo animado desde alguna posición
+					// Verificar si este bloque está siendo animado (no dibujarlo aquí)
 					var isAnimated = false;
 					if ( world.blockAnimations )
 					{
@@ -864,8 +832,9 @@ Renderer.prototype.buildChunks = function( count )
 							var coords = animKey.split( "," );
 							var animX = parseInt( coords[0] );
 							var animY = parseInt( coords[1] );
-							// Verificar si esta posición está siendo animada (puede ser la posición original o la final)
-							if ( animX == x && animY == y && ( parseInt( coords[2] ) == z || anim.toZ == z ) )
+							var animFromZ = parseInt( coords[2] );
+							// Verificar si esta posición está siendo animada
+							if ( animX == x && animY == y && animFromZ == z )
 							{
 								isAnimated = true;
 								break;
@@ -897,43 +866,76 @@ Renderer.prototype.buildChunks = function( count )
 	}
 }
 
-// markChunksDirtyForAnimations()
+// updateAnimatedBlocksBuffer()
 //
-// Marca los chunks que contienen bloques animados como dirty para que se reconstruyan.
+// Actualiza el buffer de bloques animados. Se llama cada frame para mantener las animaciones fluidas.
 
-Renderer.prototype.markChunksDirtyForAnimations = function()
+Renderer.prototype.updateAnimatedBlocksBuffer = function()
 {
-	if ( !this.world || !this.world.blockAnimations ) return;
-	
-	var chunks = this.chunks;
-	var dirtyChunks = this.dirtyChunks;
-	
-	for ( var key in this.world.blockAnimations )
+	if ( !this.world || !this.world.blockAnimations ) 
 	{
+		// Si no hay animaciones, limpiar el buffer
+		if ( this.animatedBlocksBuffer )
+		{
+			var gl = this.gl;
+			gl.deleteBuffer( this.animatedBlocksBuffer );
+			this.animatedBlocksBuffer = null;
+		}
+		return;
+	}
+	
+	var gl = this.gl;
+	var world = this.world;
+	var vertices = [];
+	var currentTime = new Date().getTime();
+	
+	// Crear lightmap simple para bloques animados (usar iluminación básica)
+	var lightmap = {};
+	for ( var key in world.blockAnimations )
+	{
+		var anim = world.blockAnimations[key];
 		var coords = key.split( "," );
 		var x = parseInt( coords[0] );
 		var y = parseInt( coords[1] );
-		var z = parseInt( coords[2] );
 		
-		// Encontrar el chunk que contiene este bloque
-		for ( var i = 0; i < chunks.length; i++ )
-		{
-			var chunk = chunks[i];
-			if ( x >= chunk.start[0] && x < chunk.end[0] &&
-			     y >= chunk.start[1] && y < chunk.end[1] &&
-			     z >= chunk.start[2] && z < chunk.end[2] )
-			{
-				if ( !chunk.dirty )
-				{
-					chunk.dirty = true;
-					if ( chunk.loaded && dirtyChunks && dirtyChunks.indexOf( chunk ) === -1 )
-					{
-						dirtyChunks.push( chunk );
-					}
-				}
-				break;
-			}
-		}
+		if ( !lightmap[x] ) lightmap[x] = {};
+		// Usar una altura de iluminación simple (asumir que está iluminado si está alto)
+		var currentZ = anim.currentZ !== undefined ? anim.currentZ : anim.fromZ;
+		lightmap[x][y] = Math.floor( currentZ ) + 1;
+	}
+	
+	// Dibujar todos los bloques animados
+	for ( var key in world.blockAnimations )
+	{
+		var anim = world.blockAnimations[key];
+		var coords = key.split( "," );
+		var x = parseInt( coords[0] );
+		var y = parseInt( coords[1] );
+		var currentZ = anim.currentZ !== undefined ? anim.currentZ : anim.fromZ;
+		
+		// Usar lightmap simple
+		if ( !lightmap[x] ) lightmap[x] = {};
+		if ( !lightmap[x][y] ) lightmap[x][y] = Math.floor( currentZ ) + 1;
+		
+		// Dibujar el bloque animado
+		BLOCK.pushVerticesAtPosition( vertices, world, lightmap, x, y, currentZ, anim.blockType );
+	}
+	
+	// Crear o actualizar el buffer
+	if ( !this.animatedBlocksBuffer )
+	{
+		this.animatedBlocksBuffer = gl.createBuffer();
+	}
+	
+	if ( vertices.length > 0 )
+	{
+		this.animatedBlocksBuffer.vertices = vertices.length / 9;
+		gl.bindBuffer( gl.ARRAY_BUFFER, this.animatedBlocksBuffer );
+		gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.DYNAMIC_DRAW );
+	}
+	else
+	{
+		this.animatedBlocksBuffer.vertices = 0;
 	}
 }
 
