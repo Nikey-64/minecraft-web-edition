@@ -43,24 +43,29 @@ Physics.prototype.simulate = function()
 		for ( var x = 0; x < world.sx; x++ ) {
 			for ( var y = 0; y < world.sy; y++ ) {
 				for ( var z = 0; z < world.sz; z++ ) {
+					// Solo procesar bloques que no están siendo animados
+					var animKey = x + "," + y + "," + z;
+					if ( world.blockAnimations && world.blockAnimations[animKey] ) continue;
+					
 					if ( blocks[x][y][z].gravity && z > 0 && blocks[x][y][z-1] == BLOCK.AIR )
 					{
 						// Verificar si el bloque caería sobre el jugador
 						// Si es así, no permitir que caiga (evita ahogamiento en arena)
 						if ( !this.checkPlayerCollision( x, y, z - 1 ) )
 						{
-							// Crear animación en lugar de mover instantáneamente
-							var animKey = x + "," + y + "," + z;
-							var animDuration = 100; // Duración de la animación en milisegundos
+							// Crear animación que continuará hasta detectar suelo
 							var blockType = blocks[x][y][z];
+							var fallSpeed = 2.0; // Bloques por segundo
 							
-							// Iniciar animación
+							// Iniciar animación sin duración fija
 							world.blockAnimations[animKey] = {
 								fromZ: z,
-								toZ: z - 1,
+								currentZ: z,
+								targetZ: z - 1,
 								startTime: new Date().getTime(),
-								duration: animDuration,
-								blockType: blockType
+								fallSpeed: fallSpeed, // Velocidad de caída en bloques/segundo
+								blockType: blockType,
+								lastUpdateTime: new Date().getTime()
 							};
 							
 							// Marcar la posición original como AIR temporalmente
@@ -152,7 +157,7 @@ Physics.prototype.checkPlayerCollision = function( x, y, z )
 
 // updateBlockAnimations()
 //
-// Actualiza las animaciones de bloques y completa las que han terminado.
+// Actualiza las animaciones de bloques. Las animaciones continúan hasta que el bloque detecte suelo.
 
 Physics.prototype.updateBlockAnimations = function()
 {
@@ -161,23 +166,84 @@ Physics.prototype.updateBlockAnimations = function()
 	var world = this.world;
 	var currentTime = new Date().getTime();
 	var animsToRemove = [];
+	var blocks = world.blocks;
 	
 	for ( var key in world.blockAnimations )
 	{
 		var anim = world.blockAnimations[key];
-		var elapsed = currentTime - anim.startTime;
-		var progress = Math.min( elapsed / anim.duration, 1.0 );
+		var coords = key.split( "," );
+		var x = parseInt( coords[0] );
+		var y = parseInt( coords[1] );
 		
-		// Si la animación ha terminado, mover el bloque y eliminar la animación
-		if ( progress >= 1.0 )
+		// Calcular delta time desde la última actualización
+		var deltaTime = ( currentTime - anim.lastUpdateTime ) / 1000.0; // Convertir a segundos
+		anim.lastUpdateTime = currentTime;
+		
+		// Calcular nueva posición basada en la velocidad de caída
+		var distanceToFall = anim.fallSpeed * deltaTime;
+		var newZ = anim.currentZ - distanceToFall;
+		
+		// Verificar si hay suelo debajo (bloque sólido o z == 0)
+		var floorZ = Math.floor( newZ );
+		var hasGround = false;
+		
+		if ( floorZ < 0 )
 		{
-			var coords = key.split( "," );
-			var x = parseInt( coords[0] );
-			var y = parseInt( coords[1] );
-			var z = parseInt( coords[2] );
+			// Llegó al fondo del mundo
+			hasGround = true;
+			newZ = 0;
+		}
+		else
+		{
+			// Verificar si hay un bloque sólido debajo
+			var blockBelow = world.getBlock( x, y, floorZ );
+			if ( blockBelow != BLOCK.AIR && !blockBelow.transparent )
+			{
+				hasGround = true;
+				newZ = floorZ + 1; // Colocar justo encima del bloque
+			}
+			// También verificar si el bloque está ocupando el espacio donde debería estar
+			else if ( floorZ >= 0 && blocks[x][y][floorZ] != BLOCK.AIR && !blocks[x][y][floorZ].transparent )
+			{
+				hasGround = true;
+				newZ = floorZ + 1;
+			}
+		}
+		
+		// Verificar si el bloque caería sobre el jugador
+		if ( !hasGround && this.checkPlayerCollision( x, y, floorZ ) )
+		{
+			// Detener la animación justo antes del jugador
+			hasGround = true;
+			newZ = Math.floor( newZ ) + 1;
+		}
+		
+		// Actualizar posición actual
+		anim.currentZ = newZ;
+		
+		// Si detectó suelo, completar la animación
+		if ( hasGround )
+		{
+			var finalZ = Math.floor( newZ );
 			
-			// Mover el bloque a su posición final (ya está marcado como AIR en la posición original)
-			world.setBlock( x, y, anim.toZ, anim.blockType );
+			// Asegurarse de que la posición final sea válida
+			if ( finalZ < 0 ) finalZ = 0;
+			if ( finalZ >= world.sz ) finalZ = world.sz - 1;
+			
+			// Verificar que la posición final esté libre
+			if ( world.getBlock( x, y, finalZ ) == BLOCK.AIR )
+			{
+				// Mover el bloque a su posición final
+				world.setBlock( x, y, finalZ, anim.blockType );
+			}
+			else
+			{
+				// Si la posición final está ocupada, intentar una posición arriba
+				if ( finalZ + 1 < world.sz && world.getBlock( x, y, finalZ + 1 ) == BLOCK.AIR )
+				{
+					world.setBlock( x, y, finalZ + 1, anim.blockType );
+				}
+			}
 			
 			// Eliminar la animación
 			animsToRemove.push( key );

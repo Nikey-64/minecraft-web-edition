@@ -836,10 +836,8 @@ Renderer.prototype.buildChunks = function( count )
 				     ( fromZ >= chunk.start[2] || anim.toZ >= chunk.start[2] ) &&
 				     ( fromZ < chunk.end[2] || anim.toZ < chunk.end[2] ) )
 				{
-					// Calcular posición interpolada
-					var elapsed = currentTime - anim.startTime;
-					var progress = Math.min( elapsed / anim.duration, 1.0 );
-					var currentZ = anim.fromZ + ( anim.toZ - anim.fromZ ) * progress;
+					// Usar la posición actual de la animación (se actualiza continuamente)
+					var currentZ = anim.currentZ !== undefined ? anim.currentZ : anim.fromZ;
 					
 					// Dibujar el bloque animado en la posición interpolada
 					// Usar un método especial que dibuje el bloque en una posición específica
