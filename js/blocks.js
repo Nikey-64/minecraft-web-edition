@@ -219,7 +219,7 @@ BLOCK.SAND = {
 	spawnable: true,
 	transparent: false,
 	selflit: false,
-	gravity: false,
+	gravity: true,
 	fluid: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 2/16, 1/16, 3/16, 2/16 ]; }
 };
@@ -230,7 +230,7 @@ BLOCK.GRAVEL = {
 	spawnable: true,
 	transparent: false,
 	selflit: false,
-	gravity: false,
+	gravity: true,
 	fluid: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 3/16, 1/16, 4/16, 2/16 ]; }
 };
@@ -458,50 +458,13 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 	var blockLit = z >= lightmap[x][y];
 	var block = blocks[x][y][z];
 	
-	// Optimización: usar acceso directo cuando sea posible, getBlock solo para límites
-	var blockTop, blockBottom, blockFront, blockBack, blockLeft, blockRight;
-	
-	// Top - acceso directo si está dentro de límites
-	if ( z + 1 < world.sz ) {
-		blockTop = blocks[x] && blocks[x][y] && blocks[x][y][z + 1] || BLOCK.AIR;
-	} else {
-		blockTop = BLOCK.AIR;
-	}
-	
-	// Bottom - acceso directo si está dentro de límites
-	if ( z - 1 >= 0 ) {
-		blockBottom = blocks[x] && blocks[x][y] && blocks[x][y][z - 1] || BLOCK.AIR;
-	} else {
-		blockBottom = BLOCK.AIR;
-	}
-	
-	// Front - acceso directo si está dentro de límites
-	if ( y - 1 >= 0 ) {
-		blockFront = blocks[x] && blocks[x][y - 1] && blocks[x][y - 1][z] || BLOCK.AIR;
-	} else {
-		blockFront = BLOCK.AIR;
-	}
-	
-	// Back - acceso directo si está dentro de límites
-	if ( y + 1 < world.sy ) {
-		blockBack = blocks[x] && blocks[x][y + 1] && blocks[x][y + 1][z] || BLOCK.AIR;
-	} else {
-		blockBack = BLOCK.AIR;
-	}
-	
-	// Left - acceso directo si está dentro de límites
-	if ( x - 1 >= 0 ) {
-		blockLeft = blocks[x - 1] && blocks[x - 1][y] && blocks[x - 1][y][z] || BLOCK.AIR;
-	} else {
-		blockLeft = BLOCK.AIR;
-	}
-	
-	// Right - acceso directo si está dentro de límites
-	if ( x + 1 < world.sx ) {
-		blockRight = blocks[x + 1] && blocks[x + 1][y] && blocks[x + 1][y][z] || BLOCK.AIR;
-	} else {
-		blockRight = BLOCK.AIR;
-	}
+	// Use getBlock() to safely check adjacent blocks (handles out-of-bounds and unloaded chunks)
+	var blockTop = world.getBlock( x, y, z + 1 );
+	var blockBottom = world.getBlock( x, y, z - 1 );
+	var blockFront = world.getBlock( x, y - 1, z );
+	var blockBack = world.getBlock( x, y + 1, z );
+	var blockLeft = world.getBlock( x - 1, y, z );
+	var blockRight = world.getBlock( x + 1, y, z );
 	
 	// Small offset to eliminate gaps between blocks (texture bleeding)
 	// This extends blocks slightly to cover any precision gaps

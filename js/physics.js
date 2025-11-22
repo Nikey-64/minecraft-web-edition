@@ -98,7 +98,6 @@ Physics.prototype.simulate = function()
 							blockType: block,
 							lastUpdateTime: new Date().getTime()
 						};
-						world._hasAnimations = true; // Marcar que hay animaciones
 						
 						// Marcar la posición original como AIR
 						world.setBlock( x, y, z, BLOCK.AIR );
@@ -146,7 +145,6 @@ Physics.prototype.simulate = function()
 									blockType: block,
 									lastUpdateTime: new Date().getTime()
 								};
-								world._hasAnimations = true; // Marcar que hay animaciones
 								world.setBlock( x, y, z, BLOCK.AIR );
 								checksDone++;
 							}
@@ -157,10 +155,8 @@ Physics.prototype.simulate = function()
 		}
 	}
 	
-	// Actualizar animaciones de bloques (solo si hay animaciones)
-	if ( world._hasAnimations ) {
-		this.updateBlockAnimations();
-	}
+	// Actualizar animaciones de bloques
+	this.updateBlockAnimations();
 	
 	// Fluids
 	if ( step % 10 == 0 )
@@ -242,8 +238,7 @@ Physics.prototype.checkPlayerCollision = function( x, y, z )
 
 Physics.prototype.updateBlockAnimations = function()
 {
-	// Optimización: verificar flag en lugar de solo verificar existencia
-	if ( !this.world || !this.world.blockAnimations || !this.world._hasAnimations ) return;
+	if ( !this.world || !this.world.blockAnimations ) return;
 	
 	var world = this.world;
 	var currentTime = new Date().getTime();
@@ -332,10 +327,5 @@ Physics.prototype.updateBlockAnimations = function()
 	for ( var i = 0; i < animsToRemove.length; i++ )
 	{
 		delete world.blockAnimations[animsToRemove[i]];
-	}
-	
-	// Actualizar flag si no quedan animaciones
-	if ( animsToRemove.length > 0 && Object.keys( world.blockAnimations ).length === 0 ) {
-		world._hasAnimations = false;
 	}
 }

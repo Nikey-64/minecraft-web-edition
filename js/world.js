@@ -38,7 +38,6 @@ function World( sx, sy, sz )
 	
 	// Sistema de animaciones para bloques
 	this.blockAnimations = {}; // key: "x,y,z", value: { fromZ, toZ, startTime, duration }
-	this._hasAnimations = false; // Flag para evitar verificaciones costosas cuando no hay animaciones
 }
 
 // createFlatWorld()
