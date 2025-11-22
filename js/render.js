@@ -45,7 +45,7 @@ function Renderer( id )
 	canvas.height = canvas.clientHeight;
 
 	this.renderDistance = parseInt(localStorage.getItem('renderDistance')) || 8; // chunks default radius
-	this.chunkSize = 16; // Default chunk size (16x16x16 preferred for optimal performance) (8 is better for laptops and mobile devices)
+	this.chunkSize = 8; // Default chunk size (8x8x8 preferred for optimal performance) (8 is better for any kind of devices)
 	this.camPos = [0, 0, 0]; // Initialize camera position
 	this.camAng = [0, 0, 0]; // Initialize camera angles
 	this.renderBehind = false; // Option to not render chunks behind the player (disabled by default)
