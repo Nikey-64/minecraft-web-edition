@@ -1,3 +1,4 @@
+
 // ==========================================
 // Block types
 //
@@ -452,7 +453,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 	var blocks = world.blocks;
 	var blockLit = z >= lightmap[x][y];
 	var block = blocks[x][y][z];
-	
+
 	// Use getBlock() to safely check adjacent blocks (handles out-of-bounds and unloaded chunks)
 	var blockTop = world.getBlock( x, y, z + 1 );
 	var blockBottom = world.getBlock( x, y, z - 1 );
@@ -460,21 +461,21 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 	var blockBack = world.getBlock( x, y + 1, z );
 	var blockLeft = world.getBlock( x - 1, y, z );
 	var blockRight = world.getBlock( x + 1, y, z );
-	
+
 	// Small offset to eliminate gaps between blocks (texture bleeding)
 	// This extends blocks slightly to cover any precision gaps
 	var OFFSET = 0.001;
-	
+
 	var bH = block.fluid && ( z == world.sz - 1 || !blockTop.fluid ) ? 0.9 : 1.0;
-	
+
 	// Top - only render if adjacent block is transparent or doesn't exist (AIR)
 	if ( z == world.sz - 1 || blockTop.transparent || block.fluid )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.UP );
-		
+
 		var lightMultiplier = z >= lightmap[x][y] ? 1.0 : 0.6;
 		if ( block.selflit ) lightMultiplier = 1.0;
-		
+
 		// Apply grass color filter if this is a grass block top face
 		var grassColor = [ 1.0, 1.0, 1.0 ]; // Default white
 		if ( block.useGrassColor && blockLit && world.renderer ) {
@@ -482,12 +483,12 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 			// All blocks at the same (x, y) will have the same color
 			grassColor = world.renderer.getGrassColor( x, y );
 		}
-		
+
 		// Multiply grass color with light multiplier
 		var r = grassColor[0] * lightMultiplier;
 		var g = grassColor[1] * lightMultiplier;
 		var b = grassColor[2] * lightMultiplier;
-		
+
 		pushQuad(
 			vertices,
 			[ x - OFFSET, y - OFFSET, z + bH, c[0], c[1], r, g, b, 1.0 ],
@@ -496,14 +497,14 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 			[ x - OFFSET, y + 1.0 + OFFSET, z + bH, c[0], c[3], r, g, b, 1.0 ]
 		);
 	}
-	
+
 	// Bottom - only render if adjacent block is transparent or doesn't exist (AIR)
 	if ( z == 0 || blockBottom.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.DOWN );
-		
+
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
-		
+
 		pushQuad(
 			vertices,							
 			[ x - OFFSET, y + 1.0 + OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
@@ -512,15 +513,15 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 			[ x - OFFSET, y - OFFSET, z, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
-	
+
 	// Front - only render if adjacent block is transparent or doesn't exist (AIR)
 	if ( y == 0 || blockFront.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.FORWARD );
-		
+
 		var lightMultiplier = ( y == 0 || z >= lightmap[x][y-1] ) ? 1.0 : 0.6;
 		if ( block.selflit ) lightMultiplier = 1.0;
-		
+
 		pushQuad(
 			vertices,
 			[ x - OFFSET, y - OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
@@ -529,14 +530,14 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 			[ x - OFFSET, y - OFFSET, z + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
-	
+
 	// Back - only render if adjacent block is transparent or doesn't exist (AIR)
 	if ( y == world.sy - 1 || blockBack.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.BACK );
-		
+
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
-		
+
 		pushQuad(
 			vertices,
 			[ x - OFFSET, y + 1.0 + OFFSET, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
@@ -545,14 +546,14 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 			[ x - OFFSET, y + 1.0 + OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
-	
+
 	// Left - only render if adjacent block is transparent or doesn't exist (AIR)
 	if ( x == 0 || blockLeft.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.LEFT );
-		
+
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
-		
+
 		pushQuad(
 			vertices,
 			[ x - OFFSET, y - OFFSET, z + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
@@ -561,15 +562,15 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 			[ x - OFFSET, y - OFFSET, z, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
-	
+
 	// Right - only render if adjacent block is transparent or doesn't exist (AIR)
 	if ( x == world.sx - 1 || blockRight.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.RIGHT );
-		
+
 		var lightMultiplier = ( x == world.sx - 1 || z >= lightmap[x+1][y] ) ? 1.0 : 0.6;
 		if ( block.selflit ) lightMultiplier = 1.0;
-		
+
 		pushQuad(
 			vertices,
 			[ x + 1.0 + OFFSET, y - OFFSET, z, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
@@ -595,7 +596,7 @@ BLOCK.pushPickingVertices = function( vertices, x, y, z )
 		[ x + 1, y + 1, z + 1, 1, 1, colorTop[0], colorTop[1], colorTop[2], colorTop[3] ],
 		[ x, y + 1, z + 1, 0, 0, colorTop[0], colorTop[1], colorTop[2], colorTop[3] ]
 	);
-	
+
 	// Bottom
 	var colorBottom = BLOCK.getPickingColor( x, y, z, 2 );
 	pushQuad(
@@ -605,7 +606,7 @@ BLOCK.pushPickingVertices = function( vertices, x, y, z )
 		[ x + 1, y, z, 1, 1, colorBottom[0], colorBottom[1], colorBottom[2], colorBottom[3] ],
 		[ x, y, z, 0, 0, colorBottom[0], colorBottom[1], colorBottom[2], colorBottom[3] ]
 	);
-	
+
 	// Front
 	var colorFront = BLOCK.getPickingColor( x, y, z, 3 );
 	pushQuad(
@@ -615,7 +616,7 @@ BLOCK.pushPickingVertices = function( vertices, x, y, z )
 		[ x + 1, y, z + 1, 1, 1, colorFront[0], colorFront[1], colorFront[2], colorFront[3] ],
 		[ x, y, z + 1, 0, 0, colorFront[0], colorFront[1], colorFront[2], colorFront[3] ]
 	);
-	
+
 	// Back
 	var colorBack = BLOCK.getPickingColor( x, y, z, 4 );
 	pushQuad(
@@ -625,7 +626,7 @@ BLOCK.pushPickingVertices = function( vertices, x, y, z )
 		[ x + 1, y + 1, z, 1, 1, colorBack[0], colorBack[1], colorBack[2], colorBack[3] ],
 		[ x, y + 1, z, 0, 0, colorBack[0], colorBack[1], colorBack[2], colorBack[3] ]
 	);
-	
+
 	// Left
 	var colorLeft = BLOCK.getPickingColor( x, y, z, 5 );
 	pushQuad(
@@ -635,7 +636,7 @@ BLOCK.pushPickingVertices = function( vertices, x, y, z )
 		[ x, y + 1, z, 1, 1, colorLeft[0], colorLeft[1], colorLeft[2], colorLeft[3] ],
 		[ x, y, z, 0, 0, colorLeft[0], colorLeft[1], colorLeft[2], colorLeft[3] ]
 	);
-	
+
 	// Right
 	var colorRight = BLOCK.getPickingColor( x, y, z, 6 );
 	pushQuad(

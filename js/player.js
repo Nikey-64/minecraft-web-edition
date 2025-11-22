@@ -26,19 +26,13 @@ Player.prototype.setWorld = function( world )
 {
 	this.world = world;
 	this.world.localPlayer = this;
-	this.pos = world.spawn;
+	this.pos = world.spawnPoint;
 	this.velocity = new Vector( 0, 0, 0 );
 	this.angles = [ 0, Math.PI, 0 ];
 	this.falling = false;
 	this.keys = {};
-	this.debugKeyDown = false;
 	this.buildMaterial = BLOCK.DIRT;
 	this.eventHandlers = {};
-	
-	// Hitbox del jugador (Minecraft vanilla: 0.6 bloques de ancho, 1.8 bloques de alto)
-	this.playerWidth = 0.6; // Ancho completo de la hitbox
-	this.playerRadius = this.playerWidth / 2; // Radio horizontal (0.3)
-	this.playerHeight = 1.8; // Altura del jugador
 }
 
 // setClient( client )
@@ -48,15 +42,6 @@ Player.prototype.setWorld = function( world )
 Player.prototype.setClient = function( client )
 {
 	this.client = client;
-}
-
-// setPhysics( physics )
-//
-// Assign the physics simulator to this player.
-
-Player.prototype.setPhysics = function( physics )
-{
-	this.physics = physics;
 }
 
 // setInputCanvas( id )
@@ -73,58 +58,6 @@ Player.prototype.setInputCanvas = function( id )
 	canvas.onmousedown = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.DOWN, e.which == 3 ); return false; }
 	canvas.onmouseup = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.UP, e.which == 3 ); return false; }
 	canvas.onmousemove = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.MOVE, e.which == 3 ); return false; }
-
-	// Pointer lock for mouse capture
-	canvas.onclick = function() {
-		canvas.requestPointerLock();
-	}
-
-	document.addEventListener('pointerlockchange', function() {
-		if (document.pointerLockElement === canvas) {
-			document.getElementById('crosshair').style.display = 'block';
-			document.getElementById('cursor').style.display = 'none';
-			t.pointerLocked = true;
-			t.dragging = true;
-			t.targetPitch = t.angles[0];
-			t.targetYaw = t.angles[1];
-			// Disable old mouse events
-			canvas.onmousedown = null;
-			canvas.onmouseup = null;
-			canvas.onmousemove = null;
-		} else {
-			document.getElementById('crosshair').style.display = 'none';
-			document.getElementById('cursor').style.display = 'block';
-			t.pointerLocked = false;
-			t.dragging = false;
-			t.angles[0] = t.targetPitch;
-			t.angles[1] = t.targetYaw;
-			// Re-enable old mouse events
-			canvas.onmousedown = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.DOWN, e.which == 3 ); return false; }
-			canvas.onmouseup = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.UP, e.which == 3 ); return false; }
-			canvas.onmousemove = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.MOVE, e.which == 3 ); return false; }
-			// Pause the game when mouse is uncaptured
-			if (typeof pauseGame === 'function') {
-				pauseGame();
-			}
-		}
-	});
-
-	document.addEventListener('mousemove', function(e) {
-		if (t.pointerLocked) {
-			t.onMouseMove(e.movementX, e.movementY);
-		}
-	});
-
-	document.addEventListener('mousedown', function(e) {
-		if (t.pointerLocked) {
-			if (e.button === 0) { // Left click
-				t.doBlockActionAtCenter(true); // Destroy
-			} else if (e.button === 2) { // Right click
-				t.doBlockActionAtCenter(false); // Place
-			}
-			e.preventDefault();
-		}
-	});
 }
 
 // setMaterialSelector( id )
@@ -184,26 +117,8 @@ Player.prototype.onKeyEvent = function( keyCode, down )
 	var key = String.fromCharCode( keyCode ).toLowerCase();
 	this.keys[key] = down;
 	this.keys[keyCode] = down;
-
-	if ( keyCode == 114 ) { // F3 key
-		if ( down && !this.debugKeyDown ) {
-			this.debugKeyDown = true;
-			if ( typeof toggleDebugOverlay === "function" ) {
-				toggleDebugOverlay();
-			}
-		} else if ( !down ) {
-			this.debugKeyDown = false;
-		}
-	}
-
+	
 	if ( !down && key == "t" && this.eventHandlers["openChat"] ) this.eventHandlers.openChat();
-	if ( !down && keyCode == 27 ) { // ESC key
-		if (this.pointerLocked) {
-			document.exitPointerLock();
-		} else if (typeof pauseGame === 'function') {
-			pauseGame();
-		}
-	}
 }
 
 // onMouseEvent( x, y, type, rmb )
@@ -218,7 +133,7 @@ Player.prototype.onMouseEvent = function( x, y, type, rmb )
 		this.yawStart = this.targetYaw = this.angles[1];
 		this.pitchStart = this.targetPitch = this.angles[0];
 	} else if ( type == MOUSE.UP ) {
-		if ( Math.abs( this.dragStart.x - x ) + Math.abs( this.dragStart.y - y ) < 4 )
+		if ( Math.abs( this.dragStart.x - x ) + Math.abs( this.dragStart.y - y ) < 4 )	
 			this.doBlockAction( x, y, !rmb );
 
 		this.dragging = false;
@@ -233,17 +148,6 @@ Player.prototype.onMouseEvent = function( x, y, type, rmb )
 	}
 }
 
-// onMouseMove( deltaX, deltaY )
-//
-// Hook for mouse movement in pointer lock mode.
-
-Player.prototype.onMouseMove = function( deltaX, deltaY )
-{
-	this.targetPitch = this.angles[0] - deltaY / 200;
-	this.targetYaw = this.angles[1] + deltaX / 200;
-	this.dragging = true;
-}
-
 // doBlockAction( x, y )
 //
 // Called to perform an action based on the player's block selection and input.
@@ -252,64 +156,16 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 {
 	var bPos = new Vector( Math.floor( this.pos.x ), Math.floor( this.pos.y ), Math.floor( this.pos.z ) );
 	var block = this.canvas.renderer.pickAt( new Vector( bPos.x - 4, bPos.y - 4, bPos.z - 4 ), new Vector( bPos.x + 4, bPos.y + 4, bPos.z + 4 ), x, y );
-
+	
 	if ( block != false )
 	{
 		var obj = this.client ? this.client : this.world;
-
+		
 		if ( destroy )
 			obj.setBlock( block.x, block.y, block.z, BLOCK.AIR );
 		else
-		{
-			// Calcular la posición donde se colocará el bloque
-			var placeX = block.x + block.n.x;
-			var placeY = block.y + block.n.y;
-			var placeZ = block.z + block.n.z;
-			
-			// Verificar si el bloque se colocaría dentro de la hitbox del jugador
-			// Hitbox del jugador: tamaño 0.3 en X e Y (radio), altura 1.8 en Z
-			var playerRadius = this.playerRadius || 0.3;
-			var playerHeight = this.playerHeight || 1.8;
-			var playerMinX = this.pos.x - playerRadius;
-			var playerMaxX = this.pos.x + playerRadius;
-			var playerMinY = this.pos.y - playerRadius;
-			var playerMaxY = this.pos.y + playerRadius;
-			var playerMinZ = this.pos.z;
-			var playerMaxZ = this.pos.z + playerHeight;
-			
-			// El bloque ocupa desde (placeX, placeY, placeZ) hasta (placeX+1, placeY+1, placeZ+1)
-			var blockMinX = placeX;
-			var blockMaxX = placeX + 1;
-			var blockMinY = placeY;
-			var blockMaxY = placeY + 1;
-			var blockMinZ = placeZ;
-			var blockMaxZ = placeZ + 1;
-			
-			// Verificar intersección entre la hitbox del jugador y el bloque a colocar
-			var intersects = ( playerMaxX > blockMinX && playerMinX < blockMaxX &&
-			                   playerMaxY > blockMinY && playerMinY < blockMaxY &&
-			                   playerMaxZ > blockMinZ && playerMinZ < blockMaxZ );
-			
-			// Si hay intersección, no permitir colocar el bloque
-			if ( intersects ) {
-				return; // No colocar el bloque dentro del jugador
-			}
-			
-			obj.setBlock( placeX, placeY, placeZ, this.buildMaterial );
-		}
+			obj.setBlock( block.x + block.n.x, block.y + block.n.y, block.z + block.n.z, this.buildMaterial );
 	}
-}
-
-// doBlockActionAtCenter()
-//
-// Called to perform an action at the center of the screen (crosshair position).
-
-Player.prototype.doBlockActionAtCenter = function( destroy )
-{
-	var canvas = this.canvas;
-	var centerX = canvas.width / 2;
-	var centerY = canvas.height / 2;
-	this.doBlockAction( centerX, centerY, destroy );
 }
 
 // getEyePos()
@@ -318,7 +174,7 @@ Player.prototype.doBlockActionAtCenter = function( destroy )
 
 Player.prototype.getEyePos = function()
 {
-	return this.pos.add( new Vector( 0.0, 0.0, this.playerHeight || 1.8 ) );
+	return this.pos.add( new Vector( 0.0, 0.0, 1.7 ) );
 }
 
 // update()
@@ -335,13 +191,6 @@ Player.prototype.update = function()
 	if ( this.lastUpdate != null )
 	{
 		var delta = ( new Date().getTime() - this.lastUpdate ) / 1000;
-		
-		// Limit delta to prevent large jumps when game is paused/resumed
-		// This prevents the player from falling through the world or moving too fast
-		var maxDelta = 0.1; // Maximum 100ms delta (10 FPS equivalent)
-		if ( delta > maxDelta ) {
-			delta = maxDelta;
-		}
 
 		// View
 		if ( this.dragging )
@@ -390,23 +239,8 @@ Player.prototype.update = function()
 			velocity.y /= this.falling ? 1.01 : 1.5;
 		}
 
-			// Resolve collision
+		// Resolve collision
 		this.pos = this.resolveCollision( pos, bPos, velocity.mul( delta ) );
-		
-		// Clamp player position to world bounds to prevent falling through
-		// Keep player slightly inside bounds (0.1 margin) to avoid edge cases
-		var margin = 0.1;
-		if ( this.pos.x < margin ) this.pos.x = margin;
-		if ( this.pos.y < margin ) this.pos.y = margin;
-		if ( this.pos.z < margin ) this.pos.z = margin;
-		if ( this.pos.x > world.sx - 1 - margin ) this.pos.x = world.sx - 1 - margin;
-		if ( this.pos.y > world.sy - 1 - margin ) this.pos.y = world.sy - 1 - margin;
-		var playerHeight = this.playerHeight || 1.8;
-		if ( this.pos.z > world.sz - playerHeight - margin ) {
-			this.pos.z = world.sz - playerHeight - margin;
-			this.velocity.z = 0;
-			this.falling = false;
-		}
 	}
 
 	this.lastUpdate = new Date().getTime();
@@ -419,195 +253,86 @@ Player.prototype.update = function()
 Player.prototype.resolveCollision = function( pos, bPos, velocity )
 {
 	var world = this.world;
-	
-	var playerRadius = this.playerRadius || 0.3;
-	var playerHeight = this.playerHeight || 1.8;
-	
-	// Trabajar con una copia de la posición para no modificar el original
-	var newPos = new Vector( pos.x, pos.y, pos.z );
-	var newVelocity = new Vector( velocity.x, velocity.y, velocity.z );
-	
-	// Función auxiliar para verificar si una posición intersecta con bloques sólidos
-	var checkBlockCollision = function( testX, testY, testZ ) {
-		var testMinX = testX - playerRadius;
-		var testMaxX = testX + playerRadius;
-		var testMinY = testY - playerRadius;
-		var testMaxY = testY + playerRadius;
-		var testMinZ = testZ;
-		var testMaxZ = testZ + playerHeight;
-		
-		for ( var x = Math.floor( testMinX ); x <= Math.floor( testMaxX ); x++ )
-		{
-			for ( var y = Math.floor( testMinY ); y <= Math.floor( testMaxY ); y++ )
-			{
-				for ( var z = Math.floor( testMinZ ); z <= Math.floor( testMaxZ ); z++ )
-				{
-					var block = world.getBlock( x, y, z );
-					if ( block != BLOCK.AIR && !block.transparent )
-					{
-						var blockMinX = x;
-						var blockMaxX = x + 1;
-						var blockMinY = y;
-						var blockMaxY = y + 1;
-						var blockMinZ = z;
-						var blockMaxZ = z + 1;
-						
-						if ( testMaxX > blockMinX && testMinX < blockMaxX &&
-						     testMaxY > blockMinY && testMinY < blockMaxY &&
-						     testMaxZ > blockMinZ && testMinZ < blockMaxZ )
-						{
-							return { collides: true, blockX: x, blockY: y, blockZ: z,
-							         blockMinX: blockMinX, blockMaxX: blockMaxX,
-							         blockMinY: blockMinY, blockMaxY: blockMaxY,
-							         blockMinZ: blockMinZ, blockMaxZ: blockMaxZ };
-						}
-					}
-				}
-			}
-		}
-		return { collides: false };
-	};
-	
-	// Primero, verificar si el jugador está dentro de un bloque y sacarlo
-	var currentCollision = checkBlockCollision( newPos.x, newPos.y, newPos.z );
-	if ( currentCollision.collides )
-	{
-		// El jugador está dentro de un bloque, empujarlo fuera
-		var playerMinX = newPos.x - playerRadius;
-		var playerMaxX = newPos.x + playerRadius;
-		var playerMinY = newPos.y - playerRadius;
-		var playerMaxY = newPos.y + playerRadius;
-		var playerMinZ = newPos.z;
-		var playerMaxZ = newPos.z + playerHeight;
-		
-		// Calcular distancias de penetración
-		var distLeft = playerMaxX - currentCollision.blockMinX;
-		var distRight = currentCollision.blockMaxX - playerMinX;
-		var distFront = playerMaxY - currentCollision.blockMinY;
-		var distBack = currentCollision.blockMaxY - playerMinY;
-		
-		// Encontrar la dirección de menor penetración y empujar en esa dirección
-		var minDist = Math.min( distLeft, distRight, distFront, distBack );
-		if ( minDist == distLeft ) {
-			newPos.x = currentCollision.blockMinX - playerRadius - 0.001;
-		} else if ( minDist == distRight ) {
-			newPos.x = currentCollision.blockMaxX + playerRadius + 0.001;
-		} else if ( minDist == distFront ) {
-			newPos.y = currentCollision.blockMinY - playerRadius - 0.001;
-		} else {
-			newPos.y = currentCollision.blockMaxY + playerRadius + 0.001;
-		}
-	}
-	
-	// Resolver colisiones horizontales (X e Y)
-	// Primero verificar colisiones en X
-	if ( Math.abs( newVelocity.x ) > 0.001 )
-	{
-		var testPosX = newPos.x + newVelocity.x;
-		var collision = checkBlockCollision( testPosX, newPos.y, newPos.z );
-		
-		if ( collision.collides )
-		{
-			// Limitar el movimiento para que se detenga justo antes del bloque
-			if ( newVelocity.x > 0 )
-			{
-				newPos.x = collision.blockMinX - playerRadius - 0.001;
-			}
-			else
-			{
-				newPos.x = collision.blockMaxX + playerRadius + 0.001;
-			}
-			newVelocity.x = 0;
-		}
-	}
-	
-	// Luego verificar colisiones en Y
-	if ( Math.abs( newVelocity.y ) > 0.001 )
-	{
-		var testPosY = newPos.y + newVelocity.y;
-		var collision = checkBlockCollision( newPos.x, testPosY, newPos.z );
-		
-		if ( collision.collides )
-		{
-			// Limitar el movimiento para que se detenga justo antes del bloque
-			if ( newVelocity.y > 0 )
-			{
-				newPos.y = collision.blockMinY - playerRadius - 0.001;
-			}
-			else
-			{
-				newPos.y = collision.blockMaxY + playerRadius + 0.001;
-			}
-			newVelocity.y = 0;
-		}
-	}
-	
-	// Actualizar posiciones futuras después de resolver colisiones horizontales
-	var futurePlayerMinX = newPos.x + newVelocity.x - playerRadius;
-	var futurePlayerMaxX = newPos.x + newVelocity.x + playerRadius;
-	var futurePlayerMinY = newPos.y + newVelocity.y - playerRadius;
-	var futurePlayerMaxY = newPos.y + newVelocity.y + playerRadius;
-	
-	// Resolver colisiones en Z (gravedad y techo)
-	this.falling = true;
-	var futurePlayerMinZ = newPos.z + newVelocity.z;
-	var futurePlayerMaxZ = newPos.z + newVelocity.z + playerHeight;
+	var playerRect = { x: pos.x + velocity.x, y: pos.y + velocity.y, size: 0.25 };
+
+	// Collect XY collision sides
+	var collisionCandidates = [];
 
 	for ( var x = bPos.x - 1; x <= bPos.x + 1; x++ )
 	{
 		for ( var y = bPos.y - 1; y <= bPos.y + 1; y++ )
 		{
-			// Verificar bloque debajo (suelo)
-			var z = Math.floor( futurePlayerMinZ );
-			var block = world.getBlock( x, y, z );
-			if ( block != BLOCK.AIR && !block.transparent )
+			for ( var z = bPos.z; z <= bPos.z + 1; z++ )
 			{
-				var blockMinX = x;
-				var blockMaxX = x + 1;
-				var blockMinY = y;
-				var blockMaxY = y + 1;
-				var blockMinZ = z;
-				var blockMaxZ = z + 1;
-				
-				var intersectsX = ( futurePlayerMaxX > blockMinX && futurePlayerMinX < blockMaxX );
-				var intersectsY = ( futurePlayerMaxY > blockMinY && futurePlayerMinY < blockMaxY );
-				var intersectsZ = ( futurePlayerMaxZ > blockMinZ && futurePlayerMinZ < blockMaxZ );
-				
-				if ( intersectsX && intersectsY && intersectsZ && newVelocity.z < 0 )
+				if ( world.getBlock( x, y, z ) != BLOCK.AIR )
 				{
-					this.falling = false;
-					newPos.z = blockMaxZ;
-					newVelocity.z = 0;
-					this.velocity.z = 0;
-				}
-			}
-			
-			// Verificar bloque arriba (techo)
-			z = Math.floor( futurePlayerMaxZ );
-			block = world.getBlock( x, y, z );
-			if ( block != BLOCK.AIR && !block.transparent )
-			{
-				var blockMinX = x;
-				var blockMaxX = x + 1;
-				var blockMinY = y;
-				var blockMaxY = y + 1;
-				var blockMinZ = z;
-				var blockMaxZ = z + 1;
-				
-				var intersectsX = ( futurePlayerMaxX > blockMinX && futurePlayerMinX < blockMaxX );
-				var intersectsY = ( futurePlayerMaxY > blockMinY && futurePlayerMinY < blockMaxY );
-				var intersectsZ = ( futurePlayerMaxZ > blockMinZ && futurePlayerMinZ < blockMaxZ );
-				
-				if ( intersectsX && intersectsY && intersectsZ && newVelocity.z > 0 )
-				{
-					newPos.z = blockMinZ - playerHeight;
-					newVelocity.z = 0;
-					this.velocity.z = 0;
+					if ( world.getBlock( x - 1, y, z ) == BLOCK.AIR ) collisionCandidates.push( { x: x, dir: -1, y1: y, y2: y + 1 } );
+					if ( world.getBlock( x + 1, y, z ) == BLOCK.AIR ) collisionCandidates.push( { x: x + 1, dir: 1, y1: y, y2: y + 1 } );
+					if ( world.getBlock( x, y - 1, z ) == BLOCK.AIR ) collisionCandidates.push( { y: y, dir: -1, x1: x, x2: x + 1 } );
+					if ( world.getBlock( x, y + 1, z ) == BLOCK.AIR ) collisionCandidates.push( { y: y + 1, dir: 1, x1: x, x2: x + 1 } );
 				}
 			}
 		}
 	}
 
+	// Solve XY collisions
+	for( var i in collisionCandidates ) 
+	{
+		var side = collisionCandidates[i];
+
+		if ( lineRectCollide( side, playerRect ) )
+		{
+			if ( side.x != null && velocity.x * side.dir < 0 ) {
+				pos.x = side.x + playerRect.size / 2 * ( velocity.x > 0 ? -1 : 1 );
+				velocity.x = 0;
+			} else if ( side.y != null && velocity.y * side.dir < 0 ) {
+				pos.y = side.y + playerRect.size / 2 * ( velocity.y > 0 ? -1 : 1 );
+				velocity.y = 0;
+			}
+		}
+	}
+
+	var playerFace = { x1: pos.x + velocity.x - 0.125, y1: pos.y + velocity.y - 0.125, x2: pos.x + velocity.x + 0.125, y2: pos.y + velocity.y + 0.125 };
+	var newBZLower = Math.floor( pos.z + velocity.z );
+	var newBZUpper = Math.floor( pos.z + 1.7 + velocity.z * 1.1 );
+
+	// Collect Z collision sides
+	collisionCandidates = [];
+
+	for ( var x = bPos.x - 1; x <= bPos.x + 1; x++ ) 
+	{
+		for ( var y = bPos.y - 1; y <= bPos.y + 1; y++ )
+		{
+			if ( world.getBlock( x, y, newBZLower ) != BLOCK.AIR )
+				collisionCandidates.push( { z: newBZLower + 1, dir: 1, x1: x, y1: y, x2: x + 1, y2: y + 1 } );
+			if ( world.getBlock( x, y, newBZUpper ) != BLOCK.AIR )
+				collisionCandidates.push( { z: newBZUpper, dir: -1, x1: x, y1: y, x2: x + 1, y2: y + 1 } );
+		}
+	}
+
+	// Solve Z collisions
+	this.falling = true;
+	for ( var i in collisionCandidates )
+	{
+		var face = collisionCandidates[i];
+
+		if ( rectRectCollide( face, playerFace ) && velocity.z * face.dir < 0 )
+		{
+			if ( velocity.z < 0 ) {
+				this.falling = false;
+				pos.z = face.z;
+				velocity.z = 0;
+				this.velocity.z = 0;
+			} else {
+				pos.z = face.z - 1.8;
+				velocity.z = 0;
+				this.velocity.z = 0;
+			}
+
+			break;
+		}
+	}
+
 	// Return solution
-	return newPos.add( newVelocity );
+	return pos.add( velocity );
 }

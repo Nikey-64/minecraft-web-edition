@@ -43,13 +43,7 @@ function Renderer( id )
 	canvas.renderer = this;
 	canvas.width = canvas.clientWidth;
 	canvas.height = canvas.clientHeight;
-
-	this.renderDistance = parseInt(localStorage.getItem('renderDistance')) || 8; // chunks default radius
-	this.chunkSize = 8; // Default chunk size (8x8x8 preferred for optimal performance) (8 is better for any kind of devices)
-	this.camPos = [0, 0, 0]; // Initialize camera position
-	this.camAng = [0, 0, 0]; // Initialize camera angles
-	this.renderBehind = false; // Option to not render chunks behind the player (disabled by default)
-
+	
 	// Initialise WebGL
 	var gl;
 	try
@@ -66,7 +60,6 @@ function Renderer( id )
 	gl.enable( gl.DEPTH_TEST );
 	gl.enable( gl.CULL_FACE );
 	gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
-	
 	
 	// Load shaders
 	this.loadShaders();
@@ -118,33 +111,6 @@ function Renderer( id )
 	};
 	terrainTexture.image.src = "media/terrain.png";
 	
-	// Load grass color texture for biome coloring
-	var grassColorTexture = this.texGrassColor = gl.createTexture();
-	grassColorTexture.image = new Image();
-	grassColorTexture.image.onload = function()
-	{
-		gl.bindTexture( gl.TEXTURE_2D, grassColorTexture );
-		gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, grassColorTexture.image );
-		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR );
-		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR );
-		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT );
-		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT );
-		
-		// Create canvas to read pixel data from grass color texture
-		var canvas = document.createElement( "canvas" );
-		canvas.width = grassColorTexture.image.width;
-		canvas.height = grassColorTexture.image.height;
-		var ctx = canvas.getContext( "2d" );
-		ctx.drawImage( grassColorTexture.image, 0, 0 );
-		grassColorTexture.imageData = ctx.getImageData( 0, 0, canvas.width, canvas.height );
-	};
-	grassColorTexture.image.onerror = function()
-	{
-		console.warn( "Failed to load grasscolor.png, grass blocks will appear white" );
-		grassColorTexture.imageData = null;
-	};
-	grassColorTexture.image.src = "media/misc/grasscolor.png";
-	
 	// Create canvas used to draw name tags
 	var textCanvas = this.textCanvas = document.createElement( "canvas" );
 	textCanvas.width = 256;
@@ -164,52 +130,26 @@ function Renderer( id )
 Renderer.prototype.draw = function()
 {
 	var gl = this.gl;
-
+	
 	// Initialise view
 	this.updateViewport();
 	gl.viewport( 0, 0, gl.viewportWidth, gl.viewportHeight );
 	gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
-
-	// Update chunks based on player position (only every N frames to reduce overhead)
-	if (!this._updateChunksFrameCount) this._updateChunksFrameCount = 0;
-	this._updateChunksFrameCount++;
-	if (this._updateChunksFrameCount >= 5) { // Update chunks every 5 frames
-		var updateStart = performance.now();
-		this.updateChunks();
-		var updateTime = performance.now() - updateStart;
-		if (this._updateChunksStats) {
-			this._updateChunksStats.total += updateTime;
-			this._updateChunksStats.count++;
-			if (updateTime > this._updateChunksStats.max) this._updateChunksStats.max = updateTime;
-		} else {
-			this._updateChunksStats = { total: updateTime, count: 1, max: updateTime };
-		}
-		this._updateChunksFrameCount = 0;
-	}
 	
-	// Actualizar buffer de bloques animados cada frame (más eficiente que reconstruir chunks)
-	this.updateAnimatedBlocksBuffer();
-
 	// Draw level chunks
 	var chunks = this.chunks;
-
+	
 	gl.bindTexture( gl.TEXTURE_2D, this.texTerrain );
-
+	
 	if ( chunks != null )
 	{
 		for ( var i = 0; i < chunks.length; i++ )
 		{
-			if ( chunks[i].loaded && chunks[i].buffer != null )
+			if ( chunks[i].buffer != null ) 
 				this.drawBuffer( chunks[i].buffer );
 		}
 	}
 	
-	// Dibujar bloques animados (buffer separado, más eficiente)
-	if ( this.animatedBlocksBuffer && this.animatedBlocksBuffer.vertices > 0 )
-	{
-		this.drawBuffer( this.animatedBlocksBuffer );
-	}
-
 	// Draw players
 	var players = this.world.players;
 	
@@ -353,21 +293,18 @@ Renderer.prototype.buildPlayerName = function( nickname )
 // Returns the block at mouse position mx and my.
 // The blocks that can be reached lie between min and max.
 //
-// Each side is rendered twice so that up to 16 bits of precision can be stored
-// per axis in the picking buffers. The first pass stores the X/Y coordinates,
-// the second pass stores Z and the face index which is later mapped to a normal.
+// Each side is rendered with the X, Y and Z position of the
+// block in the RGB color values and the normal of the side is
+// stored in the color alpha value. In that way, all information
+// can be retrieved by simply reading the pixel the mouse is over.
+//
+// WARNING: This implies that the level can never be larger than
+// 254x254x254 blocks! (Value 255 is used for sky.)
 
 Renderer.prototype.pickAt = function( min, max, mx, my )
 {
 	var gl = this.gl;
 	var world = this.world;
-	
-	// Ensure BLOCK is available - try window.BLOCK first, then global BLOCK
-	var blockObj = ( typeof window !== 'undefined' && window.BLOCK ) ? window.BLOCK : ( typeof BLOCK !== 'undefined' ? BLOCK : null );
-	if ( !blockObj ) {
-		console.error( 'BLOCK is not defined!' );
-		return false;
-	}
 	
 	// Create framebuffer for picking render
 	var fbo = gl.createFramebuffer();
@@ -386,63 +323,35 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, bt, 0 );
 	gl.framebufferRenderbuffer( gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer );
 	
-	var buildPickingBuffer = function()
-	{
-		var vertices = [];
-		for ( var x = min.x; x <= max.x; x++ ) {
-			for ( var y = min.y; y <= max.y; y++ ) {
-				for ( var z = min.z; z <= max.z; z++ ) {
-					if ( world.getBlock( x, y, z ) != blockObj.AIR )
-						blockObj.pushPickingVertices( vertices, x, y, z );
-				}
+	// Build buffer with block pick candidates
+	var vertices = [];
+	
+	for ( var x = min.x; x <= max.x; x++ ) {
+		for ( var y = min.y; y <= max.y; y++ ) {
+			for ( var z = min.z; z <= max.z; z++ ) {
+				if ( world.getBlock( x, y, z ) != BLOCK.AIR )
+					BLOCK.pushPickingVertices( vertices, x, y, z );
 			}
-		}
-		
-		if ( vertices.length === 0 ) return null;
-		
-		var buffer = gl.createBuffer();
-		buffer.vertices = vertices.length / 9;
-		gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
-		gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STREAM_DRAW );
-		return buffer;
-	};
-	
-	var pixelXY = new Uint8Array( 4 );
-	var pixelZ = new Uint8Array( 4 );
-	var hitDetected = false;
-	var readX = mx / gl.viewportWidth * 512;
-	var readY = ( 1 - my / gl.viewportHeight ) * 512;
-	
-	for ( var pass = 0; pass < 2; pass++ )
-	{
-		// Set picking pass directly - this is what setPickingPass does anyway
-		blockObj.pickingPass = ( pass === 0 ) ? ( blockObj.PICK_PASS_POSITION || 0 ) : ( blockObj.PICK_PASS_DEPTH || 1 );
-		var buffer = buildPickingBuffer();
-		
-		gl.bindTexture( gl.TEXTURE_2D, this.texWhite );
-		gl.viewport( 0, 0, 512, 512 );
-		gl.clearColor( 1.0, 1.0, 1.0, 1.0 );
-		gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
-		
-		if ( buffer )
-		{
-			this.drawBuffer( buffer );
-		}
-		
-		var target = pass === 0 ? pixelXY : pixelZ;
-		gl.readPixels( readX, readY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, target );
-		
-		if ( buffer )
-			gl.deleteBuffer( buffer );
-		
-		if ( !hitDetected )
-		{
-			hitDetected = !( target[0] === 255 && target[1] === 255 && target[2] === 255 && target[3] === 255 );
 		}
 	}
 	
-	// Reset picking pass directly - this is what setPickingPass does anyway
-	blockObj.pickingPass = blockObj.PICK_PASS_POSITION || 0;
+	var buffer = gl.createBuffer();
+	buffer.vertices = vertices.length / 9;
+	gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
+	gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STREAM_DRAW );
+	
+	// Draw buffer
+	gl.bindTexture( gl.TEXTURE_2D, this.texWhite );
+	
+	gl.viewport( 0, 0, 512, 512 );
+	gl.clearColor( 1.0, 1.0, 1.0, 1.0 );
+	gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+	
+	this.drawBuffer( buffer );
+	
+	// Read pixel
+	var pixel = new Uint8Array( 4 );
+	gl.readPixels( mx/gl.viewportWidth*512, (1-my/gl.viewportHeight)*512, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel );
 	
 	// Reset states
 	gl.bindTexture( gl.TEXTURE_2D, this.texTerrain );
@@ -450,32 +359,30 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	gl.clearColor( 0.62, 0.81, 1.0, 1.0 );
 	
 	// Clean up
+	gl.deleteBuffer( buffer );
 	gl.deleteRenderbuffer( renderbuffer );
 	gl.deleteTexture( bt );
 	gl.deleteFramebuffer( fbo );
 	
-	if ( !hitDetected )
+	// Build result
+	if ( pixel[0] != 255 )
+	{
+		var normal;
+		if ( pixel[3] == 1 ) normal = new Vector( 0, 0, 1 );
+		else if ( pixel[3] == 2 ) normal = new Vector( 0, 0, -1 );
+		else if ( pixel[3] == 3 ) normal = new Vector( 0, -1, 0 );
+		else if ( pixel[3] == 4 ) normal = new Vector( 0, 1, 0 );
+		else if ( pixel[3] == 5 ) normal = new Vector( -1, 0, 0 );
+		else if ( pixel[3] == 6 ) normal = new Vector( 1, 0, 0 );
+		
+		return {
+			x: pixel[0],
+			y: pixel[1],
+			z: pixel[2],
+			n: normal
+		}
+	} else {
 		return false;
-	
-	var x = pixelXY[0] | ( pixelXY[1] << 8 );
-	var y = pixelXY[2] | ( pixelXY[3] << 8 );
-	var z = pixelZ[0] | ( pixelZ[1] << 8 );
-	var face = pixelZ[2];
-	
-	var normal;
-	if ( face == 1 ) normal = new Vector( 0, 0, 1 );
-	else if ( face == 2 ) normal = new Vector( 0, 0, -1 );
-	else if ( face == 3 ) normal = new Vector( 0, -1, 0 );
-	else if ( face == 4 ) normal = new Vector( 0, 1, 0 );
-	else if ( face == 5 ) normal = new Vector( -1, 0, 0 );
-	else if ( face == 6 ) normal = new Vector( 1, 0, 0 );
-	else normal = new Vector( 0, 0, 0 );
-	
-	return {
-		x: x,
-		y: y,
-		z: z,
-		n: normal
 	}
 }
 
@@ -559,173 +466,28 @@ Renderer.prototype.loadShaders = function()
 // Makes the renderer start tracking a new world and set up the chunk structure.
 //
 // world - The world object to operate on.
-// chunkSize - X, Y and Z dimensions of each chunk, doesn't have to fit exactly inside the world. 16x16x16 is prefered for optimal peformance.
+// chunkSize - X, Y and Z dimensions of each chunk, doesn't have to fit exactly inside the world.
 
 Renderer.prototype.setWorld = function( world, chunkSize )
 {
 	this.world = world;
 	world.renderer = this;
 	this.chunkSize = chunkSize;
-	if ( world.setChunking ) world.setChunking( chunkSize );
-	this.chunkLookup = {};
-	this.loadedChunks = new Set();
-	this.dirtyChunks = []; // List of chunks that need to be rebuilt
-
+	
 	// Create chunk list
 	var chunks = this.chunks = [];
 	for ( var x = 0; x < world.sx; x += chunkSize ) {
 		for ( var y = 0; y < world.sy; y += chunkSize ) {
 			for ( var z = 0; z < world.sz; z += chunkSize ) {
-				var chunk = {
+				chunks.push( {
 					start: [ x, y, z ],
 					end: [ Math.min( world.sx, x + chunkSize ), Math.min( world.sy, y + chunkSize ), Math.min( world.sz, z + chunkSize ) ],
-					cx: x / chunkSize,
-					cy: y / chunkSize,
-					cz: z / chunkSize,
-					dirty: true,
-					loaded: false
-				};
-				chunk.key = this.getChunkKey( chunk.cx, chunk.cy, chunk.cz );
-				this.chunkLookup[chunk.key] = chunk;
-				chunks.push( chunk );
+					dirty: true
+				} );
 			}
 		}
 	}
-
-	// Initialize spawn chunks with loaded: true
-	var spawnX = Math.floor(world.spawn[0] / chunkSize) * chunkSize;
-	var spawnY = Math.floor(world.spawn[1] / chunkSize) * chunkSize;
-	var spawnZ = Math.floor(world.spawn[2] / chunkSize) * chunkSize;
-
-	for ( var i = 0; i < chunks.length; i++ ) {
-		var chunk = chunks[i];
-		if ( chunk.start[0] >= spawnX - chunkSize * this.renderDistance &&
-			 chunk.start[0] <= spawnX + chunkSize * this.renderDistance &&
-			 chunk.start[1] >= spawnY - chunkSize * this.renderDistance &&
-			 chunk.start[1] <= spawnY + chunkSize * this.renderDistance &&
-			 chunk.start[2] >= spawnZ - chunkSize * this.renderDistance &&
-			 chunk.start[2] <= spawnZ + chunkSize * this.renderDistance ) {
-			this.loadChunk( chunk );
-			// loadChunk already adds to dirtyChunks, so we're good
-		}
-	}
 }
-
-Renderer.prototype.getChunkKey = function( cx, cy, cz )
-{
-	return cx + "|" + cy + "|" + cz;
-}
-
-// isChunkInRange( chunkX, chunkY, chunkZ, playerX, playerY, playerZ )
-//
-// Returns true if the chunk at (chunkX, chunkY, chunkZ) is within render distance of the player at (playerX, playerY, playerZ).
-// Render distance for Z is asymmetric: full above, half below.
-Renderer.prototype.isChunkInRange = function( chunkX, chunkY, chunkZ, playerX, playerY, playerZ )
-{
-	var playerChunkX = Math.floor(playerX / this.chunkSize);
-	var playerChunkY = Math.floor(playerY / this.chunkSize);
-	var playerChunkZ = Math.floor(playerZ / this.chunkSize);
-
-	var distX = Math.abs(chunkX - playerChunkX);
-	var distY = Math.abs(chunkY - playerChunkY);
-	var distZ = chunkZ > playerChunkZ ? chunkZ - playerChunkZ : (playerChunkZ - chunkZ) * 2;
-
-	return distX <= this.renderDistance && distY <= this.renderDistance && distZ <= this.renderDistance;
-};
-
-// unloadChunk( chunkIndex )
-//
-// Unloads the chunk at the specified index by setting loaded to false and deleting the buffer.
-
-Renderer.prototype.unloadChunk = function( chunkIndexOrChunk )
-{
-	var chunk = typeof chunkIndexOrChunk === "number" ? this.chunks[chunkIndexOrChunk] : chunkIndexOrChunk;
-	if ( !chunk ) return;
-	if ( this.world && this.world.persistChunk )
-		this.world.persistChunk( chunk, this.chunkSize );
-	chunk.loaded = false;
-	if ( chunk.buffer != null )
-	{
-		this.gl.deleteBuffer( chunk.buffer );
-		chunk.buffer = null;
-	}
-	if ( this.loadedChunks ) this.loadedChunks.delete( chunk.key );
-};
-
-// setRenderDistance( distance )
-//
-// Updates the render distance and triggers chunk updates.
-
-Renderer.prototype.setRenderDistance = function( distance )
-{
-	this.renderDistance = distance;
-	// Trigger immediate chunk update
-	this.updateChunks();
-};
-
-// loadChunk( chunkIndex )
-//
-// Loads the chunk at the specified index by setting loaded to true and marking it as dirty.
-
-Renderer.prototype.loadChunk = function( chunkIndexOrChunk )
-{
-	var chunk = typeof chunkIndexOrChunk === "number" ? this.chunks[chunkIndexOrChunk] : chunkIndexOrChunk;
-	if ( !chunk ) return;
-	if ( this.world && this.world.ensureChunkLoaded )
-		this.world.ensureChunkLoaded( chunk, this.chunkSize );
-	chunk.loaded = true;
-	chunk.dirty = true;
-	if ( this.loadedChunks ) this.loadedChunks.add( chunk.key );
-	// Add to dirty queue if not already there
-	if ( this.dirtyChunks && this.dirtyChunks.indexOf( chunk ) === -1 ) {
-		this.dirtyChunks.push( chunk );
-	}
-};
-
-// updateChunks()
-//
-// Updates the loaded state of chunks based on the player's current position.
-// Loads chunks that are in range and unloads those that are not.
-
-Renderer.prototype.updateChunks = function()
-{
-	if ( !this.world || !this.chunks ) return;
-
-	var playerX = this.camPos[0];
-	var playerY = this.camPos[1];
-	var playerZ = this.camPos[2];
-	var playerChunkX = Math.floor( playerX / this.chunkSize );
-	var playerChunkY = Math.floor( playerY / this.chunkSize );
-	var playerChunkZ = Math.floor( playerZ / this.chunkSize );
-	var targetKeys = new Set();
-
-	for ( var dx = -this.renderDistance; dx <= this.renderDistance; dx++ ) {
-		for ( var dy = -this.renderDistance; dy <= this.renderDistance; dy++ ) {
-			for ( var dz = -this.renderDistance; dz <= this.renderDistance; dz++ ) {
-				var cx = playerChunkX + dx;
-				var cy = playerChunkY + dy;
-				var cz = playerChunkZ + dz;
-				if ( !this.isChunkInRange( cx, cy, cz, playerX, playerY, playerZ ) ) continue;
-				var key = this.getChunkKey( cx, cy, cz );
-				targetKeys.add( key );
-				var chunk = this.chunkLookup && this.chunkLookup[key];
-				if ( chunk && !chunk.loaded ) this.loadChunk( chunk );
-			}
-		}
-	}
-
-	if ( this.loadedChunks && this.loadedChunks.size ) {
-		var unloadQueue = [];
-		this.loadedChunks.forEach( function( key ) {
-			if ( !targetKeys.has( key ) ) unloadQueue.push( key );
-		} );
-		for ( var i = 0; i < unloadQueue.length; i++ ) {
-			var chunk = this.chunkLookup[ unloadQueue[i] ];
-			if ( chunk ) this.unloadChunk( chunk );
-		}
-	}
-};
-
 
 // onBlockChanged( x, y, z )
 //
@@ -734,28 +496,19 @@ Renderer.prototype.updateChunks = function()
 Renderer.prototype.onBlockChanged = function( x, y, z )
 {
 	var chunks = this.chunks;
-	var dirtyChunks = this.dirtyChunks;
 	
 	for ( var i = 0; i < chunks.length; i++ )
 	{
-		var chunk = chunks[i];
-		var wasDirty = chunk.dirty;
-		
 		// Neighbouring chunks are updated as well if the block is on a chunk border
 		// Also, all chunks below the block are updated because of lighting
-		if ( x >= chunk.start[0] && x < chunk.end[0] && y >= chunk.start[1] && y < chunk.end[1] && z >= chunk.start[2] && z < chunk.end[2] )
-			chunk.dirty = true;
-		else if ( x >= chunk.start[0] && x < chunk.end[0] && y >= chunk.start[1] && y < chunk.end[1] && ( z >= chunk.end[2] || z == chunk.start[2] - 1 ) )
-			chunk.dirty = true;
-		else if ( x >= chunk.start[0] && x < chunk.end[0] && z >= chunk.start[2] && z < chunk.end[2] && ( y == chunk.end[1] || y == chunk.start[1] - 1 ) )
-			chunk.dirty = true;
-		else if ( y >= chunk.start[1] && y < chunk.end[1] && z >= chunk.start[2] && z < chunk.end[2] && ( x == chunk.end[0] || x == chunk.start[0] - 1 ) )
-			chunk.dirty = true;
-		
-		// If chunk became dirty and is loaded, add to dirty queue
-		if ( chunk.dirty && !wasDirty && chunk.loaded && dirtyChunks && dirtyChunks.indexOf( chunk ) === -1 ) {
-			dirtyChunks.push( chunk );
-		}
+		if ( x >= chunks[i].start[0] && x < chunks[i].end[0] && y >= chunks[i].start[1] && y < chunks[i].end[1] && z >= chunks[i].start[2] && z < chunks[i].end[2] )
+			chunks[i].dirty = true;
+		else if ( x >= chunks[i].start[0] && x < chunks[i].end[0] && y >= chunks[i].start[1] && y < chunks[i].end[1] && ( z >= chunks[i].end[2] || z == chunks[i].start[2] - 1 ) )
+			chunks[i].dirty = true;
+		else if ( x >= chunks[i].start[0] && x < chunks[i].end[0] && z >= chunks[i].start[2] && z < chunks[i].end[2] && ( y == chunks[i].end[1] || y == chunks[i].start[1] - 1 ) )
+			chunks[i].dirty = true;
+		else if ( y >= chunks[i].start[1] && y < chunks[i].end[1] && z >= chunks[i].start[2] && z < chunks[i].end[2] && ( x == chunks[i].end[0] || x == chunks[i].start[0] - 1 ) )
+			chunks[i].dirty = true;
 	}
 }
 
@@ -777,165 +530,56 @@ function pushQuad( v, p1, p2, p3, p4 )
 Renderer.prototype.buildChunks = function( count )
 {
 	var gl = this.gl;
+	var chunks = this.chunks;
 	var world = this.world;
-	var dirtyChunks = this.dirtyChunks;
 	
-	// Process dirty chunks from the queue
-	for ( var i = 0; i < dirtyChunks.length && count > 0; i++ )
+	for ( var i = 0; i < chunks.length; i++ )
 	{
-		var chunk = dirtyChunks[i];
+		var chunk = chunks[i];
 		
-		// Skip if chunk is no longer loaded or no longer dirty
-		if ( !chunk.loaded || !chunk.dirty )
+		if ( chunk.dirty )
 		{
-			// Remove from queue
-			dirtyChunks.splice( i, 1 );
-			i--;
-			continue;
-		}
-
-		var vertices = [];
-		
-		// Create map of lowest blocks that are still lit
-		// Optimize: only check up to a reasonable height instead of entire world
-		var maxLightCheckZ = Math.min( world.sz - 1, chunk.end[2] + 32 );
-		var lightmap = {};
-		for ( var x = chunk.start[0] - 1; x < chunk.end[0] + 1; x++ )
-		{
-			lightmap[x] = {};
+			var vertices = [];
 			
-			for ( var y = chunk.start[1] - 1; y < chunk.end[1] + 1; y++ )
+			// Create map of lowest blocks that are still lit
+			var lightmap = {};
+			for ( var x = chunk.start[0] - 1; x < chunk.end[0] + 1; x++ )
 			{
-				// Start from maxLightCheckZ and go down instead of from world.sz-1
-				for ( var z = maxLightCheckZ; z >= 0; z-- )
+				lightmap[x] = {};
+				
+				for ( var y = chunk.start[1] - 1; y < chunk.end[1] + 1; y++ )
 				{
-					lightmap[x][y] = z;
-					if ( !world.getBlock( x, y, z ).transparent ) break;
-				}
-			}
-		}
-		
-		// Add vertices for blocks (solo bloques normales, los animados se dibujan por separado)
-		for ( var x = chunk.start[0]; x < chunk.end[0]; x++ ) {
-			for ( var y = chunk.start[1]; y < chunk.end[1]; y++ ) {
-				for ( var z = chunk.start[2]; z < chunk.end[2]; z++ ) {
-					var block = world.blocks[x][y][z];
-					if ( block == BLOCK.AIR ) continue;
-					
-					// Verificar si este bloque está siendo animado (no dibujarlo aquí)
-					var isAnimated = false;
-					if ( world.blockAnimations )
+					for ( var z = world.sz - 1; z >= 0; z-- )
 					{
-						for ( var animKey in world.blockAnimations )
-						{
-							var anim = world.blockAnimations[animKey];
-							var coords = animKey.split( "," );
-							var animX = parseInt( coords[0] );
-							var animY = parseInt( coords[1] );
-							var animFromZ = parseInt( coords[2] );
-							// Verificar si esta posición está siendo animada
-							if ( animX == x && animY == y && animFromZ == z )
-							{
-								isAnimated = true;
-								break;
-							}
-						}
+						lightmap[x][y] = z;
+						if ( !world.getBlock( x, y, z ).transparent ) break;
 					}
-					
-					if ( isAnimated ) continue;
-					
-					// Dibujar el bloque en su posición normal
-					BLOCK.pushVertices( vertices, world, lightmap, x, y, z );
 				}
 			}
+			
+			// Add vertices for blocks
+			for ( var x = chunk.start[0]; x < chunk.end[0]; x++ ) {
+				for ( var y = chunk.start[1]; y < chunk.end[1]; y++ ) {
+					for ( var z = chunk.start[2]; z < chunk.end[2]; z++ ) {
+						if ( world.blocks[x][y][z] == BLOCK.AIR ) continue;
+						BLOCK.pushVertices( vertices, world, lightmap, x, y, z );
+					}
+				}
+			}
+			
+			// Create WebGL buffer
+			if ( chunk.buffer ) gl.deleteBuffer( chunk.buffer );
+			
+			var buffer = chunk.buffer = gl.createBuffer();
+			buffer.vertices = vertices.length / 9;
+			gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
+			gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STATIC_DRAW );
+			
+			chunk.dirty = false;
+			count--;
 		}
 		
-		// Create WebGL buffer
-		if ( chunk.buffer ) gl.deleteBuffer( chunk.buffer );
-		
-		var buffer = chunk.buffer = gl.createBuffer();
-		buffer.vertices = vertices.length / 9;
-		gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
-		gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STATIC_DRAW );
-		
-		chunk.dirty = false;
-		// Remove from queue
-		dirtyChunks.splice( i, 1 );
-		i--;
-		count--;
-	}
-}
-
-// updateAnimatedBlocksBuffer()
-//
-// Actualiza el buffer de bloques animados. Se llama cada frame para mantener las animaciones fluidas.
-
-Renderer.prototype.updateAnimatedBlocksBuffer = function()
-{
-	if ( !this.world || !this.world.blockAnimations ) 
-	{
-		// Si no hay animaciones, limpiar el buffer
-		if ( this.animatedBlocksBuffer )
-		{
-			var gl = this.gl;
-			gl.deleteBuffer( this.animatedBlocksBuffer );
-			this.animatedBlocksBuffer = null;
-		}
-		return;
-	}
-	
-	var gl = this.gl;
-	var world = this.world;
-	var vertices = [];
-	var currentTime = new Date().getTime();
-	
-	// Crear lightmap simple para bloques animados (usar iluminación básica)
-	var lightmap = {};
-	for ( var key in world.blockAnimations )
-	{
-		var anim = world.blockAnimations[key];
-		var coords = key.split( "," );
-		var x = parseInt( coords[0] );
-		var y = parseInt( coords[1] );
-		
-		if ( !lightmap[x] ) lightmap[x] = {};
-		// Usar una altura de iluminación simple (asumir que está iluminado si está alto)
-		var currentZ = anim.currentZ !== undefined ? anim.currentZ : anim.fromZ;
-		lightmap[x][y] = Math.floor( currentZ ) + 1;
-	}
-	
-	// Dibujar todos los bloques animados
-	for ( var key in world.blockAnimations )
-	{
-		var anim = world.blockAnimations[key];
-		var coords = key.split( "," );
-		var x = parseInt( coords[0] );
-		var y = parseInt( coords[1] );
-		var currentZ = anim.currentZ !== undefined ? anim.currentZ : anim.fromZ;
-		
-		// Usar lightmap simple
-		if ( !lightmap[x] ) lightmap[x] = {};
-		if ( !lightmap[x][y] ) lightmap[x][y] = Math.floor( currentZ ) + 1;
-		
-		// Dibujar el bloque animado
-		BLOCK.pushVerticesAtPosition( vertices, world, lightmap, x, y, currentZ, anim.blockType );
-	}
-	
-	// Crear o actualizar el buffer
-	if ( !this.animatedBlocksBuffer )
-	{
-		this.animatedBlocksBuffer = gl.createBuffer();
-	}
-	
-	if ( vertices.length > 0 )
-	{
-		this.animatedBlocksBuffer.vertices = vertices.length / 9;
-		gl.bindBuffer( gl.ARRAY_BUFFER, this.animatedBlocksBuffer );
-		gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.DYNAMIC_DRAW );
-	}
-	else
-	{
-		this.animatedBlocksBuffer.vertices = 0;
+		if ( count == 0 ) break;
 	}
 }
 
@@ -990,43 +634,6 @@ Renderer.prototype.drawBuffer = function( buffer )
 	gl.vertexAttribPointer( this.aTexCoord, 2, gl.FLOAT, false, 9*4, 3*4 );
 	
 	gl.drawArrays( gl.TRIANGLES, 0, buffer.vertices );
-}
-
-// getGrassColor( x, y )
-//
-// Returns the grass color from grasscolor.png at the specified world coordinates.
-// Returns [1, 1, 1] (white) if grasscolor.png is not loaded.
-
-Renderer.prototype.getGrassColor = function( x, y )
-{
-	var grassColorTex = this.texGrassColor;
-	if ( !grassColorTex || !grassColorTex.imageData ) {
-		return [ 1.0, 1.0, 1.0 ]; // White if not loaded
-	}
-	
-	var imageData = grassColorTex.imageData;
-	var width = imageData.width;
-	var height = imageData.height;
-	
-	// Use a single fixed pixel for all blocks to ensure uniform coloring
-	// Using the center pixel of the texture (or top-left if preferred)
-	var texX = Math.floor( width / 2 ); // Center X
-	var texY = Math.floor( height / 2 ); // Center Y
-	
-	// Ensure coordinates are within valid range
-	if ( texX >= width ) texX = width - 1;
-	if ( texY >= height ) texY = height - 1;
-	if ( texX < 0 ) texX = 0;
-	if ( texY < 0 ) texY = 0;
-	
-	var index = ( texY * width + texX ) * 4;
-	
-	// Get RGB values and normalize to 0-1 range
-	var r = imageData.data[index] / 255.0;
-	var g = imageData.data[index + 1] / 255.0;
-	var b = imageData.data[index + 2] / 255.0;
-	
-	return [ r, g, b ];
 }
 
 // loadPlayerHeadModel()
