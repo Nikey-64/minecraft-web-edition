@@ -402,10 +402,12 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	
 	var buildPickingBuffer = function()
 	{
+		// Ejes: X y Z = horizontal, Y = vertical (altura)
+		// blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
 		var vertices = [];
 		for ( var x = min.x; x <= max.x; x++ ) {
-			for ( var y = min.y; y <= max.y; y++ ) {
-				for ( var z = min.z; z <= max.z; z++ ) {
+			for ( var z = min.z; z <= max.z; z++ ) { // Z es horizontal
+				for ( var y = min.y; y <= max.y; y++ ) { // Y es altura
 					if ( world.getBlock( x, y, z ) != blockObj.AIR )
 						blockObj.pushPickingVertices( vertices, x, y, z );
 				}
@@ -426,6 +428,15 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	var hitDetected = false;
 	var readX = mx / gl.viewportWidth * 512;
 	var readY = ( 1 - my / gl.viewportHeight ) * 512;
+	
+	// Guardar el estado actual de la cámara y viewport
+	var savedViewport = [ gl.viewportWidth, gl.viewportHeight ];
+	
+	// Configurar la cámara para el picking (usar la misma cámara que el render normal)
+	// this.camPos y this.camAng deberían estar actualizados por la última llamada a setCamera
+	if ( this.camPos && this.camAng ) {
+		this.setCamera( this.camPos, this.camAng );
+	}
 	
 	for ( var pass = 0; pass < 2; pass++ )
 	{
@@ -461,7 +472,10 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	// Reset states
 	gl.bindTexture( gl.TEXTURE_2D, this.texTerrain );
 	gl.bindFramebuffer( gl.FRAMEBUFFER, null );
+	gl.viewport( 0, 0, savedViewport[0], savedViewport[1] );
 	gl.clearColor( 0.62, 0.81, 1.0, 1.0 );
+	
+	// Restaurar la cámara (se restaurará en la siguiente llamada a draw())
 	
 	// Clean up
 	gl.deleteRenderbuffer( renderbuffer );
@@ -472,7 +486,9 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 		return false;
 	
 	// Decodificar coordenadas desde el picking buffer
-	// getPickingColor codifica las coordenadas del mundo directamente
+	// getPickingColor codifica las coordenadas como valores normalizados (0-1)
+	// readPixels devuelve valores en rango 0-255 (representando 0.0-1.0)
+	// Necesitamos reconstruir el valor original: byteBajo + (byteAlto << 8)
 	// Ejes del mundo: X y Z = horizontal, Y = vertical (altura)
 	// pixelXY almacena: x (bytes 0-1), y (bytes 2-3) donde y es altura
 	// pixelZ almacena: z (bytes 0-1) donde z es horizontal, faceId (byte 2)
@@ -480,6 +496,13 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	var y = pixelXY[2] | ( pixelXY[3] << 8 ); // Y es altura
 	var z = pixelZ[0] | ( pixelZ[1] << 8 ); // Z es horizontal
 	var face = pixelZ[2];
+	
+	// Verificar que las coordenadas estén dentro del rango esperado
+	if ( x < min.x || x > max.x || y < min.y || y > max.y || z < min.z || z > max.z ) {
+		// Coordenadas fuera de rango, posible error de decodificación
+		console.warn( 'pickAt: coordenadas fuera de rango', { x, y, z, min, max, pixelXY, pixelZ, face } );
+		return false;
+	}
 	
 	// Normales en el formato del mundo: [x, y, z] donde y es altura
 	var normal;
@@ -489,7 +512,10 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	else if ( face == 4 ) normal = new Vector( 0, 0, 1 );  // Back (Z+1, hacia +Z, horizontal)
 	else if ( face == 5 ) normal = new Vector( -1, 0, 0 );  // Left (X-1)
 	else if ( face == 6 ) normal = new Vector( 1, 0, 0 );  // Right (X+1)
-	else normal = new Vector( 0, 0, 0 );
+	else {
+		console.warn( 'pickAt: face desconocido', face );
+		normal = new Vector( 0, 0, 0 );
+	}
 	
 	return {
 		x: x,
@@ -958,16 +984,37 @@ Renderer.prototype.onBlockChanged = function( x, y, z )
 		var chunk = chunks[i];
 		var wasDirty = chunk.dirty;
 		
-		// Neighbouring chunks are updated as well if the block is on a chunk border
-		// Also, all chunks below the block are updated because of lighting
-		if ( x >= chunk.start[0] && x < chunk.end[0] && y >= chunk.start[1] && y < chunk.end[1] && z >= chunk.start[2] && z < chunk.end[2] )
+		// Ejes: X y Z = horizontal, Y = vertical (altura)
+		// chunk.start = [x, y, z] donde y es altura
+		// Verificar si el bloque está dentro del chunk
+		if ( x >= chunk.start[0] && x < chunk.end[0] && 
+		     y >= chunk.start[1] && y < chunk.end[1] && 
+		     z >= chunk.start[2] && z < chunk.end[2] )
+		{
 			chunk.dirty = true;
-		else if ( x >= chunk.start[0] && x < chunk.end[0] && y >= chunk.start[1] && y < chunk.end[1] && ( z >= chunk.end[2] || z == chunk.start[2] - 1 ) )
+		}
+		// También marcar chunks vecinos si el bloque está en un borde (para actualizar caras adyacentes)
+		// Borde Z (horizontal)
+		else if ( x >= chunk.start[0] && x < chunk.end[0] && 
+		          y >= chunk.start[1] && y < chunk.end[1] && 
+		          ( z == chunk.end[2] || z == chunk.start[2] - 1 ) )
+		{
 			chunk.dirty = true;
-		else if ( x >= chunk.start[0] && x < chunk.end[0] && z >= chunk.start[2] && z < chunk.end[2] && ( y == chunk.end[1] || y == chunk.start[1] - 1 ) )
+		}
+		// Borde Y (altura)
+		else if ( x >= chunk.start[0] && x < chunk.end[0] && 
+		          z >= chunk.start[2] && z < chunk.end[2] && 
+		          ( y == chunk.end[1] || y == chunk.start[1] - 1 ) )
+		{
 			chunk.dirty = true;
-		else if ( y >= chunk.start[1] && y < chunk.end[1] && z >= chunk.start[2] && z < chunk.end[2] && ( x == chunk.end[0] || x == chunk.start[0] - 1 ) )
+		}
+		// Borde X
+		else if ( y >= chunk.start[1] && y < chunk.end[1] && 
+		          z >= chunk.start[2] && z < chunk.end[2] && 
+		          ( x == chunk.end[0] || x == chunk.start[0] - 1 ) )
+		{
 			chunk.dirty = true;
+		}
 		
 		// If chunk became dirty and is loaded, add to dirty queue
 		if ( chunk.dirty && !wasDirty && chunk.loaded && dirtyChunks && dirtyChunks.indexOf( chunk ) === -1 ) {

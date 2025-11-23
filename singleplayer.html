@@ -384,11 +384,54 @@
 				var angles = player.angles;
 				
 				// Calcular bloque actual (donde está el jugador)
+				// Ejes: X y Z = horizontal, Y = vertical (altura)
 				var blockX = Math.floor(pos.x);
 				var blockY = Math.floor(pos.y);
 				var blockZ = Math.floor(pos.z);
 				var block = world.getBlock(blockX, blockY, blockZ);
-				var blockName = block ? block.name || 'UNKNOWN' : 'AIR';
+				
+				// Intentar obtener el bloque que el jugador está mirando (usando pickAt)
+				var lookedBlock = null;
+				var lookedBlockX = blockX;
+				var lookedBlockY = blockY;
+				var lookedBlockZ = blockZ;
+				if (render && render.pickAt) {
+					var bPos = new Vector(blockX, blockY, blockZ);
+					var centerX = render.canvas ? render.canvas.width / 2 : 0;
+					var centerY = render.canvas ? render.canvas.height / 2 : 0;
+					var pickedBlock = render.pickAt(
+						new Vector(blockX - 4, Math.max(0, blockY - 2), blockZ - 4),
+						new Vector(blockX + 4, Math.min(world.sy - 1, blockY + 2), blockZ + 4),
+						centerX, centerY
+					);
+					if (pickedBlock && pickedBlock != false) {
+						lookedBlock = world.getBlock(pickedBlock.x, pickedBlock.y, pickedBlock.z);
+						lookedBlockX = pickedBlock.x;
+						lookedBlockY = pickedBlock.y;
+						lookedBlockZ = pickedBlock.z;
+					}
+				}
+				
+				// Usar el bloque que el jugador está mirando si está disponible, sino el bloque donde está parado
+				var displayBlock = lookedBlock || block;
+				var displayBlockX = lookedBlock ? lookedBlockX : blockX;
+				var displayBlockY = lookedBlock ? lookedBlockY : blockY;
+				var displayBlockZ = lookedBlock ? lookedBlockZ : blockZ;
+				
+				// Obtener nombre del bloque
+				var blockName = 'AIR';
+				if (displayBlock && displayBlock != BLOCK.AIR) {
+					// Buscar el nombre del bloque comparando con los objetos BLOCK
+					for (var key in BLOCK) {
+						if (BLOCK[key] === displayBlock && typeof BLOCK[key] === 'object' && BLOCK[key].id !== undefined) {
+							blockName = key;
+							break;
+						}
+					}
+					if (blockName === 'AIR') {
+						blockName = 'UNKNOWN';
+					}
+				}
 				
 				// Calcular dirección (yaw en radianes, 0 = Norte, PI/2 = Este, PI = Sur, 3*PI/2 = Oeste)
 				var yaw = angles[1];
@@ -418,15 +461,16 @@
 				debugHTML += '<div style="margin-top: 8px;">';
 				debugHTML += '<div>Posición: X: ' + pos.x.toFixed(2) + ' Y: ' + pos.y.toFixed(2) + ' Z: ' + pos.z.toFixed(2) + '</div>';
 				debugHTML += '<div>Ojos: X: ' + eyePos.x.toFixed(2) + ' Y: ' + eyePos.y.toFixed(2) + ' Z: ' + eyePos.z.toFixed(2) + '</div>';
-				debugHTML += '<div>Bloque: X: ' + blockX + ' Y: ' + blockY + ' Z: ' + blockZ + ' (' + blockName + ')</div>';
+				debugHTML += '<div>Bloque: X: ' + displayBlockX + ' Y: ' + displayBlockY + ' Z: ' + displayBlockZ + ' (' + blockName + ')</div>';
 				debugHTML += '<div>Dirección: ' + direction + ' (' + yawDegrees.toFixed(1) + '°)</div>';
 				debugHTML += '<div>Pitch: ' + (angles[0] * 180 / Math.PI).toFixed(1) + '°</div>';
 				
 				// Información de chunks si C+F3 está activo
 				if (debugChunksEnabled) {
+					// Ejes: X y Z = horizontal, Y = vertical (altura)
 					var chunkX = Math.floor(pos.x / render.chunkSize);
-					var chunkY = Math.floor(pos.y / render.chunkSize);
-					var chunkZ = 0; // Siempre 0 porque solo hay un chunk vertical
+					var chunkZ = Math.floor(pos.z / render.chunkSize); // Z es horizontal
+					var chunkY = 0; // Siempre 0 porque solo hay un chunk vertical (cubre toda la altura Y)
 					
 					debugHTML += '<div style="margin-top: 8px; border-top: 1px solid #00ff00; padding-top: 8px;">';
 					debugHTML += '<div><strong>Chunk Info (C+F3)</strong></div>';

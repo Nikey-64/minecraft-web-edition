@@ -228,14 +228,141 @@ Player.prototype.onMouseMove = function( deltaX, deltaY )
 	this.dragging = true;
 }
 
+// raycast( start, direction, maxDistance )
+//
+// Lanza un rayo desde start en la dirección direction y devuelve el primer bloque sólido con el que choca.
+// Usa el algoritmo DDA (Digital Differential Analyzer) para detectar bloques de forma eficiente.
+// Ejes: X y Z = horizontal, Y = vertical (altura)
+// direction debe ser un Vector normalizado
+// maxDistance es la distancia máxima del rayo (por defecto 5 bloques)
+
+Player.prototype.raycast = function( start, direction, maxDistance )
+{
+	maxDistance = maxDistance || 5.0;
+	var world = this.world;
+	
+	// Normalizar dirección
+	var dirLen = Math.sqrt( direction.x * direction.x + direction.y * direction.y + direction.z * direction.z );
+	if ( dirLen < 0.0001 ) return false;
+	
+	var dx = direction.x / dirLen;
+	var dy = direction.y / dirLen;
+	var dz = direction.z / dirLen;
+	
+	// Posición actual del rayo
+	var x = start.x;
+	var y = start.y;
+	var z = start.z;
+	
+	// Bloque actual
+	var blockX = Math.floor( x );
+	var blockY = Math.floor( y );
+	var blockZ = Math.floor( z );
+	
+	// Calcular el paso y la distancia hasta el siguiente borde en cada eje
+	var stepX = dx > 0 ? 1 : -1;
+	var stepY = dy > 0 ? 1 : -1;
+	var stepZ = dz > 0 ? 1 : -1;
+	
+	var tMaxX = dx != 0 ? ( ( blockX + ( dx > 0 ? 1 : 0 ) ) - x ) / dx : Infinity;
+	var tMaxY = dy != 0 ? ( ( blockY + ( dy > 0 ? 1 : 0 ) ) - y ) / dy : Infinity;
+	var tMaxZ = dz != 0 ? ( ( blockZ + ( dz > 0 ? 1 : 0 ) ) - z ) / dz : Infinity;
+	
+	var tDeltaX = dx != 0 ? stepX / dx : Infinity;
+	var tDeltaY = dy != 0 ? stepY / dy : Infinity;
+	var tDeltaZ = dz != 0 ? stepZ / dz : Infinity;
+	
+	var normalX = 0, normalY = 0, normalZ = 0;
+	
+	while ( true )
+	{
+		// Verificar límites del mundo
+		if ( blockX < 0 || blockX >= world.sx || 
+		     blockY < 0 || blockY >= world.sy || 
+		     blockZ < 0 || blockZ >= world.sz )
+		{
+			break; // Fuera de límites
+		}
+		
+		// Calcular la distancia actual
+		var t = Math.min( tMaxX, Math.min( tMaxY, tMaxZ ) );
+		if ( t > maxDistance ) break; // Excedimos la distancia máxima
+		
+		var block = world.getBlock( blockX, blockY, blockZ );
+		
+		// Si encontramos un bloque sólido
+		if ( block != BLOCK.AIR && block && !block.transparent )
+		{
+			return {
+				x: blockX,
+				y: blockY,
+				z: blockZ,
+				n: new Vector( normalX, normalY, normalZ )
+			};
+		}
+		
+		// Avanzar al siguiente bloque usando DDA
+		if ( tMaxX < tMaxY && tMaxX < tMaxZ )
+		{
+			// Cruzamos un borde en X
+			blockX += stepX;
+			normalX = -stepX;
+			normalY = 0;
+			normalZ = 0;
+			tMaxX += tDeltaX;
+		}
+		else if ( tMaxY < tMaxZ )
+		{
+			// Cruzamos un borde en Y
+			blockY += stepY;
+			normalX = 0;
+			normalY = -stepY;
+			normalZ = 0;
+			tMaxY += tDeltaY;
+		}
+		else
+		{
+			// Cruzamos un borde en Z
+			blockZ += stepZ;
+			normalX = 0;
+			normalY = 0;
+			normalZ = -stepZ;
+			tMaxZ += tDeltaZ;
+		}
+	}
+	
+	return false; // No se encontró ningún bloque
+}
+
 // doBlockAction( x, y )
 //
 // Called to perform an action based on the player's block selection and input.
 
 Player.prototype.doBlockAction = function( x, y, destroy )
 {
-	var bPos = new Vector( Math.floor( this.pos.x ), Math.floor( this.pos.y ), Math.floor( this.pos.z ) );
-	var block = this.canvas.renderer.pickAt( new Vector( bPos.x - 4, bPos.y - 4, bPos.z - 4 ), new Vector( bPos.x + 4, bPos.y + 4, bPos.z + 4 ), x, y );
+	// Ejes: X y Z = horizontal, Y = vertical (altura)
+	// Usar raycasting en lugar de pickAt para mayor confiabilidad
+	var eyePos = this.getEyePos();
+	var pitch = this.angles[0]; // Ángulo vertical (hacia arriba/abajo)
+	var yaw = this.angles[1];   // Ángulo horizontal (rotación alrededor del eje Y)
+	
+	// Calcular dirección del rayo
+	// Ejes: X y Z = horizontal, Y = vertical (altura)
+	// yaw: 0 = Norte (hacia -Z), PI/2 = Este (hacia +X), PI = Sur (hacia +Z), 3*PI/2 = Oeste (hacia -X)
+	var cosPitch = Math.cos( pitch );
+	var sinPitch = Math.sin( pitch );
+	var cosYaw = Math.cos( yaw );
+	var sinYaw = Math.sin( yaw );
+	
+	// Dirección del rayo: [x, y, z] donde y es altura
+	var direction = new Vector(
+		cosPitch * sinYaw,      // X: horizontal
+		sinPitch,               // Y: altura (vertical)
+		cosPitch * cosYaw       // Z: horizontal
+	);
+	
+	// Lanzar el rayo (máximo 5 bloques de distancia)
+	var block = this.raycast( eyePos, direction, 5.0 );
 
 	if ( block != false )
 	{
@@ -246,14 +373,27 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 		else
 		{
 			// Calcular la posición donde se colocará el bloque
-			var placeX = block.x + block.n.x;
-			var placeY = block.y + block.n.y;
-			var placeZ = block.z + block.n.z;
+			// Ejes: X y Z = horizontal, Y = vertical (altura)
+			// La normal apunta hacia la dirección donde se debe colocar el bloque
+			var placeX = Math.floor( block.x + block.n.x );
+			var placeY = Math.floor( block.y + block.n.y );
+			var placeZ = Math.floor( block.z + block.n.z );
+			
+			// Verificar que las coordenadas estén dentro de los límites del mundo
+			if ( placeX < 0 || placeX >= world.sx || 
+			     placeY < 0 || placeY >= world.sy || 
+			     placeZ < 0 || placeZ >= world.sz ) {
+				return; // Fuera de los límites del mundo
+			}
+			
+			// Verificar que el lugar donde se va a colocar esté vacío (AIR)
+			if ( world.getBlock( placeX, placeY, placeZ ) != BLOCK.AIR ) {
+				return; // Ya hay un bloque en esa posición
+			}
 			
 			// Verificar si el bloque se colocaría dentro de la hitbox del jugador
-			// Hitbox del jugador: tamaño 0.25 en X e Y, altura 1.7 en Z
+			// Hitbox del jugador: tamaño 0.25 en X y Z (horizontal), altura 1.7 en Y
 			var playerSize = 0.25;
-			// Ejes: X y Z = horizontal, Y = vertical (altura)
 			var playerHeight = 1.7;
 			var playerMinX = this.pos.x - playerSize;
 			var playerMaxX = this.pos.x + playerSize;
@@ -281,6 +421,7 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 				return; // No colocar el bloque dentro del jugador
 			}
 			
+			// Colocar el bloque
 			obj.setBlock( placeX, placeY, placeZ, this.buildMaterial );
 		}
 	}
