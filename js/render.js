@@ -120,6 +120,11 @@ function Renderer( id )
 		gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, terrainTexture.image );
 		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST );
 		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST );
+		// Configure texture wrapping to CLAMP_TO_EDGE to prevent texture bleeding
+		// This ensures that texture coordinates outside [0,1] clamp to the edge pixels
+		// instead of wrapping to adjacent textures in the atlas
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE );
 	};
 	terrainTexture.image.src = "media/terrain.png";
 	
@@ -1121,6 +1126,7 @@ Renderer.prototype.buildChunks = function( count )
 					var yOffset = 0;
 					var animKey = x + "," + y + "," + z;
 					var isAnimated = false;
+					var animatedBlock = null;
 					
 					if ( world.physics && world.physics.fallingBlocks && world.physics.fallingBlocks[animKey] ) {
 						// Este bloque está en animación
@@ -1134,13 +1140,19 @@ Renderer.prototype.buildChunks = function( count )
 								isAnimated = false;
 							}
 						}
+						// Obtener el bloque animado si está disponible (tiene las propiedades del original)
+						if ( anim.animatedBlock ) {
+							animatedBlock = anim.animatedBlock;
+						}
 					}
 					
 					// Si el bloque está en animación, renderizarlo en su posición animada
 					// (no renderizarlo en su posición original porque visualmente está cayendo)
 					if ( isAnimated ) {
-						// Renderizar el bloque en su posición animada
-						BLOCK.pushVertices( vertices, world, lightmap, x, y, z, yOffset );
+						// Usar el bloque animado del sistema de física (tiene las propiedades del original)
+						var anim = world.physics.fallingBlocks[animKey];
+						var animatedBlock = anim && anim.animatedBlock ? anim.animatedBlock : null;
+						BLOCK.pushVertices( vertices, world, lightmap, x, y, z, yOffset, animatedBlock );
 					} else {
 						// Renderizar normalmente (pero verificar que no haya un bloque animado encima que esté cayendo aquí)
 						// Verificar si hay un bloque animado que esté cayendo a esta posición

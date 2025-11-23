@@ -52,9 +52,11 @@ Physics.prototype.simulate = function()
 		for ( var key in this.fallingBlocks ) {
 			var anim = this.fallingBlocks[key];
 			if ( currentTime >= anim.startTime + anim.duration ) {
-				// Animación completada, mover el bloque físicamente
-				world.setBlock( anim.x, anim.targetY, anim.z, anim.block );
+				// Animación completada, restaurar el bloque original en su nueva posición
+				// El bloque animado ya estaba en anim.x, anim.startY, anim.z, ahora lo reemplazamos con AIR
 				world.setBlock( anim.x, anim.startY, anim.z, BLOCK.AIR );
+				// Mover el bloque original a su nueva posición (recuperar propiedades del original)
+				world.setBlock( anim.x, anim.targetY, anim.z, anim.block );
 				delete this.fallingBlocks[key];
 			}
 		}
@@ -90,6 +92,14 @@ Physics.prototype.simulate = function()
 						// Limitar duración máxima a 1 segundo para caídas muy largas (más rápido)
 						if ( duration > 1000 ) duration = 1000;
 						
+						// Crear un bloque animado con las propiedades del bloque original
+						// Este bloque animado mantendrá las propiedades del original para recuperarlas después
+						var animatedBlock = BLOCK.createAnimatedBlock( block );
+						
+						// Reemplazar temporalmente el bloque original por el bloque animado en el array del mundo
+						// Esto permite que el bloque animado "tome el lugar" del bloque original durante la animación
+						world.setBlock( x, y, z, animatedBlock );
+						
 						// Crear la animación
 						this.fallingBlocks[animKey] = {
 							x: x,
@@ -99,7 +109,8 @@ Physics.prototype.simulate = function()
 							targetY: y - fallDistance,
 							startTime: currentTime,
 							duration: duration,
-							block: block
+							block: block, // Bloque original (para recuperar propiedades después)
+							animatedBlock: animatedBlock // Bloque animado (ya está en el array del mundo)
 						};
 					}
 				}

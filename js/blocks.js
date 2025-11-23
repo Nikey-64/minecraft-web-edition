@@ -132,6 +132,9 @@ BLOCK.TNT = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: true,
 	texture: function( world, lightmap, lit, x, y, z, dir )
 	{
 		if ( dir == DIRECTION.UP || dir == DIRECTION.DOWN )
@@ -149,6 +152,9 @@ BLOCK.BOOKCASE = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir )
 	{
 		if ( dir == DIRECTION.FORWARD || dir == DIRECTION.BACK )
@@ -166,6 +172,9 @@ BLOCK.LAVA = {
 	selflit: true,
 	gravity: true,
 	fluid: true,
+	solid: false,
+	flammable: true,
+	explosive: true,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 13/16, 14/16, 14/16, 15/16 ]; }
 };
 
@@ -177,6 +186,9 @@ BLOCK.PLANK = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 4/16, 0/16, 5/16, 1/16 ]; }
 };
 
@@ -188,6 +200,9 @@ BLOCK.COBBLESTONE = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 0/16, 1/16, 1/16, 2/16 ]; }
 };
 
@@ -199,6 +214,9 @@ BLOCK.CONCRETE = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 1/16, 0/16, 2/16, 1/16 ]; }
 };
 
@@ -210,6 +228,9 @@ BLOCK.BRICK = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 7/16, 0/16, 8/16, 1/16 ]; }
 };
 
@@ -221,6 +242,9 @@ BLOCK.SAND = {
 	selflit: false,
 	gravity: true,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 2/16, 1/16, 3/16, 2/16 ]; }
 };
 
@@ -232,6 +256,9 @@ BLOCK.GRAVEL = {
 	selflit: false,
 	gravity: true,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 3/16, 1/16, 4/16, 2/16 ]; }
 };
 
@@ -243,6 +270,9 @@ BLOCK.IRON = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 6/16, 1/16, 7/16, 2/16 ]; }
 };
 
@@ -254,6 +284,9 @@ BLOCK.GOLD = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 7/16, 1/16, 8/16, 2/16 ]; }
 };
 
@@ -265,6 +298,9 @@ BLOCK.DIAMOND = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 8/16, 1/16, 9/16, 2/16 ]; }
 };
 
@@ -276,6 +312,9 @@ BLOCK.OBSIDIAN = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 5/16, 2/16, 6/16, 3/16 ]; }
 };
 
@@ -287,6 +326,9 @@ BLOCK.GLASS = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 1/16, 3/16, 2/16, 4/16 ]; }
 };
 
@@ -298,8 +340,77 @@ BLOCK.SPONGE = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
+	solid: true,
+	flammable: true,
+	explosive: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 0/16, 3/16, 1/16, 4/16 ]; }
 };
+
+// Leaves (not implemented yet)
+BLOCK.LEAVES = {
+	id: 19,
+	spawnable: true,
+	transparent: true,
+	solid: true,
+	flammable: true,
+	explosive: false,
+	texture: function( world, lightmap, lit, x, y, z, dir ) { unknown; }
+};
+
+// ANIMATED_BLOCKS posibilities (not allways animated) this is a list of wich blocks can be animated
+var ANIMATED_BLOCKS = [ BLOCK.TNT, BLOCK.LAVA, BLOCK.SAND, BLOCK.GRAVEL];
+
+// BLOCK.ANIMATED es una plantilla/base que indica propiedades comunes de bloques animados
+// No se usa directamente, sino como referencia para crear bloques animados dinámicamente
+// IMPORTANTE: Este bloque NO se invoca constantemente, es solo una referencia/base
+// Las propiedades se toman del bloque original cuando se crea con createAnimatedBlock
+// const: false indica que no es un bloque permanente (se crea dinámicamente)
+BLOCK.ANIMATED = {
+	id: 20,
+	spawnable: false,
+	// NOTA: transparent NO se define aquí porque debe tomarse del bloque original
+	// Cada bloque animado mantiene su transparencia original para poder devolverla después
+	const: false,
+};
+
+
+// createAnimatedBlock( originalBlock )
+//
+// Crea un bloque animado basado en un bloque original.
+// El bloque animado mantiene todas las propiedades del original (textura, etc.)
+// pero se comporta como si estuviera en el aire (siempre muestra todas sus caras).
+//
+// originalBlock - El bloque original del cual se creará el bloque animado
+
+BLOCK.createAnimatedBlock = function( originalBlock )
+{
+	if ( !originalBlock || originalBlock == BLOCK.AIR ) {
+		return BLOCK.AIR;
+	}
+	
+	// Crear un nuevo objeto que copia todas las propiedades del bloque original
+	var animatedBlock = {};
+	for ( var prop in originalBlock ) {
+		if ( originalBlock.hasOwnProperty( prop ) ) {
+			animatedBlock[prop] = originalBlock[prop];
+		}
+	}
+	
+	// Marcar como bloque animado
+	animatedBlock.isAnimated = true;
+	animatedBlock.originalBlock = originalBlock;
+	
+	// IMPORTANTE: Mantener la transparencia original del bloque
+	// No sobrescribir transparent porque necesitamos preservar las propiedades del original
+	// para poder devolverlas más adelante cuando termine la animación
+	
+	// El bloque animado siempre se comporta como si estuviera en el aire
+	// (todas las caras se renderizan, independientemente de bloques adyacentes)
+	// Esto se maneja en pushVertices con isAnimated = true
+	
+	return animatedBlock;
+}
+
 
 // fromId( id )
 //
@@ -318,43 +429,101 @@ BLOCK.fromId = function( id )
 // Pushes the vertices necessary for rendering a
 // specific block into the array.
 
-BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset )
+BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, animatedBlockOverride )
 {
 	// Ejes del mundo: X y Z = horizontal, Y = vertical (altura)
 	// blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
 	// yOffset: offset adicional en Y para animaciones (por defecto 0)
+	// animatedBlockOverride: bloque animado opcional (si viene del sistema de física)
 	yOffset = yOffset || 0;
 	var blocks = world.blocks;
+	
+	// Si hay un offset (bloque en animación), el bloque se comporta como si estuviera en el aire
+	// Los bloques animados siempre muestran todas sus caras porque están cayendo
+	var isAnimated = yOffset != 0;
+	var checkY = isAnimated ? Math.floor( y + yOffset ) : y;
+	
 	// lightmap[x][z] almacena la altura Y del bloque más alto no transparente en la columna (x, z)
 	var blockLit = y >= (lightmap[x] && lightmap[x][z] !== undefined ? lightmap[x][z] : -1);
 	var block = blocks[x][y][z];
 	
+	// Si se proporciona un bloque animado override (del sistema de física), usarlo
+	// Esto asegura que usamos el bloque animado con las propiedades del original
+	if ( animatedBlockOverride && animatedBlockOverride.isAnimated ) {
+		block = animatedBlockOverride;
+		isAnimated = true;
+	}
 	// Verificar que el bloque existe y tiene la función texture
-	if ( !block || typeof block.texture !== 'function' ) {
+	else if ( !block || typeof block.texture !== 'function' ) {
 		block = BLOCK.AIR;
+	}
+	// Si el bloque ya es un bloque animado (viene del sistema de física), usarlo directamente
+	// Esto asegura que mantiene las propiedades del bloque original
+	else if ( block.isAnimated && block.originalBlock ) {
+		// Ya es un bloque animado, mantenerlo
+		isAnimated = true;
+	}
+	// Bloques que siempre deben comportarse como animados (permanente):
+	// - Agua y lava (fluid: true) siempre están en movimiento, por lo que siempre se renderizan como animados
+	// Bloques que solo se animan cuando están cayendo (temporal):
+	// - Arena, grava, TNT solo cuando tienen yOffset (están cayendo)
+	else {
+		var isPermanentlyAnimated = block.fluid === true; // Agua y lava siempre animados
+		var shouldAnimate = isAnimated || isPermanentlyAnimated;
+		
+		// Si el bloque debe comportarse como animado, crear un bloque animado especial
+		if ( shouldAnimate && block != BLOCK.AIR ) {
+			block = BLOCK.createAnimatedBlock( block );
+			isAnimated = true; // Actualizar flag para que las verificaciones de bloques adyacentes funcionen
+		}
 	}
 	
 	// Use getBlock() to safely check adjacent blocks (handles out-of-bounds and unloaded chunks)
 	// En el mundo: Y es altura, Z es horizontal
-	var blockTop = world.getBlock( x, y + 1, z );      // Arriba: Y+1
-	var blockBottom = world.getBlock( x, y - 1, z );  // Abajo: Y-1
-	var blockFront = world.getBlock( x, y, z - 1 );   // Frente: Z-1 (horizontal)
-	var blockBack = world.getBlock( x, y, z + 1 );    // Atrás: Z+1 (horizontal)
-	var blockLeft = world.getBlock( x - 1, y, z );     // Izquierda: X-1
-	var blockRight = world.getBlock( x + 1, y, z );    // Derecha: X+1
+	// Si el bloque está animado, verificar bloques adyacentes en la posición animada
+	// Si NO está animado, verificar en la posición original
+	var blockTop = isAnimated ? BLOCK.AIR : world.getBlock( x, checkY + 1, z );      // Arriba: Y+1
+	var blockBottom = isAnimated ? BLOCK.AIR : world.getBlock( x, checkY - 1, z );  // Abajo: Y-1
+	var blockFront = isAnimated ? BLOCK.AIR : world.getBlock( x, checkY, z - 1 );   // Frente: Z-1 (horizontal)
+	var blockBack = isAnimated ? BLOCK.AIR : world.getBlock( x, checkY, z + 1 );    // Atrás: Z+1 (horizontal)
+	var blockLeft = isAnimated ? BLOCK.AIR : world.getBlock( x - 1, checkY, z );     // Izquierda: X-1
+	var blockRight = isAnimated ? BLOCK.AIR : world.getBlock( x + 1, checkY, z );    // Derecha: X+1
 	
 	// Small offset to eliminate gaps between blocks (texture bleeding)
 	// This extends blocks slightly to cover any precision gaps
 	var OFFSET = 0.001;
+	
+	// Texture coordinate offset to prevent texture bleeding
+	// terrain.png is a 256x256 texture atlas with 16x16 block textures (16x16 grid)
+	// Each texture occupies 1/16 of the atlas (16/256 = 0.0625)
+	// With CLAMP_TO_EDGE in the renderer, we use a minimal offset to ensure
+	// coordinates stay well within texture boundaries, especially at distance
+	// Using 0.5 pixels (0.5/256 = 0.001953125) for better distance rendering
+	var TEX_OFFSET = 0.5 / 256; // Half pixel offset in a 256x256 texture atlas (0.001953125)
+	
+	// Helper function to adjust texture coordinates to prevent bleeding
+	// This moves the texture coordinates very slightly inward to avoid sampling adjacent textures
+	// The offset is small enough to be imperceptible but prevents texture bleeding
+	var adjustTexCoords = function( texCoords ) {
+		// Ensure coordinates stay within valid range [0, 1]
+		var u_min = Math.max( 0, texCoords[0] + TEX_OFFSET );
+		var v_min = Math.max( 0, texCoords[1] + TEX_OFFSET );
+		var u_max = Math.min( 1, texCoords[2] - TEX_OFFSET );
+		var v_max = Math.min( 1, texCoords[3] - TEX_OFFSET );
+		
+		return [ u_min, v_min, u_max, v_max ];
+	};
 	
 	// Y es altura, Z es horizontal
 	var bH = block.fluid && ( y == world.sy - 1 || !blockTop.fluid ) ? 0.9 : 1.0;
 	
 	// Top - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Top es Y+1 (arriba)
-	if ( y == world.sy - 1 || blockTop.transparent || block.fluid )
+	// Si el bloque está animado, siempre mostrar la cara superior (está en el aire)
+	if ( yOffset != 0 || y == world.sy - 1 || !blockTop || blockTop == BLOCK.AIR || blockTop.transparent || block.fluid )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.UP );
+		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
 		
 		// lightmap[x][z] almacena la altura Y del bloque más alto no transparente
 		var lightMultiplier = (lightmap[x] && lightmap[x][z] !== undefined && y >= lightmap[x][z]) ? 1.0 : 0.6;
@@ -391,9 +560,12 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset )
 	
 	// Bottom - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Bottom es Y-1 (abajo)
-	if ( y == 0 || blockBottom.transparent )
+	// Si el bloque está animado, siempre mostrar la cara inferior (está en el aire)
+	// Los bloques animados se comportan como si estuvieran en el aire, mostrando todas las caras
+	if ( yOffset != 0 || y == 0 || !blockBottom || blockBottom == BLOCK.AIR || blockBottom.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.DOWN );
+		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
 		
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
 		
@@ -413,9 +585,11 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset )
 	
 	// Front - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Front es Z-1 (hacia -Z, horizontal)
-	if ( z == 0 || blockFront.transparent )
+	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
+	if ( yOffset != 0 || z == 0 || !blockFront || blockFront == BLOCK.AIR || blockFront.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.FORWARD );
+		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
 		
 		// Verificar iluminación del bloque adyacente
 		var adjLightY = (lightmap[x] && lightmap[x][z-1] !== undefined) ? lightmap[x][z-1] : -1;
@@ -438,9 +612,11 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset )
 	
 	// Back - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Back es Z+1 (hacia +Z, horizontal)
-	if ( z == world.sz - 1 || blockBack.transparent )
+	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
+	if ( yOffset != 0 || z == world.sz - 1 || !blockBack || blockBack == BLOCK.AIR || blockBack.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.BACK );
+		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
 		
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
 		
@@ -460,9 +636,11 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset )
 	
 	// Left - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Left es X-1
-	if ( x == 0 || blockLeft.transparent )
+	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
+	if ( yOffset != 0 || x == 0 || !blockLeft || blockLeft == BLOCK.AIR || blockLeft.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.LEFT );
+		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
 		
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
 		
@@ -482,9 +660,11 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset )
 	
 	// Right - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Right es X+1
-	if ( x == world.sx - 1 || blockRight.transparent )
+	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
+	if ( yOffset != 0 || x == world.sx - 1 || !blockRight || blockRight == BLOCK.AIR || blockRight.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.RIGHT );
+		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
 		
 		// Verificar iluminación del bloque adyacente
 		var adjLightY = (lightmap[x+1] && lightmap[x+1][z] !== undefined) ? lightmap[x+1][z] : -1;
