@@ -243,6 +243,8 @@
 
 				physics = new Physics();
 				physics.setWorld( world );
+				// Agregar referencia a physics en el world para que el renderer pueda acceder
+				world.physics = physics;
 
 				player = new Player();
 				player.setWorld( world );
@@ -313,6 +315,24 @@
 						measureTime('physics', function() {
 							physics.simulate();
 						});
+
+						// Update animations (debe llamarse cada frame para animaciones suaves)
+						if ( physics.updateAnimations ) {
+							physics.updateAnimations();
+							// Marcar chunks como dirty solo si contienen bloques animados
+							if ( Object.keys( physics.fallingBlocks ).length > 0 ) {
+								// Marcar solo los chunks que contienen bloques animados
+								for ( var key in physics.fallingBlocks ) {
+									var anim = physics.fallingBlocks[key];
+									// Marcar el chunk que contiene este bloque animado
+									render.onBlockChanged( anim.x, anim.startY, anim.z );
+									// También marcar el chunk de destino si es diferente
+									if ( anim.targetY != anim.startY ) {
+										render.onBlockChanged( anim.x, anim.targetY, anim.z );
+									}
+								}
+							}
+						}
 
 						// Update local player
 						measureTime('playerUpdate', function() {

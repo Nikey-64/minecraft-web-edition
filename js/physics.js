@@ -12,6 +12,10 @@
 function Physics()
 {
 	this.lastStep = -1;
+	// Sistema de animación de bloques en caída
+	// Almacena: { x, y, z, startY, targetY, startTime, duration, block }
+	// Ejes: X y Z = horizontal, Y = vertical (altura)
+	this.fallingBlocks = {}; // Clave: "x,y,z" -> datos de animación
 }
 
 // setWorld( world )
@@ -37,12 +41,24 @@ Physics.prototype.simulate = function()
 	if ( step == this.lastStep ) return;
 	this.lastStep = step;
 	
-	// Gravity
+	// Gravity con animación suave
 	// Ejes: X y Z = horizontal, Y = vertical (altura)
 	// blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
 	// Los bloques con gravedad caen hacia abajo (Y-1)
 	if ( step % 1 == 0 )
 	{
+		// Primero, limpiar animaciones completadas
+		var currentTime = new Date().getTime();
+		for ( var key in this.fallingBlocks ) {
+			var anim = this.fallingBlocks[key];
+			if ( currentTime >= anim.startTime + anim.duration ) {
+				// Animación completada, mover el bloque físicamente
+				world.setBlock( anim.x, anim.targetY, anim.z, anim.block );
+				world.setBlock( anim.x, anim.startY, anim.z, BLOCK.AIR );
+				delete this.fallingBlocks[key];
+			}
+		}
+		
 		// Iterar de arriba hacia abajo para evitar que los bloques se salten
 		for ( var x = 0; x < world.sx; x++ ) {
 			for ( var z = 0; z < world.sz; z++ ) { // Z es horizontal
@@ -50,8 +66,41 @@ Physics.prototype.simulate = function()
 					var block = blocks[x][y][z];
 					if ( block && block.gravity && blocks[x][y-1][z] == BLOCK.AIR )
 					{
-						world.setBlock( x, y - 1, z, block );
-						world.setBlock( x, y, z, BLOCK.AIR );
+						// Verificar si este bloque ya está en animación
+						var animKey = x + "," + y + "," + z;
+						if ( this.fallingBlocks[animKey] ) {
+							continue; // Ya está cayendo, no hacer nada
+						}
+						
+						// Calcular la distancia de caída
+						var fallDistance = 1; // Empezar con 1 bloque
+						for ( var checkY = y - 1; checkY >= 0; checkY-- ) {
+							if ( blocks[x][checkY][z] == BLOCK.AIR ) {
+								fallDistance = y - checkY;
+							} else {
+								break; // Encontramos un bloque sólido
+							}
+						}
+						
+						// Crear animación suave
+						// Duración basada en la distancia: más distancia = más tiempo, pero con límite
+						// Usar una función cuadrática para que caiga más rápido cuanto más distancia
+						var baseDuration = 150; // 150ms por bloque base (más rápido para realismo)
+						var duration = baseDuration * fallDistance;
+						// Limitar duración máxima a 1 segundo para caídas muy largas (más rápido)
+						if ( duration > 1000 ) duration = 1000;
+						
+						// Crear la animación
+						this.fallingBlocks[animKey] = {
+							x: x,
+							y: y, // Posición actual (se actualizará visualmente)
+							z: z,
+							startY: y,
+							targetY: y - fallDistance,
+							startTime: currentTime,
+							duration: duration,
+							block: block
+						};
 					}
 				}
 			}
@@ -104,6 +153,53 @@ Physics.prototype.simulate = function()
 			}
 		}
 	}
+}
+
+// updateAnimations()
+//
+// Actualiza las animaciones de bloques en caída cada frame.
+// Debe llamarse cada frame para obtener las posiciones interpoladas actuales.
+
+Physics.prototype.updateAnimations = function()
+{
+	var currentTime = new Date().getTime();
+	var updatedAnimations = {};
+	
+	for ( var key in this.fallingBlocks ) {
+		var anim = this.fallingBlocks[key];
+		var elapsed = currentTime - anim.startTime;
+		var progress = Math.min( elapsed / anim.duration, 1.0 ); // 0.0 a 1.0
+		
+		// Usar una función de easing que simule aceleración por gravedad
+		// easeInQuad: t^2 - acelera hacia el final (como la gravedad real)
+		// Esto hace que el bloque caiga más rápido al final, como en la física real
+		var easedProgress = progress * progress;
+		
+		// Calcular posición Y interpolada
+		var currentY = anim.startY - ( anim.startY - anim.targetY ) * easedProgress;
+		
+		// Actualizar la posición Y en la animación
+		anim.currentY = currentY;
+		updatedAnimations[key] = anim;
+	}
+	
+	return updatedAnimations;
+}
+
+// getBlockAnimationOffset( x, y, z )
+//
+// Devuelve el offset Y (altura) para un bloque en animación, o 0 si no está animado.
+// Ejes: X y Z = horizontal, Y = vertical (altura)
+
+Physics.prototype.getBlockAnimationOffset = function( x, y, z )
+{
+	var key = x + "," + y + "," + z;
+	var anim = this.fallingBlocks[key];
+	if ( anim && anim.currentY !== undefined ) {
+		// Devolver el offset desde la posición original
+		return anim.currentY - anim.startY;
+	}
+	return 0;
 }
 
 // pushPlayerIfTrapped( player )

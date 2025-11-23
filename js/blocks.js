@@ -318,10 +318,12 @@ BLOCK.fromId = function( id )
 // Pushes the vertices necessary for rendering a
 // specific block into the array.
 
-BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
+BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset )
 {
 	// Ejes del mundo: X y Z = horizontal, Y = vertical (altura)
 	// blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
+	// yOffset: offset adicional en Y para animaciones (por defecto 0)
+	yOffset = yOffset || 0;
 	var blocks = world.blocks;
 	// lightmap[x][z] almacena la altura Y del bloque más alto no transparente en la columna (x, z)
 	var blockLit = y >= (lightmap[x] && lightmap[x][z] !== undefined ? lightmap[x][z] : -1);
@@ -376,12 +378,14 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
+		// Aplicar yOffset para animaciones
+		var renderY = y + yOffset;
 		pushQuad(
 			vertices,
-			[ x - OFFSET, z - OFFSET, y + bH, c[0], c[1], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, y + bH, c[2], c[1], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, y + bH, c[2], c[3], r, g, b, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET, y + bH, c[0], c[3], r, g, b, 1.0 ]
+			[ x - OFFSET, z - OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z - OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY + bH, c[2], c[3], r, g, b, 1.0 ],
+			[ x - OFFSET, z + 1.0 + OFFSET, renderY + bH, c[0], c[3], r, g, b, 1.0 ]
 		);
 	}
 	
@@ -396,12 +400,14 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
+		// Aplicar yOffset para animaciones
+		var renderY = y + yOffset;
 		pushQuad(
 			vertices,							
-			[ x - OFFSET, z + 1.0 + OFFSET, y, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, y, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, y, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z - OFFSET, y, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, z + 1.0 + OFFSET, renderY, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, z - OFFSET, renderY, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, z - OFFSET, renderY, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
 	
@@ -419,12 +425,14 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
+		// Aplicar yOffset para animaciones
+		var renderY = y + yOffset;
 		pushQuad(
 			vertices,
-			[ x - OFFSET, z - OFFSET, y, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, y, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, y + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z - OFFSET, y + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, z - OFFSET, renderY, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, z - OFFSET, renderY, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, z - OFFSET, renderY + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, z - OFFSET, renderY + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
 	
@@ -439,12 +447,14 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
+		// Aplicar yOffset para animaciones
+		var renderY = y + yOffset;
 		pushQuad(
 			vertices,
-			[ x - OFFSET, z + 1.0 + OFFSET, y + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, y + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, y, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET, y, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, z + 1.0 + OFFSET, renderY + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, z + 1.0 + OFFSET, renderY, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
 	
@@ -459,12 +469,14 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
+		// Aplicar yOffset para animaciones
+		var renderY = y + yOffset;
 		pushQuad(
 			vertices,
-			[ x - OFFSET, z - OFFSET, y + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET, y + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET, y, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z - OFFSET, y, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, z - OFFSET, renderY + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, z + 1.0 + OFFSET, renderY + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, z + 1.0 + OFFSET, renderY, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x - OFFSET, z - OFFSET, renderY, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
 	
@@ -482,12 +494,14 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z )
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
+		// Aplicar yOffset para animaciones
+		var renderY = y + yOffset;
 		pushQuad(
 			vertices,
-			[ x + 1.0 + OFFSET, z - OFFSET, y, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, y, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, y + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, y + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x + 1.0 + OFFSET, z - OFFSET, renderY, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
+			[ x + 1.0 + OFFSET, z - OFFSET, renderY + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
 		);
 	}
 }

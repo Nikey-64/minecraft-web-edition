@@ -1116,8 +1116,51 @@ Renderer.prototype.buildChunks = function( count )
 					}
 					
 					if ( block == BLOCK.AIR ) continue;
-					// Llamar con las coordenadas correctas del mundo
-					BLOCK.pushVertices( vertices, world, lightmap, x, y, z );
+					
+					// Consultar animaciones de caída si existe el sistema de física
+					var yOffset = 0;
+					var animKey = x + "," + y + "," + z;
+					var isAnimated = false;
+					
+					if ( world.physics && world.physics.fallingBlocks && world.physics.fallingBlocks[animKey] ) {
+						// Este bloque está en animación
+						var anim = world.physics.fallingBlocks[animKey];
+						if ( anim.currentY !== undefined ) {
+							yOffset = anim.currentY - anim.startY;
+							isAnimated = true;
+							// Si el offset es muy pequeño, aún no ha comenzado la animación
+							if ( Math.abs( yOffset ) < 0.01 ) {
+								yOffset = 0;
+								isAnimated = false;
+							}
+						}
+					}
+					
+					// Si el bloque está en animación, renderizarlo en su posición animada
+					// (no renderizarlo en su posición original porque visualmente está cayendo)
+					if ( isAnimated ) {
+						// Renderizar el bloque en su posición animada
+						BLOCK.pushVertices( vertices, world, lightmap, x, y, z, yOffset );
+					} else {
+						// Renderizar normalmente (pero verificar que no haya un bloque animado encima que esté cayendo aquí)
+						// Verificar si hay un bloque animado que esté cayendo a esta posición
+						var hasFallingBlockAbove = false;
+						if ( world.physics && world.physics.fallingBlocks ) {
+							for ( var key in world.physics.fallingBlocks ) {
+								var anim = world.physics.fallingBlocks[key];
+								if ( anim.x == x && anim.z == z && anim.targetY == y ) {
+									// Hay un bloque cayendo a esta posición
+									hasFallingBlockAbove = true;
+									break;
+								}
+							}
+						}
+						
+						// Si no hay un bloque cayendo a esta posición, renderizar normalmente
+						if ( !hasFallingBlockAbove ) {
+							BLOCK.pushVertices( vertices, world, lightmap, x, y, z, 0 );
+						}
+					}
 				}
 			}
 		}
