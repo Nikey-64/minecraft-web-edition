@@ -44,11 +44,16 @@ function Renderer( id )
 	canvas.width = canvas.clientWidth;
 	canvas.height = canvas.clientHeight;
 
-	this.renderDistance = parseInt(localStorage.getItem('renderDistance')) || 8; // chunks default radius
-	this.chunkSize = 16; // Default chunk size (16x16x16 preferred for optimal performance) (8 is better for laptops and mobile devices)
+	// renderDistance solo se aplica a dimensiones horizontales (X, Z), NO procesa la altura (Y)
+	// Ejes: X y Z = horizontal, Y = vertical (altura)
+	this.renderDistance = parseInt(localStorage.getItem('renderDistance')) || 8; // chunks default radius (horizontal: X, Z)
+	this.chunkSize = 8; // Tamaño horizontal de chunks (X, Z)
+	this.chunkSizeY = 256; // Tamaño vertical de chunks (Y) - cubre toda la altura para optimizar aire
 	this.camPos = [0, 0, 0]; // Initialize camera position
 	this.camAng = [0, 0, 0]; // Initialize camera angles
 	this.renderBehind = false; // Option to not render chunks behind the player (disabled by default)
+	this.showChunkGrid = false; // Debug: mostrar grilla de chunks
+	this.chunkGridBuffer = null; // Buffer para la grilla de chunks
 
 	// Initialise WebGL
 	var gl;
@@ -170,10 +175,17 @@ Renderer.prototype.draw = function()
 	gl.viewport( 0, 0, gl.viewportWidth, gl.viewportHeight );
 	gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
 
-	// Update chunks based on player position (only every N frames to reduce overhead)
+	// Update chunks based on player position (cada frame para mejor responsividad)
+	// Actualizar camPos desde el jugador antes de updateChunks
+	if ( this.world && this.world.localPlayer ) {
+		var eyePos = this.world.localPlayer.getEyePos();
+		this.camPos = [ eyePos.x, eyePos.y, eyePos.z ];
+	}
+	
+	// Actualizar chunks cada frame para mejor responsividad al moverse
 	if (!this._updateChunksFrameCount) this._updateChunksFrameCount = 0;
 	this._updateChunksFrameCount++;
-	if (this._updateChunksFrameCount >= 5) { // Update chunks every 5 frames instead of every frame
+	if (this._updateChunksFrameCount >= 3) { // Update chunks every 3 frames (más frecuente)
 		var updateStart = performance.now();
 		this.updateChunks();
 		var updateTime = performance.now() - updateStart;
@@ -196,9 +208,17 @@ Renderer.prototype.draw = function()
 	{
 		for ( var i = 0; i < chunks.length; i++ )
 		{
-			if ( chunks[i].loaded && chunks[i].buffer != null )
-				this.drawBuffer( chunks[i].buffer );
+			var chunk = chunks[i];
+			// Renderizar chunk si está cargado y tiene buffer (o si está cargado pero es solo aire)
+			if ( chunk.loaded && chunk.buffer != null )
+				this.drawBuffer( chunk.buffer );
 		}
+	}
+
+	// Draw chunk grid if debug mode is enabled
+	if ( this.showChunkGrid && this.world && this.world.localPlayer )
+	{
+		this.drawChunkGrid();
 	}
 
 	// Draw players
@@ -228,8 +248,11 @@ Renderer.prototype.draw = function()
 		if ( pitch < -0.32 ) pitch = -0.32;
 		if ( pitch > 0.32 ) pitch = 0.32;
 		
+		// Ejes: X y Z = horizontal, Y = vertical (altura)
+		// El shader espera: X y Y = horizontal, Z = vertical (altura)
+		// Por lo tanto, intercambiamos Y y Z: [x, z, y] donde z es altura para el shader
 		mat4.identity( this.modelMatrix );
-		mat4.translate( this.modelMatrix, [ player.x, player.y, player.z + 1.7 ] );
+		mat4.translate( this.modelMatrix, [ player.x, player.z, player.y + 1.7 ] ); // [x, z, y] donde y es altura
 		mat4.rotateZ( this.modelMatrix, Math.PI - player.yaw );
 		mat4.rotateX( this.modelMatrix, -pitch );
 		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
@@ -239,7 +262,7 @@ Renderer.prototype.draw = function()
 		
 		// Draw body
 		mat4.identity( this.modelMatrix );
-		mat4.translate( this.modelMatrix, [ player.x, player.y, player.z + 0.01 ] );
+		mat4.translate( this.modelMatrix, [ player.x, player.z, player.y + 0.01 ] ); // [x, z, y] donde y es altura
 		mat4.rotateZ( this.modelMatrix, Math.PI - player.yaw );
 		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
 		this.drawBuffer( this.playerBody );
@@ -448,18 +471,24 @@ Renderer.prototype.pickAt = function( min, max, mx, my )
 	if ( !hitDetected )
 		return false;
 	
+	// Decodificar coordenadas desde el picking buffer
+	// getPickingColor codifica las coordenadas del mundo directamente
+	// Ejes del mundo: X y Z = horizontal, Y = vertical (altura)
+	// pixelXY almacena: x (bytes 0-1), y (bytes 2-3) donde y es altura
+	// pixelZ almacena: z (bytes 0-1) donde z es horizontal, faceId (byte 2)
 	var x = pixelXY[0] | ( pixelXY[1] << 8 );
-	var y = pixelXY[2] | ( pixelXY[3] << 8 );
-	var z = pixelZ[0] | ( pixelZ[1] << 8 );
+	var y = pixelXY[2] | ( pixelXY[3] << 8 ); // Y es altura
+	var z = pixelZ[0] | ( pixelZ[1] << 8 ); // Z es horizontal
 	var face = pixelZ[2];
 	
+	// Normales en el formato del mundo: [x, y, z] donde y es altura
 	var normal;
-	if ( face == 1 ) normal = new Vector( 0, 0, 1 );
-	else if ( face == 2 ) normal = new Vector( 0, 0, -1 );
-	else if ( face == 3 ) normal = new Vector( 0, -1, 0 );
-	else if ( face == 4 ) normal = new Vector( 0, 1, 0 );
-	else if ( face == 5 ) normal = new Vector( -1, 0, 0 );
-	else if ( face == 6 ) normal = new Vector( 1, 0, 0 );
+	if ( face == 1 ) normal = new Vector( 0, 1, 0 );  // Top (Y+1, arriba)
+	else if ( face == 2 ) normal = new Vector( 0, -1, 0 );  // Bottom (Y-1, abajo)
+	else if ( face == 3 ) normal = new Vector( 0, 0, -1 );  // Front (Z-1, hacia -Z, horizontal)
+	else if ( face == 4 ) normal = new Vector( 0, 0, 1 );  // Back (Z+1, hacia +Z, horizontal)
+	else if ( face == 5 ) normal = new Vector( -1, 0, 0 );  // Left (X-1)
+	else if ( face == 6 ) normal = new Vector( 1, 0, 0 );  // Right (X+1)
 	else normal = new Vector( 0, 0, 0 );
 	
 	return {
@@ -552,76 +581,86 @@ Renderer.prototype.loadShaders = function()
 // world - The world object to operate on.
 // chunkSize - X, Y and Z dimensions of each chunk, doesn't have to fit exactly inside the world. 16x16x16 is prefered for optimal peformance.
 
-Renderer.prototype.setWorld = function( world, chunkSize )
+Renderer.prototype.setWorld = function( world, chunkSize, chunkSizeY )
 {
 	this.world = world;
 	world.renderer = this;
-	this.chunkSize = chunkSize;
-	if ( world.setChunking ) world.setChunking( chunkSize );
+	this.chunkSize = chunkSize || 8;
+	this.chunkSizeY = chunkSizeY || 256;
+	if ( world.setChunking ) world.setChunking( this.chunkSize, this.chunkSizeY );
 	this.chunkLookup = {};
 	this.loadedChunks = new Set();
 	this.dirtyChunks = []; // List of chunks that need to be rebuilt
 
-	// Create chunk list
+	// Create chunk list - 8x8x256 (X, Z horizontal, Y vertical)
+	// Chunks: 8 en X, 8 en Z (horizontal), 256 en Y (vertical, altura)
 	var chunks = this.chunks = [];
-	for ( var x = 0; x < world.sx; x += chunkSize ) {
-		for ( var y = 0; y < world.sy; y += chunkSize ) {
-			for ( var z = 0; z < world.sz; z += chunkSize ) {
-				var chunk = {
-					start: [ x, y, z ],
-					end: [ Math.min( world.sx, x + chunkSize ), Math.min( world.sy, y + chunkSize ), Math.min( world.sz, z + chunkSize ) ],
-					cx: x / chunkSize,
-					cy: y / chunkSize,
-					cz: z / chunkSize,
-					dirty: true,
-					loaded: false
-				};
-				chunk.key = this.getChunkKey( chunk.cx, chunk.cy, chunk.cz );
-				this.chunkLookup[chunk.key] = chunk;
-				chunks.push( chunk );
-			}
+	for ( var x = 0; x < world.sx; x += this.chunkSize ) {
+		for ( var z = 0; z < world.sz; z += this.chunkSize ) {
+			// Solo un chunk vertical por columna (cubre toda la altura Y)
+			var y = 0;
+			var chunk = {
+				start: [ x, y, z ],
+				end: [ Math.min( world.sx, x + this.chunkSize ), Math.min( world.sy, y + this.chunkSizeY ), Math.min( world.sz, z + this.chunkSize ) ],
+				cx: x / this.chunkSize,
+				cz: z / this.chunkSize,
+				cy: 0, // Siempre 0 porque solo hay un chunk vertical (cubre toda la altura Y)
+				dirty: true,
+				loaded: false
+			};
+			chunk.key = this.getChunkKey( chunk.cx, chunk.cz, chunk.cy );
+			this.chunkLookup[chunk.key] = chunk;
+			chunks.push( chunk );
 		}
 	}
 
 	// Initialize spawn chunks with loaded: true
-	var spawnX = Math.floor(world.spawn[0] / chunkSize) * chunkSize;
-	var spawnY = Math.floor(world.spawn[1] / chunkSize) * chunkSize;
-	var spawnZ = Math.floor(world.spawn[2] / chunkSize) * chunkSize;
+	// IMPORTANTE: renderDistance solo se aplica a dimensiones horizontales (X, Z), NO procesa la altura (Y)
+	// Ejes: X y Z = horizontal, Y = vertical (altura)
+	var spawnChunkX = Math.floor(world.spawn[0] / this.chunkSize);
+	var spawnChunkZ = Math.floor(world.spawn[2] / this.chunkSize);
+	// spawnChunkY NO se usa porque renderDistance no procesa la altura
 
 	for ( var i = 0; i < chunks.length; i++ ) {
 		var chunk = chunks[i];
-		if ( chunk.start[0] >= spawnX - chunkSize * this.renderDistance &&
-			 chunk.start[0] <= spawnX + chunkSize * this.renderDistance &&
-			 chunk.start[1] >= spawnY - chunkSize * this.renderDistance &&
-			 chunk.start[1] <= spawnY + chunkSize * this.renderDistance &&
-			 chunk.start[2] >= spawnZ - chunkSize * this.renderDistance &&
-			 chunk.start[2] <= spawnZ + chunkSize * this.renderDistance ) {
+		// Comparar coordenadas de chunks horizontales (solo X y Z, NO altura Y)
+		var chunkDistX = Math.abs(chunk.cx - spawnChunkX);
+		var chunkDistZ = Math.abs(chunk.cz - spawnChunkZ);
+		// NO comparamos chunk.cy porque renderDistance no se aplica a la altura Y
+		
+		if ( chunkDistX <= this.renderDistance && chunkDistZ <= this.renderDistance ) {
 			this.loadChunk( chunk );
 			// loadChunk already adds to dirtyChunks, so we're good
 		}
 	}
 }
 
-Renderer.prototype.getChunkKey = function( cx, cy, cz )
+Renderer.prototype.getChunkKey = function( cx, cz, cy )
 {
-	return cx + "|" + cy + "|" + cz;
+	// cx, cz = coordenadas horizontales, cy = siempre 0 (un solo chunk vertical)
+	return cx + "|" + cz + "|" + cy;
 }
 
-// isChunkInRange( chunkX, chunkY, chunkZ, playerX, playerY, playerZ )
+// isChunkInRange( chunkX, chunkZ, chunkY, playerX, playerZ, playerY )
 //
-// Returns true if the chunk at (chunkX, chunkY, chunkZ) is within render distance of the player at (playerX, playerY, playerZ).
-// Render distance for Z is asymmetric: full above, half below.
-Renderer.prototype.isChunkInRange = function( chunkX, chunkY, chunkZ, playerX, playerY, playerZ )
+// Returns true if the chunk at (chunkX, chunkZ, chunkY) is within render distance of the player at (playerX, playerZ, playerY).
+// IMPORTANTE: renderDistance solo se aplica a dimensiones horizontales (X, Z), NO procesa la altura (Y).
+// Ejes: X y Z = horizontal, Y = vertical (altura)
+// Los chunks son 8x8x256, donde 8x8 es horizontal (X, Z) y 256 es vertical (Y, altura).
+Renderer.prototype.isChunkInRange = function( chunkX, chunkZ, chunkY, playerX, playerZ, playerY )
 {
+	// Calcular coordenadas de chunk del jugador (solo horizontales X y Z, NO altura Y)
 	var playerChunkX = Math.floor(playerX / this.chunkSize);
-	var playerChunkY = Math.floor(playerY / this.chunkSize);
 	var playerChunkZ = Math.floor(playerZ / this.chunkSize);
+	// chunkY siempre es 0 porque solo hay un chunk vertical por columna (cubre toda la altura Y)
+	// La altura (Y) NO se procesa con renderDistance
 
+	// Calcular distancias horizontales (solo X y Z, NO altura Y)
 	var distX = Math.abs(chunkX - playerChunkX);
-	var distY = Math.abs(chunkY - playerChunkY);
-	var distZ = chunkZ > playerChunkZ ? chunkZ - playerChunkZ : (playerChunkZ - chunkZ) * 2;
+	var distZ = Math.abs(chunkZ - playerChunkZ);
+	// NO verificamos distY porque renderDistance no se aplica a la altura Y
 
-	return distX <= this.renderDistance && distY <= this.renderDistance && distZ <= this.renderDistance;
+	return distX <= this.renderDistance && distZ <= this.renderDistance;
 };
 
 // unloadChunk( chunkIndex )
@@ -633,7 +672,7 @@ Renderer.prototype.unloadChunk = function( chunkIndexOrChunk )
 	var chunk = typeof chunkIndexOrChunk === "number" ? this.chunks[chunkIndexOrChunk] : chunkIndexOrChunk;
 	if ( !chunk ) return;
 	if ( this.world && this.world.persistChunk )
-		this.world.persistChunk( chunk, this.chunkSize );
+		this.world.persistChunk( chunk, this.chunkSize, this.chunkSizeY );
 	chunk.loaded = false;
 	if ( chunk.buffer != null )
 	{
@@ -646,6 +685,9 @@ Renderer.prototype.unloadChunk = function( chunkIndexOrChunk )
 // setRenderDistance( distance )
 //
 // Updates the render distance and triggers chunk updates.
+// IMPORTANTE: renderDistance solo se aplica a dimensiones horizontales (X, Z), NO procesa la altura (Y).
+// Ejes: X y Z = horizontal, Y = vertical (altura)
+// Los chunks son 8x8x256, donde 8x8 es horizontal (X, Z) y 256 es vertical (Y, altura).
 
 Renderer.prototype.setRenderDistance = function( distance )
 {
@@ -663,7 +705,7 @@ Renderer.prototype.loadChunk = function( chunkIndexOrChunk )
 	var chunk = typeof chunkIndexOrChunk === "number" ? this.chunks[chunkIndexOrChunk] : chunkIndexOrChunk;
 	if ( !chunk ) return;
 	if ( this.world && this.world.ensureChunkLoaded )
-		this.world.ensureChunkLoaded( chunk, this.chunkSize );
+		this.world.ensureChunkLoaded( chunk, this.chunkSize, this.chunkSizeY );
 	chunk.loaded = true;
 	chunk.dirty = true;
 	if ( this.loadedChunks ) this.loadedChunks.add( chunk.key );
@@ -682,25 +724,66 @@ Renderer.prototype.updateChunks = function()
 {
 	if ( !this.world || !this.chunks ) return;
 
-	var playerX = this.camPos[0];
-	var playerY = this.camPos[1];
-	var playerZ = this.camPos[2];
+	// Usar posición del jugador directamente en lugar de camPos (más confiable)
+	var player = this.world.localPlayer;
+	var playerX, playerY, playerZ;
+	if ( player && player.pos ) {
+		var eyePos = player.getEyePos();
+		playerX = eyePos.x;
+		playerY = eyePos.y;
+		playerZ = eyePos.z;
+	} else {
+		// Fallback a camPos si no hay jugador
+		playerX = this.camPos[0];
+		playerY = this.camPos[1];
+		playerZ = this.camPos[2];
+	}
+	
+	// Calcular coordenadas de chunk del jugador (solo horizontales X y Z, NO altura Y)
+	// Ejes: X y Z = horizontal, Y = vertical (altura)
 	var playerChunkX = Math.floor( playerX / this.chunkSize );
-	var playerChunkY = Math.floor( playerY / this.chunkSize );
 	var playerChunkZ = Math.floor( playerZ / this.chunkSize );
+	// NOTA: playerChunkY NO se calcula ni se usa porque renderDistance no procesa la altura Y
 	var targetKeys = new Set();
 
+	// IMPORTANTE: renderDistance solo se aplica a dimensiones horizontales (X, Z)
+	// NO iteramos sobre Y porque los chunks son 8x8x256 (un solo chunk vertical por columna que cubre toda la altura Y)
+	// La altura (Y) NO se procesa con renderDistance
 	for ( var dx = -this.renderDistance; dx <= this.renderDistance; dx++ ) {
-		for ( var dy = -this.renderDistance; dy <= this.renderDistance; dy++ ) {
-			for ( var dz = -this.renderDistance; dz <= this.renderDistance; dz++ ) {
-				var cx = playerChunkX + dx;
-				var cy = playerChunkY + dy;
-				var cz = playerChunkZ + dz;
-				if ( !this.isChunkInRange( cx, cy, cz, playerX, playerY, playerZ ) ) continue;
-				var key = this.getChunkKey( cx, cy, cz );
-				targetKeys.add( key );
-				var chunk = this.chunkLookup && this.chunkLookup[key];
-				if ( chunk && !chunk.loaded ) this.loadChunk( chunk );
+		for ( var dz = -this.renderDistance; dz <= this.renderDistance; dz++ ) {
+			var cx = playerChunkX + dx;
+			var cz = playerChunkZ + dz;
+			var cy = 0; // Siempre 0 porque solo hay un chunk vertical (cubre toda la altura Y)
+			
+			// Verificar límites del mundo (solo X y Z, Y se cubre completamente)
+			var chunkX = cx * this.chunkSize;
+			var chunkZ = cz * this.chunkSize;
+			if ( chunkX < 0 || chunkX >= this.world.sx || chunkZ < 0 || chunkZ >= this.world.sz ) continue;
+			
+			if ( !this.isChunkInRange( cx, cz, cy, playerX, playerZ, playerY ) ) continue;
+			var key = this.getChunkKey( cx, cz, cy );
+			targetKeys.add( key );
+			
+			var chunk = this.chunkLookup && this.chunkLookup[key];
+			if ( !chunk ) {
+				// Chunk no existe en lookup, crearlo
+				var y = 0; // Chunk empieza en Y=0 y cubre toda la altura
+				chunk = {
+					start: [ chunkX, y, chunkZ ],
+					end: [ Math.min( this.world.sx, chunkX + this.chunkSize ), Math.min( this.world.sy, y + this.chunkSizeY ), Math.min( this.world.sz, chunkZ + this.chunkSize ) ],
+					cx: cx,
+					cz: cz,
+					cy: cy,
+					dirty: true,
+					loaded: false
+				};
+				chunk.key = key;
+				this.chunkLookup[key] = chunk;
+				this.chunks.push( chunk );
+			}
+			
+			if ( chunk && !chunk.loaded ) {
+				this.loadChunk( chunk );
 			}
 		}
 	}
@@ -717,6 +800,149 @@ Renderer.prototype.updateChunks = function()
 	}
 };
 
+
+// drawChunkGrid()
+//
+// Draws a wireframe grid showing chunk boundaries (debug mode)
+Renderer.prototype.drawChunkGrid = function()
+{
+	if ( !this.world || !this.chunks ) return;
+	
+	var gl = this.gl;
+	var player = this.world.localPlayer;
+	if ( !player ) return;
+	
+	var pos = player.pos;
+	var renderDist = this.renderDistance;
+	var chunkSize = this.chunkSize;
+	
+	// Crear buffer de líneas si no existe
+	if ( !this.chunkGridBuffer )
+	{
+		this.chunkGridBuffer = gl.createBuffer();
+	}
+	
+	// Calcular chunks visibles (solo horizontales X y Z, NO altura Y)
+	// IMPORTANTE: renderDistance solo se aplica a dimensiones horizontales (X, Z)
+	// Ejes: X y Z = horizontal, Y = vertical (altura)
+	var playerChunkX = Math.floor( pos.x / chunkSize );
+	var playerChunkZ = Math.floor( pos.z / chunkSize );
+	
+	var lines = [];
+	
+	// Dibujar líneas verticales de altura (bordes de chunks en X)
+	// NOTA: Estas líneas muestran la altura completa del chunk (Y), pero renderDistance solo se aplica horizontalmente (X, Z)
+	for ( var dx = -renderDist; dx <= renderDist; dx++ )
+	{
+		var cx = playerChunkX + dx;
+		var x = cx * chunkSize;
+		if ( x < 0 || x >= this.world.sx ) continue;
+		
+		// Línea desde Y=0 hasta Y=sy (altura completa, no afectada por renderDistance)
+		for ( var dz = -renderDist; dz <= renderDist; dz++ )
+		{
+			var cz = playerChunkZ + dz;
+			var z = cz * chunkSize;
+			if ( z < 0 || z >= this.world.sz ) continue;
+			
+			// Línea vertical de altura en X (renderDistance solo afecta si se dibuja, no la altura Y)
+			lines.push( x, 0, z );
+			lines.push( x, this.world.sy, z );
+		}
+	}
+	
+	// Dibujar líneas verticales de altura (bordes de chunks en Z)
+	// NOTA: Estas líneas muestran la altura completa del chunk (Y), pero renderDistance solo se aplica horizontalmente (X, Z)
+	for ( var dz = -renderDist; dz <= renderDist; dz++ )
+	{
+		var cz = playerChunkZ + dz;
+		var z = cz * chunkSize;
+		if ( z < 0 || z >= this.world.sz ) continue;
+		
+		for ( var dx = -renderDist; dx <= renderDist; dx++ )
+		{
+			var cx = playerChunkX + dx;
+			var x = cx * chunkSize;
+			if ( x < 0 || x >= this.world.sx ) continue;
+			
+			// Línea vertical de altura en Z (renderDistance solo afecta si se dibuja, no la altura Y)
+			lines.push( x, 0, z );
+			lines.push( x, this.world.sy, z );
+		}
+	}
+	
+	// Dibujar líneas horizontales en el suelo (Y=0) - solo bordes de chunks
+	// NOTA: Solo dibujar los bordes exteriores de los chunks para evitar sobrecarga visual
+	for ( var dx = -renderDist; dx <= renderDist; dx++ )
+	{
+		for ( var dz = -renderDist; dz <= renderDist; dz++ )
+		{
+			var cx = playerChunkX + dx;
+			var cz = playerChunkZ + dz;
+			var x = cx * chunkSize;
+			var z = cz * chunkSize;
+			
+			if ( x < 0 || x >= this.world.sx || z < 0 || z >= this.world.sz ) continue;
+			
+			// Solo dibujar bordes de chunks (no todas las líneas internas)
+			var isEdgeX = (dx === -renderDist || dx === renderDist);
+			var isEdgeZ = (dz === -renderDist || dz === renderDist);
+			
+			if ( isEdgeX || isEdgeZ ) {
+				// Líneas horizontales en Y=0 (suelo) - plano XZ
+				if ( isEdgeX ) {
+					// Línea en dirección Z
+					lines.push( x, 0, z );
+					lines.push( x, 0, z + chunkSize );
+				}
+				if ( isEdgeZ ) {
+					// Línea en dirección X
+					lines.push( x, 0, z );
+					lines.push( x + chunkSize, 0, z );
+				}
+			}
+		}
+	}
+	
+	if ( lines.length === 0 ) return;
+	
+	// Configurar para dibujar líneas
+	gl.disable( gl.DEPTH_TEST );
+	gl.lineWidth( 1.0 );
+	
+	// Crear buffer temporal para las líneas
+	var lineBuffer = gl.createBuffer();
+	gl.bindBuffer( gl.ARRAY_BUFFER, lineBuffer );
+	gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( lines ), gl.STREAM_DRAW );
+	
+	// Configurar atributos - usar el mismo formato que los bloques (9 floats por vértice)
+	// Pero para líneas solo necesitamos posición (3 floats)
+	gl.enableVertexAttribArray( this.aPos );
+	gl.vertexAttribPointer( this.aPos, 3, gl.FLOAT, false, 0, 0 );
+	
+	// Deshabilitar otros atributos temporalmente
+	gl.disableVertexAttribArray( this.aColor );
+	gl.disableVertexAttribArray( this.aTexCoord );
+	
+	// Color verde para la grilla (usar atributo de color directamente)
+	gl.vertexAttrib4f( this.aColor, 0.0, 1.0, 0.0, 0.8 ); // Más opaco para mejor visibilidad
+	gl.vertexAttrib2f( this.aTexCoord, 0, 0 );
+	
+	// Usar matriz de modelo identidad para las líneas
+	mat4.identity( this.modelMatrix );
+	gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+	
+	// Dibujar líneas
+	gl.drawArrays( gl.LINES, 0, lines.length / 3 );
+	
+	// Restaurar atributos
+	gl.enableVertexAttribArray( this.aColor );
+	gl.enableVertexAttribArray( this.aTexCoord );
+	
+	// Restaurar estado
+	gl.enable( gl.DEPTH_TEST );
+	gl.deleteBuffer( lineBuffer );
+}
 
 // onBlockChanged( x, y, z )
 //
@@ -789,28 +1015,61 @@ Renderer.prototype.buildChunks = function( count )
 		
 		// Create map of lowest blocks that are still lit
 		// Optimize: only check up to a reasonable height instead of entire world
-		var maxLightCheckZ = Math.min( world.sz - 1, chunk.end[2] + 32 );
+		// Ejes del mundo: X y Z = horizontal, Y = vertical (altura)
+		// chunk.start = [x, y, z] donde y es altura
+		// blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
+		// lightmap[x][z] donde z es la coordenada Z horizontal
+		// Y el valor almacenado es la altura Y
+		var maxLightCheckY = Math.min( world.sy - 1, chunk.end[1] + 32 );
 		var lightmap = {};
 		for ( var x = chunk.start[0] - 1; x < chunk.end[0] + 1; x++ )
 		{
+			if ( x < 0 || x >= world.sx || !world.blocks[x] ) continue;
 			lightmap[x] = {};
 			
-			for ( var y = chunk.start[1] - 1; y < chunk.end[1] + 1; y++ )
+			// Para cada columna (x, z del mundo), buscar el bloque más alto no transparente en Y
+			for ( var z = chunk.start[2] - 1; z < chunk.end[2] + 1; z++ )
 			{
-				// Start from maxLightCheckZ and go down instead of from world.sz-1
-				for ( var z = maxLightCheckZ; z >= 0; z-- )
+				if ( z < 0 || z >= world.sz ) continue;
+				// Buscar desde arriba hacia abajo en Y (altura del mundo)
+				for ( var y = maxLightCheckY; y >= 0; y-- )
 				{
-					lightmap[x][y] = z;
+					if ( !world.blocks[x] || !world.blocks[x][y] || !world.blocks[x][y][z] ) continue;
+					// lightmap[x][z] donde z es la coordenada Z horizontal
+					// Almacenamos y (altura del mundo) como el valor Y altura
+					lightmap[x][z] = y;
 					if ( !world.getBlock( x, y, z ).transparent ) break;
 				}
 			}
 		}
 		
 		// Add vertices for blocks
+		// Ejes: X y Z = horizontal, Y = vertical (altura)
+		// chunk.start = [x, y, z] donde y es altura
+		// blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
 		for ( var x = chunk.start[0]; x < chunk.end[0]; x++ ) {
-			for ( var y = chunk.start[1]; y < chunk.end[1]; y++ ) {
-				for ( var z = chunk.start[2]; z < chunk.end[2]; z++ ) {
-					if ( world.blocks[x][y][z] == BLOCK.AIR ) continue;
+			// Verificar límites
+			if ( x < 0 || x >= world.sx ) continue;
+			if ( !world.blocks[x] ) continue;
+			
+			for ( var z = chunk.start[2]; z < chunk.end[2]; z++ ) { // Z es horizontal
+				// Verificar límites
+				if ( z < 0 || z >= world.sz ) continue;
+				
+				for ( var y = chunk.start[1]; y < chunk.end[1]; y++ ) { // Y es altura
+					// Verificar límites
+					if ( y < 0 || y >= world.sy ) continue;
+					if ( !world.blocks[x][y] ) continue;
+					
+					// Verificar que el bloque exista antes de acceder
+					var block = world.blocks[x][y][z];
+					if ( block === undefined ) {
+						// Si el bloque no está definido, saltarlo (no debería pasar si ensureChunkLoaded funciona)
+						continue;
+					}
+					
+					if ( block == BLOCK.AIR ) continue;
+					// Llamar con las coordenadas correctas del mundo
 					BLOCK.pushVertices( vertices, world, lightmap, x, y, z );
 				}
 			}
@@ -819,10 +1078,15 @@ Renderer.prototype.buildChunks = function( count )
 		// Create WebGL buffer
 		if ( chunk.buffer ) gl.deleteBuffer( chunk.buffer );
 		
-		var buffer = chunk.buffer = gl.createBuffer();
-		buffer.vertices = vertices.length / 9;
-		gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
-		gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STATIC_DRAW );
+		if ( vertices.length > 0 ) {
+			var buffer = chunk.buffer = gl.createBuffer();
+			buffer.vertices = vertices.length / 9;
+			gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
+			gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STATIC_DRAW );
+		} else {
+			// Chunk vacío (solo aire) - no crear buffer
+			chunk.buffer = null;
+		}
 		
 		chunk.dirty = false;
 		// Remove from queue
@@ -859,15 +1123,24 @@ Renderer.prototype.setCamera = function( pos, ang )
 {
 	var gl = this.gl;
 	
+	// Actualizar camPos inmediatamente para que updateChunks() lo use
+	// pos viene como [x, y, z] donde y es altura (nuevo sistema)
 	this.camPos = pos;
 	
 	mat4.identity( this.viewMatrix );
+	
+	// El shader espera coordenadas donde Z es altura
+	// Necesitamos intercambiar Y y Z: [x, z, y] donde z es altura para el shader
+	// Pero las rotaciones se aplican en el espacio del mundo (donde Y es altura)
+	// Así que rotamos primero, luego transformamos las coordenadas
 	
 	mat4.rotate( this.viewMatrix, -ang[0] - Math.PI / 2, [ 1, 0, 0 ], this.viewMatrix );
 	mat4.rotate( this.viewMatrix, ang[1], [ 0, 0, 1 ], this.viewMatrix );
 	mat4.rotate( this.viewMatrix, -ang[2], [ 0, 1, 0 ], this.viewMatrix );
 	
-	mat4.translate( this.viewMatrix, [ -pos[0], -pos[1], -pos[2] ], this.viewMatrix );
+	// Transformar posición: [x, y, z] (mundo: y=altura) -> [x, z, y] (shader: z=altura)
+	// Para la traslación, intercambiamos y y z
+	mat4.translate( this.viewMatrix, [ -pos[0], -pos[2], -pos[1] ], this.viewMatrix );
 	
 	gl.uniformMatrix4fv( this.uViewMat, false, this.viewMatrix );
 }

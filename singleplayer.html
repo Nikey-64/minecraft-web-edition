@@ -1,7 +1,7 @@
 <!DOCTYPE HTML>
 <html lang="es">
 	<head>
-		<title>minecraft web edition 0.0.0</title>
+		<title>minecraft web edition 0.0.0-B</title>
 		
 		<!-- Character encoding -->
 		<meta http-equiv="content-type" content="text/html" charset="UTF-8">
@@ -30,6 +30,11 @@
 
 		<!-- FPS Display -->
 		<div id="fpsDisplay" style="position: absolute; top: 10px; left: 10px; color: white; font-family: Minecraftia; display: none;"></div>
+
+		<!-- Debug Overlay (F3) -->
+		<div id="debugOverlay" style="position: absolute; top: 10px; left: 10px; color: #00ff00; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; text-shadow: 2px 2px 0px rgba(0,0,0,0.8); display: none; pointer-events: none; z-index: 1000;">
+			<div id="debugInfo"></div>
+		</div>
 
 		<!-- Material selection -->
 		<table id="materialSelector">
@@ -80,6 +85,10 @@
 			// Game state
 			var paused = false;
 			var gameLoopInterval;
+			
+			// Debug state
+			var debugEnabled = false;
+			var debugChunksEnabled = false;
 
 			// FPS tracking
 			var fps = 0;
@@ -165,9 +174,10 @@
 				var sx = seedDefinition.sx || 255;
 				var sy = seedDefinition.sy || 255;
 				var sz = seedDefinition.sz || 255;
-				var chunkSize = seedDefinition.chunkSize || 16;
+				var chunkSize = seedDefinition.chunkSize || 8;
+				var chunkSizeY = 256; // Chunks de 8x8x256 (X, Z, Y) para optimizar aire - Y es vertical (altura)
 				var w = new World( sx, sy, sz );
-				if ( w.setChunking ) w.setChunking( chunkSize );
+				if ( w.setChunking ) w.setChunking( chunkSize, chunkSizeY );
 
 				if ( Array.isArray( seedDefinition.chunks ) && seedDefinition.chunks.length ) {
 					preloadSeedChunks( w, seedDefinition.chunks, seedName );
@@ -228,7 +238,7 @@
 
 			function setupGameSystems() {
 				render = new Renderer( "renderSurface" );
-				render.setWorld( world, 8 );
+				render.setWorld( world, 8, 256 ); // Chunks de 8x8x256 para optimizar aire
 				render.setPerspective( 60, 0.01, 200 );
 
 				physics = new Physics();
@@ -239,6 +249,43 @@
 				player.setPhysics( physics );
 				player.setInputCanvas( "renderSurface" );
 				player.setMaterialSelector( "materialSelector" );
+				
+				// Setup debug key handlers
+				setupDebugKeys();
+			}
+			
+			function setupDebugKeys() {
+				// Interceptar eventos de teclado para F3, C+F3 y F4 (modo espectador)
+				var originalOnKeyEvent = player.onKeyEvent;
+				player.onKeyEvent = function(keyCode, down) {
+					// Llamar al handler original
+					originalOnKeyEvent.call(this, keyCode, down);
+					
+					// F3 key code = 114
+					if (keyCode === 114) {
+						if (down) {
+							// Verificar si C está presionado
+							if (this.keys['c'] || this.keys[67]) {
+								debugChunksEnabled = !debugChunksEnabled;
+								render.showChunkGrid = debugChunksEnabled;
+							} else {
+								debugEnabled = !debugEnabled;
+								document.getElementById('debugOverlay').style.display = debugEnabled ? 'block' : 'none';
+							}
+						}
+					}
+					
+					// F4 key code = 115 (Modo espectador)
+					if (keyCode === 115 && down) {
+						if (this.spectatorMode !== undefined) {
+							this.spectatorMode = !this.spectatorMode;
+							// Resetear velocidad al cambiar de modo
+							this.velocity = new Vector( 0, 0, 0 );
+							this.falling = false;
+							console.log('Modo espectador: ' + (this.spectatorMode ? 'ACTIVADO' : 'DESACTIVADO'));
+						}
+					}
+				};
 			}
 
 			function initialisePauseSettings() {
@@ -274,7 +321,7 @@
 
 						// Build a chunk
 						measureTime('buildChunks', function() {
-							render.buildChunks( 32 );
+							render.buildChunks( 8 );
 						});
 
 						// Draw world
@@ -300,6 +347,11 @@
 								render._updateChunksStats = { total: 0, count: 0, max: 0 };
 							}
 						});
+						
+						// Update debug overlay
+						if (debugEnabled) {
+							updateDebugOverlay();
+						}
 
 						var frameTime = performance.now() - frameStart;
 						measureTime('total', function() { return frameTime; });
@@ -323,6 +375,97 @@
 				}, 1 );
 			}
 
+			// Update debug overlay with player information
+			function updateDebugOverlay() {
+				if (!player || !world) return;
+				
+				var pos = player.pos;
+				var eyePos = player.getEyePos();
+				var angles = player.angles;
+				
+				// Calcular bloque actual (donde está el jugador)
+				var blockX = Math.floor(pos.x);
+				var blockY = Math.floor(pos.y);
+				var blockZ = Math.floor(pos.z);
+				var block = world.getBlock(blockX, blockY, blockZ);
+				var blockName = block ? block.name || 'UNKNOWN' : 'AIR';
+				
+				// Calcular dirección (yaw en radianes, 0 = Norte, PI/2 = Este, PI = Sur, 3*PI/2 = Oeste)
+				var yaw = angles[1];
+				// Normalizar yaw a 0-2*PI
+				while (yaw < 0) yaw += 2 * Math.PI;
+				while (yaw >= 2 * Math.PI) yaw -= 2 * Math.PI;
+				
+				var direction = '';
+				var yawDegrees = (yaw * 180 / Math.PI) % 360;
+				if (yawDegrees < 0) yawDegrees += 360;
+				
+				// Determinar dirección cardinal
+				if (yawDegrees >= 337.5 || yawDegrees < 22.5) direction = 'Norte';
+				else if (yawDegrees >= 22.5 && yawDegrees < 67.5) direction = 'Noreste';
+				else if (yawDegrees >= 67.5 && yawDegrees < 112.5) direction = 'Este';
+				else if (yawDegrees >= 112.5 && yawDegrees < 157.5) direction = 'Sureste';
+				else if (yawDegrees >= 157.5 && yawDegrees < 202.5) direction = 'Sur';
+				else if (yawDegrees >= 202.5 && yawDegrees < 247.5) direction = 'Suroeste';
+				else if (yawDegrees >= 247.5 && yawDegrees < 292.5) direction = 'Oeste';
+				else if (yawDegrees >= 292.5 && yawDegrees < 337.5) direction = 'Noroeste';
+				
+				var debugHTML = '<div style="background: rgba(0,0,0,0.5); padding: 8px; border: 1px solid #00ff00;">';
+				debugHTML += '<div><strong>Minecraft Web Edition - Debug (F3)</strong></div>';
+				if (player.spectatorMode) {
+					debugHTML += '<div style="color: #ffaa00; font-weight: bold; margin-top: 4px;">⚡ MODO ESPECTADOR (F4 para desactivar)</div>';
+				}
+				debugHTML += '<div style="margin-top: 8px;">';
+				debugHTML += '<div>Posición: X: ' + pos.x.toFixed(2) + ' Y: ' + pos.y.toFixed(2) + ' Z: ' + pos.z.toFixed(2) + '</div>';
+				debugHTML += '<div>Ojos: X: ' + eyePos.x.toFixed(2) + ' Y: ' + eyePos.y.toFixed(2) + ' Z: ' + eyePos.z.toFixed(2) + '</div>';
+				debugHTML += '<div>Bloque: X: ' + blockX + ' Y: ' + blockY + ' Z: ' + blockZ + ' (' + blockName + ')</div>';
+				debugHTML += '<div>Dirección: ' + direction + ' (' + yawDegrees.toFixed(1) + '°)</div>';
+				debugHTML += '<div>Pitch: ' + (angles[0] * 180 / Math.PI).toFixed(1) + '°</div>';
+				
+				// Información de chunks si C+F3 está activo
+				if (debugChunksEnabled) {
+					var chunkX = Math.floor(pos.x / render.chunkSize);
+					var chunkY = Math.floor(pos.y / render.chunkSize);
+					var chunkZ = 0; // Siempre 0 porque solo hay un chunk vertical
+					
+					debugHTML += '<div style="margin-top: 8px; border-top: 1px solid #00ff00; padding-top: 8px;">';
+					debugHTML += '<div><strong>Chunk Info (C+F3)</strong></div>';
+					debugHTML += '<div>Chunk actual: [' + chunkX + ', ' + chunkY + ', ' + chunkZ + ']</div>';
+					debugHTML += '<div>Tamaño chunk: ' + render.chunkSize + 'x' + render.chunkSize + 'x' + render.chunkSizeY + ' (X, Z, Y)</div>';
+					
+					// Chunks alrededor
+					debugHTML += '<div style="margin-top: 4px;">Chunks cargados: ';
+					if (render.loadedChunks) {
+						debugHTML += render.loadedChunks.size || 0;
+					} else {
+						debugHTML += '0';
+					}
+					debugHTML += '</div>';
+					
+					// Chunks cercanos
+					debugHTML += '<div style="margin-top: 4px;">Chunks cercanos:</div>';
+					var nearbyChunks = [];
+					for (var dx = -1; dx <= 1; dx++) {
+						for (var dy = -1; dy <= 1; dy++) {
+							var cx = chunkX + dx;
+							var cy = chunkY + dy;
+							var cz = 0;
+							var key = render.getChunkKey ? render.getChunkKey(cx, cy, cz) : (cx + '|' + cy + '|' + cz);
+							var chunk = render.chunkLookup && render.chunkLookup[key];
+							var loaded = chunk && chunk.loaded;
+							nearbyChunks.push('[' + cx + ',' + cy + ',' + cz + ']' + (loaded ? '✓' : '✗'));
+						}
+					}
+					debugHTML += '<div style="font-size: 10px;">' + nearbyChunks.join(' ') + '</div>';
+					debugHTML += '</div>';
+				}
+				
+				debugHTML += '</div>';
+				debugHTML += '</div>';
+				
+				document.getElementById('debugInfo').innerHTML = debugHTML;
+			}
+			
 			// Function to pause the game
 			function pauseGame() {
 				paused = true;
