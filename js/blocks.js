@@ -496,23 +496,52 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	// Texture coordinate offset to prevent texture bleeding
 	// terrain.png is a 256x256 texture atlas with 16x16 block textures (16x16 grid)
 	// Each texture occupies 1/16 of the atlas (16/256 = 0.0625)
-	// With CLAMP_TO_EDGE in the renderer, we use a minimal offset to ensure
-	// coordinates stay well within texture boundaries, especially at distance
-	// Using 0.5 pixels (0.5/256 = 0.001953125) for better distance rendering
-	var TEX_OFFSET = 0.5 / 256; // Half pixel offset in a 256x256 texture atlas (0.001953125)
+	// With CLAMP_TO_EDGE in the renderer, we use a distance-based offset
+	// Only apply offset at far distances to avoid visual artifacts up close
+	var MAX_TEX_OFFSET = 0.5 / 256; // Maximum offset (half pixel) for far distances
+	var MIN_DISTANCE = 16.0; // Distance at which offset starts applying (in blocks)
+	var MAX_DISTANCE = 64.0; // Distance at which offset reaches maximum (in blocks)
 	
-	// Helper function to adjust texture coordinates to prevent bleeding
-	// This moves the texture coordinates very slightly inward to avoid sampling adjacent textures
-	// The offset is small enough to be imperceptible but prevents texture bleeding
-	var adjustTexCoords = function( texCoords ) {
+	// Helper function to adjust texture coordinates to prevent bleeding based on distance
+	// This moves the texture coordinates slightly inward to avoid sampling adjacent textures
+	// The offset increases with distance to prevent bleeding at far distances
+	var adjustTexCoords = function( texCoords, distance ) {
+		// Calculate distance-based offset factor (0 at close range, 1 at far range)
+		var distanceFactor = 0;
+		if ( distance > MIN_DISTANCE ) {
+			if ( distance >= MAX_DISTANCE ) {
+				distanceFactor = 1.0; // Full offset at max distance
+			} else {
+				// Smooth interpolation between MIN_DISTANCE and MAX_DISTANCE
+				distanceFactor = ( distance - MIN_DISTANCE ) / ( MAX_DISTANCE - MIN_DISTANCE );
+			}
+		}
+		
+		// Apply offset only if we're at a distance where it's needed
+		var texOffset = MAX_TEX_OFFSET * distanceFactor;
+		
 		// Ensure coordinates stay within valid range [0, 1]
-		var u_min = Math.max( 0, texCoords[0] + TEX_OFFSET );
-		var v_min = Math.max( 0, texCoords[1] + TEX_OFFSET );
-		var u_max = Math.min( 1, texCoords[2] - TEX_OFFSET );
-		var v_max = Math.min( 1, texCoords[3] - TEX_OFFSET );
+		var u_min = Math.max( 0, texCoords[0] + texOffset );
+		var v_min = Math.max( 0, texCoords[1] + texOffset );
+		var u_max = Math.min( 1, texCoords[2] - texOffset );
+		var v_max = Math.min( 1, texCoords[3] - texOffset );
 		
 		return [ u_min, v_min, u_max, v_max ];
 	};
+	
+	// Calculate distance from camera to block center
+	// Ejes del mundo: X y Z = horizontal, Y = vertical (altura)
+	// camPos viene como [x, y, z] donde y es altura
+	var blockDistance = 0;
+	if ( world.renderer && world.renderer.camPos ) {
+		var camPos = world.renderer.camPos;
+		// Block center position: [x + 0.5, y + 0.5, z + 0.5]
+		var dx = ( x + 0.5 ) - camPos[0];
+		var dy = ( y + 0.5 ) - camPos[1]; // Y es altura
+		var dz = ( z + 0.5 ) - camPos[2];
+		// Calculate 3D distance
+		blockDistance = Math.sqrt( dx * dx + dy * dy + dz * dz );
+	}
 	
 	// Y es altura, Z es horizontal
 	var bH = block.fluid && ( y == world.sy - 1 || !blockTop.fluid ) ? 0.9 : 1.0;
@@ -523,7 +552,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	if ( yOffset != 0 || y == world.sy - 1 || !blockTop || blockTop == BLOCK.AIR || blockTop.transparent || block.fluid )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.UP );
-		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
+		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
 		// lightmap[x][z] almacena la altura Y del bloque más alto no transparente
 		var lightMultiplier = (lightmap[x] && lightmap[x][z] !== undefined && y >= lightmap[x][z]) ? 1.0 : 0.6;
@@ -565,7 +594,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	if ( yOffset != 0 || y == 0 || !blockBottom || blockBottom == BLOCK.AIR || blockBottom.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.DOWN );
-		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
+		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
 		
@@ -589,7 +618,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	if ( yOffset != 0 || z == 0 || !blockFront || blockFront == BLOCK.AIR || blockFront.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.FORWARD );
-		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
+		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
 		// Verificar iluminación del bloque adyacente
 		var adjLightY = (lightmap[x] && lightmap[x][z-1] !== undefined) ? lightmap[x][z-1] : -1;
@@ -616,7 +645,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	if ( yOffset != 0 || z == world.sz - 1 || !blockBack || blockBack == BLOCK.AIR || blockBack.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.BACK );
-		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
+		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
 		
@@ -640,7 +669,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	if ( yOffset != 0 || x == 0 || !blockLeft || blockLeft == BLOCK.AIR || blockLeft.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.LEFT );
-		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
+		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
 		
@@ -664,7 +693,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	if ( yOffset != 0 || x == world.sx - 1 || !blockRight || blockRight == BLOCK.AIR || blockRight.transparent )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.RIGHT );
-		c = adjustTexCoords( c ); // Ajustar coordenadas de textura para evitar bleeding
+		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
 		// Verificar iluminación del bloque adyacente
 		var adjLightY = (lightmap[x+1] && lightmap[x+1][z] !== undefined) ? lightmap[x+1][z] : -1;
