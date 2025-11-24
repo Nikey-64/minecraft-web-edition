@@ -354,7 +354,7 @@ BLOCK.LEAVES = {
 	solid: true,
 	flammable: true,
 	explosive: false,
-	texture: function( world, lightmap, lit, x, y, z, dir ) { unknown; }
+	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 4/16, 3/16, 5/16, 4/16 ]; }
 };
 
 // ANIMATED_BLOCKS posibilities (not allways animated) this is a list of wich blocks can be animated

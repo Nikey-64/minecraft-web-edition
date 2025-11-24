@@ -36,10 +36,69 @@
 			<div id="debugInfo"></div>
 		</div>
 
-		<!-- Material selection -->
-		<table id="materialSelector">
-			<tr></tr>
-		</table>
+		<!-- Hotbar -->
+		<div id="hotbar" class="hotbar">
+			<div class="hotbar-slot" data-slot="0"></div>
+			<div class="hotbar-slot" data-slot="1"></div>
+			<div class="hotbar-slot" data-slot="2"></div>
+			<div class="hotbar-slot" data-slot="3"></div>
+			<div class="hotbar-slot" data-slot="4"></div>
+			<div class="hotbar-slot" data-slot="5"></div>
+			<div class="hotbar-slot" data-slot="6"></div>
+			<div class="hotbar-slot" data-slot="7"></div>
+			<div class="hotbar-slot" data-slot="8"></div>
+		</div>
+
+		<!-- Inventory -->
+		<div id="inventory" class="inventory" style="display: none;">
+			<div id="inventoryOverlay" class="inventory-overlay"></div>
+			<div class="inventory-container">
+				<!-- Armor slots (top left) -->
+				<div class="inventory-armor">
+					<div class="inventory-slot armor-slot" data-type="helmet"></div>
+					<div class="inventory-slot armor-slot" data-type="chestplate"></div>
+					<div class="inventory-slot armor-slot" data-type="leggings"></div>
+					<div class="inventory-slot armor-slot" data-type="boots"></div>
+				</div>
+				
+				<!-- Player model area (left of armor) -->
+				<div class="inventory-player-model">
+					<canvas id="inventoryPlayerCanvas" class="inventory-player-canvas"></canvas>
+				</div>
+				
+				<!-- Crafting grid (top right) -->
+				<div class="inventory-crafting">
+					<div class="crafting-grid">
+						<div class="inventory-slot" data-craft="0"></div>
+						<div class="inventory-slot" data-craft="1"></div>
+						<div class="inventory-slot" data-craft="2"></div>
+						<div class="inventory-slot" data-craft="3"></div>
+					</div>
+					<div class="crafting-arrow"></div>
+					<div class="crafting-output">
+						<div class="inventory-slot" data-craft="output"></div>
+					</div>
+				</div>
+				
+				<!-- Main inventory grid (center) -->
+				<div class="inventory-grid">
+					<!-- 9 rows x 9 columns = 36 slots -->
+				</div>
+				
+				<!-- Inventory hotbar (bottom) -->
+				<div class="inventory-hotbar">
+					<div class="inventory-slot" data-inv-slot="0"></div>
+					<div class="inventory-slot" data-inv-slot="1"></div>
+					<div class="inventory-slot" data-inv-slot="2"></div>
+					<div class="inventory-slot" data-inv-slot="3"></div>
+					<div class="inventory-slot" data-inv-slot="4"></div>
+					<div class="inventory-slot" data-inv-slot="5"></div>
+					<div class="inventory-slot" data-inv-slot="6"></div>
+					<div class="inventory-slot" data-inv-slot="7"></div>
+					<div class="inventory-slot" data-inv-slot="8"></div>
+				</div>
+			</div>
+		</div>
 
 		<!-- Pause overlay -->
 		<div id="pauseOverlay" class="gui-overlay" style="display: none;"></div>
@@ -250,7 +309,7 @@
 				player.setWorld( world );
 				player.setPhysics( physics );
 				player.setInputCanvas( "renderSurface" );
-				player.setMaterialSelector( "materialSelector" );
+				player.initInventory();
 				
 				// Setup debug key handlers
 				setupDebugKeys();
@@ -284,9 +343,15 @@
 							// Resetear velocidad al cambiar de modo
 							this.velocity = new Vector( 0, 0, 0 );
 							this.falling = false;
+							// Forzar primera persona cuando se activa el modo espectador
+							if (this.spectatorMode) {
+								this.cameraMode = 1;
+							}
 							console.log('Modo espectador: ' + (this.spectatorMode ? 'ACTIVADO' : 'DESACTIVADO'));
 						}
 					}
+					
+					// F5 key code = 116 (Cambio de perspectiva) - manejado en player.js
 				};
 			}
 
@@ -346,7 +411,51 @@
 
 						// Draw world
 						measureTime('setCamera', function() {
-							render.setCamera( player.getEyePos().toArray(), player.angles );
+							var eyePos = player.getEyePos();
+							var cameraAngles = player.angles.slice(); // Copiar ángulos
+							
+							// Ajustar ángulos de la cámara según el modo de perspectiva
+							// En modo espectador, solo usar primera persona (no ajustar ángulos)
+							if ( !player.spectatorMode && player.cameraMode === 2 ) {
+								// Segunda persona: cámara detrás del jugador, mirando hacia donde mira el jugador
+								cameraAngles[0] = player.angles[0];
+								cameraAngles[1] = player.angles[1];
+							} else if ( !player.spectatorMode && player.cameraMode === 3 ) {
+								// Tercera persona: cámara delante del jugador, conectada rígidamente a la cabeza
+								// Si Steve baja la cabeza, la cámara también baja, pero la cámara mira hacia arriba
+								// Calcular dirección desde la cámara hacia el jugador
+								var playerEyePos = player.pos.add( new Vector( 0.0, 1.7, 0.0 ) );
+								var dx = playerEyePos.x - eyePos.x;
+								var dy = playerEyePos.y - eyePos.y;
+								var dz = playerEyePos.z - eyePos.z;
+								
+								// Calcular pitch (ángulo vertical) hacia el jugador
+								// Cuando el jugador mira hacia abajo (pitch negativo), la cámara debe mirar hacia arriba (pitch positivo)
+								// Por lo tanto, invertimos el pitch calculado
+								var horizontalDist = Math.sqrt(dx * dx + dz * dz);
+								if (horizontalDist > 0.001) {
+									cameraAngles[0] = Math.atan2(dy, horizontalDist); // Invertido: sin el negativo
+								} else {
+									cameraAngles[0] = 0; // Si está directamente arriba/abajo, no inclinar
+								}
+								
+								// Calcular yaw (ángulo horizontal) hacia el jugador
+								// En el sistema del juego, el movimiento usa: Math.cos(Math.PI/2 - yaw) para X y Math.sin(Math.PI/2 - yaw) para Z
+								// Esto significa que yaw = 0 apunta hacia el norte (dirección positiva de Z)
+								// Para calcular el yaw desde la cámara hacia el jugador:
+								// - Necesitamos el ángulo que hace el vector (dx, dz) con el eje Z positivo
+								// - Math.atan2(dx, dz) da el ángulo desde el eje Z hacia X
+								// - Si dx=0 y dz>0 (norte), Math.atan2(0, 1) = 0, y queremos yaw = 0 ✓
+								// - Si dx>0 y dz=0 (este), Math.atan2(1, 0) = PI/2, y queremos yaw = PI/2 ✓
+								// - Por lo tanto, yaw = Math.atan2(dx, dz) es correcto
+								if (horizontalDist > 0.001) {
+									cameraAngles[1] = Math.atan2(dx, dz);
+								} else {
+									cameraAngles[1] = player.angles[1]; // Mantener el yaw del jugador si está directamente arriba/abajo
+								}
+							}
+							
+							render.setCamera( eyePos.toArray(), cameraAngles );
 						});
 
 						measureTime('draw', function() {

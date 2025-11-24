@@ -228,9 +228,67 @@ Renderer.prototype.draw = function()
 
 	// Draw players
 	var players = this.world.players;
+	var localPlayer = this.world.localPlayer;
 	
 	gl.enable( gl.BLEND );
 	
+	// Renderizar jugador local si no está en primera persona
+	if ( localPlayer && localPlayer.cameraMode !== 1 ) {
+		// Renderizar modelo del jugador local en segunda y tercera persona
+		var player = localPlayer;
+		var pitch = player.angles[0];
+		if ( pitch < -0.32 ) pitch = -0.32;
+		if ( pitch > 0.32 ) pitch = 0.32;
+		
+		// Animación de caminar (simplificada)
+		var aniangle = 0;
+		if ( player.velocity && (Math.abs(player.velocity.x) > 0.1 || Math.abs(player.velocity.z) > 0.1) ) {
+			// Jugador se está moviendo, usar animación básica
+			aniangle = Math.sin( Date.now() / 200 ) * 0.3;
+		}
+		
+		// Ejes: X y Z = horizontal, Y = vertical (altura)
+		// El shader espera: X y Y = horizontal, Z = vertical (altura)
+		// Por lo tanto, intercambiamos Y y Z: [x, z, y] donde z es altura para el shader
+		mat4.identity( this.modelMatrix );
+		mat4.translate( this.modelMatrix, [ player.pos.x, player.pos.z, player.pos.y + 1.7 ] ); // [x, z, y] donde y es altura
+		mat4.rotateZ( this.modelMatrix, Math.PI - player.angles[1] );
+		mat4.rotateX( this.modelMatrix, -pitch );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		
+		gl.bindTexture( gl.TEXTURE_2D, this.texPlayer );
+		this.drawBuffer( this.playerHead );
+		
+		// Draw body
+		mat4.identity( this.modelMatrix );
+		mat4.translate( this.modelMatrix, [ player.pos.x, player.pos.z, player.pos.y + 0.01 ] ); // [x, z, y] donde y es altura
+		mat4.rotateZ( this.modelMatrix, Math.PI - player.angles[1] );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerBody );
+		
+		// Draw arms and legs
+		mat4.translate( this.modelMatrix, [ 0, 0, 1.4 ] );
+		mat4.rotateX( this.modelMatrix, 0.75 * aniangle );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerLeftArm );
+		
+		mat4.rotateX( this.modelMatrix, -1.5 * aniangle );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerRightArm );
+		mat4.rotateX( this.modelMatrix, 0.75 * aniangle );
+		
+		mat4.translate( this.modelMatrix, [ 0, 0, -0.67 ] );
+		
+		mat4.rotateX( this.modelMatrix, 0.5 * aniangle );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerRightLeg );
+		
+		mat4.rotateX( this.modelMatrix, -aniangle );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerLeftLeg );
+	}
+	
+	// Renderizar otros jugadores (multiplayer)
 	for ( var p in world.players )
 	{
 		var player = world.players[p];
@@ -937,6 +995,18 @@ Renderer.prototype.drawChunkGrid = function()
 	
 	if ( lines.length === 0 ) return;
 	
+	// Transformar coordenadas del mundo al sistema del shader
+	// Mundo: [x, y, z] donde y es altura
+	// Shader: [x, z, y] donde z es altura
+	var transformedLines = [];
+	for ( var i = 0; i < lines.length; i += 3 ) {
+		var x = lines[i];
+		var y = lines[i + 1]; // altura en mundo
+		var z = lines[i + 2]; // horizontal en mundo
+		// Transformar: [x, y, z] -> [x, z, y]
+		transformedLines.push( x, z, y );
+	}
+	
 	// Configurar para dibujar líneas
 	gl.disable( gl.DEPTH_TEST );
 	gl.lineWidth( 1.0 );
@@ -944,7 +1014,7 @@ Renderer.prototype.drawChunkGrid = function()
 	// Crear buffer temporal para las líneas
 	var lineBuffer = gl.createBuffer();
 	gl.bindBuffer( gl.ARRAY_BUFFER, lineBuffer );
-	gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( lines ), gl.STREAM_DRAW );
+	gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( transformedLines ), gl.STREAM_DRAW );
 	
 	// Configurar atributos - usar el mismo formato que los bloques (9 floats por vértice)
 	// Pero para líneas solo necesitamos posición (3 floats)
@@ -964,7 +1034,7 @@ Renderer.prototype.drawChunkGrid = function()
 	gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
 	
 	// Dibujar líneas
-	gl.drawArrays( gl.LINES, 0, lines.length / 3 );
+	gl.drawArrays( gl.LINES, 0, transformedLines.length / 3 );
 	
 	// Restaurar atributos
 	gl.enableVertexAttribArray( this.aColor );

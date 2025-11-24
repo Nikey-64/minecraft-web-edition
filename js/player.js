@@ -34,6 +34,13 @@ Player.prototype.setWorld = function( world )
 	this.buildMaterial = BLOCK.DIRT;
 	this.eventHandlers = {};
 	this.spectatorMode = false; // Modo espectador: volar libremente sin colisiones
+	this.cameraMode = 1; // Modo de cámara: 1 = primera persona, 2 = segunda persona, 3 = tercera persona
+	
+	// Inventory system
+	this.hotbar = new Array(9).fill(null); // 9 slots del hotbar
+	this.inventory = new Array(27).fill(null); // 27 slots del inventario (3 filas x 9 columnas)
+	this.selectedHotbarSlot = 0; // Slot seleccionado (0-8)
+	this.inventoryOpen = false;
 }
 
 // setClient( client )
@@ -97,21 +104,21 @@ Player.prototype.setInputCanvas = function( id )
 			canvas.onmousedown = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.DOWN, e.which == 3 ); return false; }
 			canvas.onmouseup = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.UP, e.which == 3 ); return false; }
 			canvas.onmousemove = function( e ) { t.onMouseEvent( e.clientX, e.clientY, MOUSE.MOVE, e.which == 3 ); return false; }
-			// Pause the game when mouse is uncaptured
-			if (typeof pauseGame === 'function') {
+			// Pause the game when mouse is uncaptured, but NOT if inventory is open
+			if (typeof pauseGame === 'function' && !t.inventoryOpen) {
 				pauseGame();
 			}
 		}
 	});
 
 	document.addEventListener('mousemove', function(e) {
-		if (t.pointerLocked) {
+		if (t.pointerLocked && !t.inventoryOpen) {
 			t.onMouseMove(e.movementX, e.movementY);
 		}
 	});
 
 	document.addEventListener('mousedown', function(e) {
-		if (t.pointerLocked) {
+		if (t.pointerLocked && !t.inventoryOpen) {
 			if (e.button === 0) { // Left click
 				t.doBlockActionAtCenter(true); // Destroy
 			} else if (e.button === 2) { // Right click
@@ -122,41 +129,715 @@ Player.prototype.setInputCanvas = function( id )
 	});
 }
 
-// setMaterialSelector( id )
+// initInventory()
 //
-// Sets the table with the material selectors.
+// Initializes the hotbar and inventory system.
 
-Player.prototype.setMaterialSelector = function( id )
+Player.prototype.initInventory = function()
 {
-	var tableRow = document.getElementById( id ).getElementsByTagName( "tr" )[0];
-	var texOffset = 0;
+	// Initialize hotbar slots
+	var hotbarEl = document.getElementById("hotbar");
+	var pl = this;
+	
+	// Set up hotbar slot click handlers
+	for (var i = 0; i < 9; i++) {
+		var slot = hotbarEl.children[i];
+		slot.onclick = function() {
+			var slotIndex = parseInt(this.getAttribute("data-slot"));
+			pl.selectHotbarSlot(slotIndex);
+		};
+	}
+	
+	// Initialize with DIRT in first slot
+	this.setHotbarSlot(0, BLOCK.DIRT);
+	this.selectHotbarSlot(0);
+	
+	// Populate inventory with all spawnable blocks
+	this.updateInventoryDisplay();
+	
+	// Initialize 3D player model in inventory
+	this.initInventoryPlayerModel();
+}
 
-	for ( var mat in BLOCK )
-	{
-		if ( typeof( BLOCK[mat] ) == "object" && BLOCK[mat].spawnable == true )
-		{
-			var selector = document.createElement( "td" );
-			selector.style.backgroundPosition = texOffset + "px 0px";
+// initInventoryPlayerModel()
+//
+// Initializes a mini 3D WebGL renderer for the player model in the inventory.
 
-			var pl = this;
-			selector.material = BLOCK[mat];
-			selector.onclick = function()
-			{
-				this.style.opacity = "1.0";
-
-				pl.prevSelector.style.opacity = null;
-				pl.prevSelector = this;
-
-				pl.buildMaterial = this.material;
+Player.prototype.initInventoryPlayerModel = function()
+{
+	var canvas = document.getElementById("inventoryPlayerCanvas");
+	if (!canvas) return;
+	
+	var pl = this;
+	
+	// Set canvas size (must match CSS size)
+	var rect = canvas.getBoundingClientRect();
+	canvas.width = 64;
+	canvas.height = 64;
+	canvas.style.width = "64px";
+	canvas.style.height = "64px";
+	
+	// Get WebGL context
+	var gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+	if (!gl) {
+		console.warn("WebGL not supported for inventory player model");
+		return;
+	}
+	
+	// Store gl context
+	this.inventoryPlayerGL = gl;
+	this.inventoryPlayerCanvas = canvas;
+	
+	// Initialize WebGL
+	this.initInventoryPlayerWebGL(gl);
+	
+	// Mouse tracking for head rotation
+	var modelYaw = 0;
+	var modelPitch = 0;
+	
+	// Store rotation state
+	this.inventoryModelYaw = modelYaw;
+	this.inventoryModelPitch = modelPitch;
+	
+	// Mouse move listener for player model rotation (follows mouse without dragging)
+	canvas.addEventListener("mousemove", function(e) {
+		if (!pl.inventoryOpen) return;
+		
+		var rect = canvas.getBoundingClientRect();
+		var mouseX = e.clientX - rect.left;
+		var mouseY = e.clientY - rect.top;
+		
+		// Normalize mouse coordinates to -1 to 1 range
+		var normalizedX = (mouseX / rect.width) * 2 - 1;
+		var normalizedY = (mouseY / rect.height) * 2 - 1;
+		
+		// Adjust sensitivity and limits
+		modelYaw = normalizedX * Math.PI * 0.2; // Max 36 degrees left/right
+		modelPitch = -normalizedY * Math.PI * 0.2; // Max 36 degrees up/down
+		
+		pl.inventoryModelYaw = modelYaw;
+		pl.inventoryModelPitch = modelPitch;
+		pl.renderInventoryPlayerModel(modelYaw, modelPitch);
+	});
+	
+	// Create render loop for continuous rendering when inventory is open
+	this.inventoryPlayerRenderer = {
+		renderLoopId: null,
+		startRenderLoop: function() {
+			if (this.renderLoopId) return;
+			var self = this;
+			function loop() {
+				if (pl.inventoryOpen && pl.inventoryModelYaw !== undefined && pl.inventoryModelPitch !== undefined) {
+					pl.renderInventoryPlayerModel(pl.inventoryModelYaw, pl.inventoryModelPitch);
+				}
+				self.renderLoopId = requestAnimationFrame(loop);
 			}
-
-			if ( mat == "DIRT" ) {
-				this.prevSelector = selector;
-				selector.style.opacity = "1.0";
+			loop();
+		},
+		stopRenderLoop: function() {
+			if (this.renderLoopId) {
+				cancelAnimationFrame(this.renderLoopId);
+				this.renderLoopId = null;
 			}
+		}
+	};
+	
+	// Initial render
+	this.renderInventoryPlayerModel(0, 0);
+}
 
-			tableRow.appendChild( selector );
-			texOffset -= 70;
+// initInventoryPlayerWebGL( gl )
+//
+// Initializes WebGL context for inventory player model rendering.
+
+Player.prototype.initInventoryPlayerWebGL = function(gl)
+{
+	// Vertex shader (same as main renderer)
+	var vertexShaderSource = `
+		attribute vec3 aPosition;
+		attribute vec2 aTexCoord;
+		attribute vec4 aColor;
+		uniform mat4 uModelMat;
+		uniform mat4 uViewMat;
+		uniform mat4 uProjMat;
+		varying vec2 vTexCoord;
+		varying vec4 vColor;
+		void main() {
+			gl_Position = uProjMat * uViewMat * uModelMat * vec4(aPosition, 1.0);
+			vTexCoord = aTexCoord;
+			vColor = aColor;
+		}
+	`;
+	
+	// Fragment shader (same as main renderer)
+	var fragmentShaderSource = `
+		precision mediump float;
+		uniform sampler2D uSampler;
+		varying vec2 vTexCoord;
+		varying vec4 vColor;
+		void main() {
+			gl_FragColor = texture2D(uSampler, vTexCoord) * vColor;
+		}
+	`;
+	
+	// Compile shaders
+	var vertexShader = this.compileShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+	var fragmentShader = this.compileShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+	
+	// Create program
+	var program = gl.createProgram();
+	gl.attachShader(program, vertexShader);
+	gl.attachShader(program, fragmentShader);
+	gl.linkProgram(program);
+	
+	if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+		console.error("Error linking program:", gl.getProgramInfoLog(program));
+		return;
+	}
+	
+	gl.useProgram(program);
+	
+	// Get attribute and uniform locations
+	var aPosition = gl.getAttribLocation(program, "aPosition");
+	var aTexCoord = gl.getAttribLocation(program, "aTexCoord");
+	var aColor = gl.getAttribLocation(program, "aColor");
+	var uModelMat = gl.getUniformLocation(program, "uModelMat");
+	var uViewMat = gl.getUniformLocation(program, "uViewMat");
+	var uProjMat = gl.getUniformLocation(program, "uProjMat");
+	var uSampler = gl.getUniformLocation(program, "uSampler");
+	
+	// Store program and locations
+	this.inventoryPlayerProgram = program;
+	this.inventoryPlayerAttribs = {
+		position: aPosition,
+		texCoord: aTexCoord,
+		color: aColor
+	};
+	this.inventoryPlayerUniforms = {
+		modelMat: uModelMat,
+		viewMat: uViewMat,
+		projMat: uProjMat,
+		sampler: uSampler
+	};
+	
+	// Enable attributes
+	gl.enableVertexAttribArray(aPosition);
+	gl.enableVertexAttribArray(aTexCoord);
+	gl.enableVertexAttribArray(aColor);
+	
+	// WebGL state
+	gl.enable(gl.DEPTH_TEST);
+	gl.enable(gl.CULL_FACE);
+	gl.enable(gl.BLEND);
+	gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+	gl.clearColor(0, 0, 0, 0); // Transparent background
+	
+	// Load player texture
+	var playerTexture = gl.createTexture();
+	var img = new Image();
+	var self = this;
+	img.onload = function() {
+		gl.bindTexture(gl.TEXTURE_2D, playerTexture);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+		self.inventoryPlayerTexture = playerTexture;
+		// Render after texture loads
+		self.renderInventoryPlayerModel(0, 0);
+	};
+	img.src = "media/player.png";
+	
+	// Load player models (head and body)
+	this.loadInventoryPlayerModels(gl);
+}
+
+// compileShader( gl, type, source )
+//
+// Compiles a WebGL shader.
+
+Player.prototype.compileShader = function(gl, type, source)
+{
+	var shader = gl.createShader(type);
+	gl.shaderSource(shader, source);
+	gl.compileShader(shader);
+	
+	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+		console.error("Error compiling shader:", gl.getShaderInfoLog(shader));
+		gl.deleteShader(shader);
+		return null;
+	}
+	
+	return shader;
+}
+
+// loadInventoryPlayerModels( gl )
+//
+// Loads player head and body models for inventory rendering.
+
+Player.prototype.loadInventoryPlayerModels = function(gl)
+{
+	// Player head vertices (scaled down for inventory)
+	var headVertices = [
+		// Top
+		-0.25, -0.25, 0.25, 8/64, 0, 1, 1, 1, 1,
+		0.25, -0.25, 0.25, 16/64, 0, 1, 1, 1, 1,
+		0.25, 0.25, 0.25, 16/64, 8/32, 1, 1, 1, 1,
+		0.25, 0.25, 0.25, 16/64, 8/32, 1, 1, 1, 1,
+		-0.25, 0.25, 0.25, 8/64, 8/32, 1, 1, 1, 1,
+		-0.25, -0.25, 0.25, 8/64, 0, 1, 1, 1, 1,
+		
+		// Bottom
+		-0.25, -0.25, -0.25, 16/64, 0, 1, 1, 1, 1,
+		-0.25, 0.25, -0.25, 16/64, 8/32, 1, 1, 1, 1,
+		0.25, 0.25, -0.25, 24/64, 8/32, 1, 1, 1, 1,
+		0.25, 0.25, -0.25, 24/64, 8/32, 1, 1, 1, 1,
+		0.25, -0.25, -0.25, 24/64, 0, 1, 1, 1, 1,
+		-0.25, -0.25, -0.25, 16/64, 0, 1, 1, 1, 1,
+		
+		// Front
+		-0.25, -0.25, 0.25, 8/64, 8/32, 1, 1, 1, 1,
+		-0.25, -0.25, -0.25, 8/64, 16/32, 1, 1, 1, 1,
+		0.25, -0.25, -0.25, 16/64, 16/32, 1, 1, 1, 1,
+		0.25, -0.25, -0.25, 16/64, 16/32, 1, 1, 1, 1,
+		0.25, -0.25, 0.25, 16/64, 8/32, 1, 1, 1, 1,
+		-0.25, -0.25, 0.25, 8/64, 8/32, 1, 1, 1, 1,
+		
+		// Rear
+		-0.25, 0.25, 0.25, 24/64, 8/32, 1, 1, 1, 1,
+		0.25, 0.25, 0.25, 32/64, 8/32, 1, 1, 1, 1,
+		0.25, 0.25, -0.25, 32/64, 16/32, 1, 1, 1, 1,
+		0.25, 0.25, -0.25, 32/64, 16/32, 1, 1, 1, 1,
+		-0.25, 0.25, -0.25, 24/64, 16/32, 1, 1, 1, 1,
+		-0.25, 0.25, 0.25, 24/64, 8/32, 1, 1, 1, 1,
+		
+		// Right
+		-0.25, -0.25, 0.25, 16/64, 8/32, 1, 1, 1, 1,
+		-0.25, 0.25, 0.25, 24/64, 8/32, 1, 1, 1, 1,
+		-0.25, 0.25, -0.25, 24/64, 16/32, 1, 1, 1, 1,
+		-0.25, 0.25, -0.25, 24/64, 16/32, 1, 1, 1, 1,
+		-0.25, -0.25, -0.25, 16/64, 16/32, 1, 1, 1, 1,
+		-0.25, -0.25, 0.25, 16/64, 8/32, 1, 1, 1, 1,
+		
+		// Left
+		0.25, -0.25, 0.25, 0, 8/32, 1, 1, 1, 1,
+		0.25, -0.25, -0.25, 0, 16/32, 1, 1, 1, 1,
+		0.25, 0.25, -0.25, 8/64, 16/32, 1, 1, 1, 1,
+		0.25, 0.25, -0.25, 8/64, 16/32, 1, 1, 1, 1,
+		0.25, 0.25, 0.25, 8/64, 8/32, 1, 1, 1, 1,
+		0.25, -0.25, 0.25, 0, 8/32, 1, 1, 1, 1
+	];
+	
+	// Player body vertices (scaled down)
+	var bodyVertices = [
+		// Top
+		-0.30, -0.125, 1.45, 20/64, 16/32, 1, 1, 1, 1,
+		0.30, -0.125, 1.45, 28/64, 16/32, 1, 1, 1, 1,
+		0.30, 0.125, 1.45, 28/64, 20/32, 1, 1, 1, 1,
+		0.30, 0.125, 1.45, 28/64, 20/32, 1, 1, 1, 1,
+		-0.30, 0.125, 1.45, 20/64, 20/32, 1, 1, 1, 1,
+		-0.30, -0.125, 1.45, 20/64, 16/32, 1, 1, 1, 1,
+		
+		// Bottom
+		-0.30, -0.125, 0.73, 28/64, 16/32, 1, 1, 1, 1,
+		-0.30, 0.125, 0.73, 28/64, 20/32, 1, 1, 1, 1,
+		0.30, 0.125, 0.73, 36/64, 20/32, 1, 1, 1, 1,
+		0.30, 0.125, 0.73, 36/64, 20/32, 1, 1, 1, 1,
+		0.30, -0.125, 0.73, 36/64, 16/32, 1, 1, 1, 1,
+		-0.30, -0.125, 0.73, 28/64, 16/32, 1, 1, 1, 1,
+		
+		// Front
+		-0.30, -0.125, 1.45, 20/64, 20/32, 1, 1, 1, 1,
+		-0.30, -0.125, 0.73, 20/64, 32/32, 1, 1, 1, 1,
+		0.30, -0.125, 0.73, 28/64, 32/32, 1, 1, 1, 1,
+		0.30, -0.125, 0.73, 28/64, 32/32, 1, 1, 1, 1,
+		0.30, -0.125, 1.45, 28/64, 20/32, 1, 1, 1, 1,
+		-0.30, -0.125, 1.45, 20/64, 20/32, 1, 1, 1, 1,
+		
+		// Rear
+		-0.30, 0.125, 1.45, 40/64, 20/32, 1, 1, 1, 1,
+		0.30, 0.125, 1.45, 32/64, 20/32, 1, 1, 1, 1,
+		0.30, 0.125, 0.73, 32/64, 32/32, 1, 1, 1, 1,
+		0.30, 0.125, 0.73, 32/64, 32/32, 1, 1, 1, 1,
+		-0.30, 0.125, 0.73, 40/64, 32/32, 1, 1, 1, 1,
+		-0.30, 0.125, 1.45, 40/64, 20/32, 1, 1, 1, 1,
+		
+		// Right
+		-0.30, -0.125, 1.45, 16/64, 20/32, 1, 1, 1, 1,
+		-0.30, 0.125, 1.45, 20/64, 20/32, 1, 1, 1, 1,
+		-0.30, 0.125, 0.73, 20/64, 32/32, 1, 1, 1, 1,
+		-0.30, 0.125, 0.73, 20/64, 32/32, 1, 1, 1, 1,
+		-0.30, -0.125, 0.73, 16/64, 32/32, 1, 1, 1, 1,
+		-0.30, -0.125, 1.45, 16/64, 20/32, 1, 1, 1, 1,
+		
+		// Left
+		0.30, -0.125, 1.45, 28/64, 20/32, 1, 1, 1, 1,
+		0.30, -0.125, 0.73, 28/64, 32/32, 1, 1, 1, 1,
+		0.30, 0.125, 0.73, 32/64, 32/32, 1, 1, 1, 1,
+		0.30, 0.125, 0.73, 32/64, 32/32, 1, 1, 1, 1,
+		0.30, 0.125, 1.45, 32/64, 20/32, 1, 1, 1, 1,
+		0.30, -0.125, 1.45, 28/64, 20/32, 1, 1, 1, 1
+	];
+	
+	// Create buffers
+	var headBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, headBuffer);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(headVertices), gl.STATIC_DRAW);
+	headBuffer.vertices = headVertices.length / 9;
+	this.inventoryPlayerHead = headBuffer;
+	
+	var bodyBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, bodyBuffer);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(bodyVertices), gl.STATIC_DRAW);
+	bodyBuffer.vertices = bodyVertices.length / 9;
+	this.inventoryPlayerBody = bodyBuffer;
+}
+
+// renderInventoryPlayerModel( yaw, pitch )
+//
+// Renders the player model in the inventory with head following mouse.
+
+Player.prototype.renderInventoryPlayerModel = function(yaw, pitch)
+{
+	var gl = this.inventoryPlayerGL;
+	var canvas = this.inventoryPlayerCanvas;
+	if (!gl || !canvas || !this.inventoryPlayerHead || !this.inventoryPlayerBody) return;
+	
+	// Set viewport
+	gl.viewport(0, 0, canvas.width, canvas.height);
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+	
+	// Use the shader program
+	gl.useProgram(this.inventoryPlayerProgram);
+	
+	// Setup matrices
+	var modelMatrix = mat4.create();
+	var viewMatrix = mat4.create();
+	var projMatrix = mat4.create();
+	
+	// Projection: perspective looking at player from front
+	mat4.perspective(projMatrix, Math.PI / 4, canvas.width / canvas.height, 0.1, 10.0);
+	
+	// View: camera looking at player from front, slightly above
+	// El shader espera: X y Y = horizontal, Z = vertical (altura)
+	// Camera position: [x, y, z] donde z es altura
+	// Look at: [x, y, z] donde z es altura
+	mat4.lookAt(viewMatrix, [0, 3, 1.5], [0, 0, 1.0], [0, 0, 1]);
+	
+	// Bind texture
+	if (this.inventoryPlayerTexture) {
+		gl.activeTexture(gl.TEXTURE0);
+		gl.bindTexture(gl.TEXTURE_2D, this.inventoryPlayerTexture);
+		gl.uniform1i(this.inventoryPlayerUniforms.sampler, 0);
+	}
+	
+	// Set uniforms
+	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.viewMat, false, viewMatrix);
+	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.projMat, false, projMatrix);
+	
+	// Draw body (no rotation, but rotate entire model to face camera)
+	// Ejes del modelo: X y Z = horizontal, Y = vertical (altura)
+	// El shader espera: X y Y = horizontal, Z = vertical (altura)
+	// Por lo tanto, intercambiamos Y y Z: [x, z, y] donde z es altura para el shader
+	mat4.identity(modelMatrix);
+	mat4.translate(modelMatrix, [0, 0, 0.01]); // [x, z, y] donde z es altura
+	mat4.rotateZ(modelMatrix, Math.PI); // Rotate 180 degrees to face camera
+	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.modelMat, false, modelMatrix);
+	this.drawInventoryBuffer(this.inventoryPlayerBody);
+	
+	// Draw head (follows mouse)
+	mat4.identity(modelMatrix);
+	mat4.translate(modelMatrix, [0, 0, 1.7]); // [x, z, y] donde z es altura
+	mat4.rotateZ(modelMatrix, Math.PI - yaw); // Rotate around Z (horizontal rotation)
+	mat4.rotateX(modelMatrix, -pitch); // Rotate around X (vertical rotation)
+	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.modelMat, false, modelMatrix);
+	this.drawInventoryBuffer(this.inventoryPlayerHead);
+}
+
+// drawInventoryBuffer( buffer )
+//
+// Draws a vertex buffer in the inventory player model renderer.
+
+Player.prototype.drawInventoryBuffer = function(buffer)
+{
+	var gl = this.inventoryPlayerGL;
+	if (!gl || !buffer) return;
+	
+	gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+	
+	var stride = 9 * 4; // 9 floats per vertex (x, y, z, u, v, r, g, b, a)
+	
+	gl.vertexAttribPointer(this.inventoryPlayerAttribs.position, 3, gl.FLOAT, false, stride, 0);
+	gl.vertexAttribPointer(this.inventoryPlayerAttribs.texCoord, 2, gl.FLOAT, false, stride, 3 * 4);
+	gl.vertexAttribPointer(this.inventoryPlayerAttribs.color, 4, gl.FLOAT, false, stride, 5 * 4);
+	
+	gl.drawArrays(gl.TRIANGLES, 0, buffer.vertices);
+}
+
+
+// selectHotbarSlot( index )
+//
+// Selects a hotbar slot (0-8).
+
+Player.prototype.selectHotbarSlot = function(index)
+{
+	if (index < 0 || index >= 9) return;
+	
+	this.selectedHotbarSlot = index;
+	
+	// Update visual selection
+	var hotbarEl = document.getElementById("hotbar");
+	for (var i = 0; i < 9; i++) {
+		var slot = hotbarEl.children[i];
+		if (i === index) {
+			slot.classList.add("selected");
+		} else {
+			slot.classList.remove("selected");
+		}
+	}
+	
+	// Update buildMaterial
+	var block = this.hotbar[index];
+	if (block) {
+		this.buildMaterial = block;
+	} else {
+		this.buildMaterial = BLOCK.AIR;
+	}
+}
+
+// setHotbarSlot( index, block )
+//
+// Sets a block in a hotbar slot.
+
+Player.prototype.setHotbarSlot = function(index, block)
+{
+	if (index < 0 || index >= 9) return;
+	
+	this.hotbar[index] = block;
+	this.updateHotbarDisplay();
+}
+
+// updateHotbarDisplay()
+//
+// Updates the visual display of the hotbar.
+
+Player.prototype.updateHotbarDisplay = function()
+{
+	var hotbarEl = document.getElementById("hotbar");
+	
+	for (var i = 0; i < 9; i++) {
+		var slot = hotbarEl.children[i];
+		var block = this.hotbar[i];
+		
+		// Clear existing thumbnail
+		var existingThumb = slot.querySelector(".block-thumbnail");
+		if (existingThumb) {
+			existingThumb.remove();
+		}
+		
+		// Add thumbnail if block exists
+		if (block && block !== BLOCK.AIR) {
+			var thumb = this.renderBlockThumbnail(block, 32);
+			thumb.className = "block-thumbnail";
+			slot.appendChild(thumb);
+		}
+	}
+	
+	// Update selection
+	this.selectHotbarSlot(this.selectedHotbarSlot);
+}
+
+// updateInventoryDisplay()
+//
+// Populates the inventory grid with all spawnable blocks.
+
+Player.prototype.updateInventoryDisplay = function()
+{
+	var inventoryGrid = document.querySelector(".inventory-grid");
+	if (!inventoryGrid) return;
+	
+	var pl = this;
+	
+	// Clear existing slots
+	inventoryGrid.innerHTML = "";
+	
+	// Get all spawnable blocks
+	var spawnableBlocks = [];
+	for (var mat in BLOCK) {
+		if (typeof(BLOCK[mat]) == "object" && BLOCK[mat].spawnable == true) {
+			spawnableBlocks.push(BLOCK[mat]);
+		}
+	}
+	
+	// Create slots for each block
+	for (var i = 0; i < spawnableBlocks.length && i < 27; i++) {
+		var slot = document.createElement("div");
+		slot.className = "inventory-slot";
+		slot.blockData = spawnableBlocks[i];
+		
+		// Render thumbnail
+		var thumb = this.renderBlockThumbnail(spawnableBlocks[i], 16);
+		thumb.className = "block-thumbnail";
+		slot.appendChild(thumb);
+		
+		// Set up click handler
+		slot.onclick = function() {
+			var block = this.blockData;
+			if (block) {
+				// Add to first empty hotbar slot
+				var emptySlot = pl.hotbar.indexOf(null);
+				if (emptySlot !== -1) {
+					pl.setHotbarSlot(emptySlot, block);
+					pl.selectHotbarSlot(emptySlot);
+				} else {
+					// Replace current selected slot
+					pl.setHotbarSlot(pl.selectedHotbarSlot, block);
+				}
+			}
+		};
+		
+		inventoryGrid.appendChild(slot);
+	}
+	
+	// Fill remaining slots with empty slots
+	for (var i = spawnableBlocks.length; i < 27; i++) {
+		var slot = document.createElement("div");
+		slot.className = "inventory-slot";
+		inventoryGrid.appendChild(slot);
+	}
+	
+	// Update inventory hotbar to match main hotbar
+	this.updateInventoryHotbarDisplay();
+}
+
+// updateInventoryHotbarDisplay()
+//
+// Updates the inventory hotbar to match the main hotbar.
+
+Player.prototype.updateInventoryHotbarDisplay = function()
+{
+	var inventoryHotbar = document.querySelector(".inventory-hotbar");
+	if (!inventoryHotbar) return;
+	
+	var pl = this;
+	var slots = inventoryHotbar.querySelectorAll(".inventory-slot");
+	for (var i = 0; i < 9; i++) {
+		var slot = slots[i];
+		var block = this.hotbar[i];
+		
+		// Clear existing thumbnail
+		var existingThumb = slot.querySelector(".block-thumbnail");
+		if (existingThumb) {
+			existingThumb.remove();
+		}
+		
+		// Add thumbnail if block exists
+		if (block && block !== BLOCK.AIR) {
+			var thumb = this.renderBlockThumbnail(block, 16);
+			thumb.className = "block-thumbnail";
+			slot.appendChild(thumb);
+		}
+		
+		slot.blockData = block;
+		
+		// Set up click handler
+		slot.onclick = function() {
+			var slotIndex = parseInt(this.getAttribute("data-inv-slot"));
+			var block = this.blockData;
+			if (block) {
+				pl.setHotbarSlot(slotIndex, block);
+				pl.selectHotbarSlot(slotIndex);
+			}
+		};
+	}
+}
+
+// renderBlockThumbnail( block, size )
+//
+// Renders a block thumbnail using canvas and terrain.png.
+
+Player.prototype.renderBlockThumbnail = function(block, size)
+{
+	var canvas = document.createElement("canvas");
+	canvas.width = size;
+	canvas.height = size;
+	var ctx = canvas.getContext("2d");
+	
+	// Load terrain.png
+	var img = new Image();
+	img.onload = function() {
+		// Get block texture coordinates (use top face for thumbnail)
+		var texCoords = block.texture(null, null, true, 0, 0, 0, DIRECTION.UP);
+		
+		// Convert normalized coordinates to pixel coordinates
+		var texWidth = img.width;
+		var texHeight = img.height;
+		var u_min = texCoords[0] * texWidth;
+		var v_min = texCoords[1] * texHeight;
+		var u_max = texCoords[2] * texWidth;
+		var v_max = texCoords[3] * texHeight;
+		var texSize = u_max - u_min;
+		
+		// Draw texture to canvas
+		ctx.imageSmoothingEnabled = false;
+		ctx.drawImage(
+			img,
+			u_min, v_min, texSize, texSize,
+			0, 0, size, size
+		);
+	};
+	img.src = "media/terrain.png";
+	
+	return canvas;
+}
+
+// toggleInventory()
+//
+// Opens or closes the inventory. Game does not pause when inventory is open.
+// Inventory releases pointer lock to allow mouse interaction, but game continues running.
+
+Player.prototype.toggleInventory = function()
+{
+	var inventory = document.getElementById("inventory");
+	if (!inventory) return;
+	
+	this.inventoryOpen = !this.inventoryOpen;
+	
+	if (this.inventoryOpen) {
+		inventory.style.display = "flex";
+		// Update inventory display
+		this.updateInventoryHotbarDisplay();
+		// Start rendering the miniature player model
+		if (this.inventoryPlayerRenderer) {
+			this.inventoryPlayerRenderer.startRenderLoop();
+		}
+		// Render immediately when opening inventory
+		if (this.inventoryModelYaw !== undefined && this.inventoryModelPitch !== undefined) {
+			this.renderInventoryPlayerModel(this.inventoryModelYaw, this.inventoryModelPitch);
+		} else {
+			this.renderInventoryPlayerModel(0, 0);
+		}
+		// Release pointer lock to allow mouse interaction with inventory
+		// The pointerlockchange listener will check inventoryOpen and won't pause the game
+		if (this.pointerLocked) {
+			document.exitPointerLock();
+		}
+		// Disable pointer events on canvas so clicks go to inventory
+		if (this.canvas) {
+			this.canvas.style.pointerEvents = "none";
+		}
+	} else {
+		inventory.style.display = "none";
+		// Stop rendering the miniature player model
+		if (this.inventoryPlayerRenderer) {
+			this.inventoryPlayerRenderer.stopRenderLoop();
+		}
+		// Re-enable pointer events on canvas
+		if (this.canvas) {
+			this.canvas.style.pointerEvents = "auto";
+		}
+		// Request pointer lock when closing inventory (to resume game control)
+		if (this.canvas && !this.pointerLocked) {
+			this.canvas.requestPointerLock();
 		}
 	}
 }
@@ -181,8 +862,39 @@ Player.prototype.onKeyEvent = function( keyCode, down )
 	this.keys[keyCode] = down;
 
 	if ( !down && key == "t" && this.eventHandlers["openChat"] ) this.eventHandlers.openChat();
+	
+	// Inventory toggle (E key)
+	if ( !down && (keyCode == 69 || key == "e") ) {
+		this.toggleInventory();
+	}
+	
+	// Camera perspective toggle (F5 key - keyCode 116)
+	// Desactivado en modo espectador (solo primera persona)
+	if ( !down && keyCode == 116 ) {
+		if (this.spectatorMode) {
+			// En modo espectador, solo permitir primera persona
+			this.cameraMode = 1;
+			console.log('Modo de cámara: Primera persona (modo espectador activo)');
+		} else {
+			this.cameraMode = (this.cameraMode % 3) + 1; // Cicla entre 1, 2, 3
+			console.log('Modo de cámara: ' + (this.cameraMode === 1 ? 'Primera persona' : this.cameraMode === 2 ? 'Segunda persona' : 'Tercera persona'));
+		}
+	}
+	
+	// Hotbar selection (1-9 keys)
+	if ( !down ) {
+		if ( keyCode >= 49 && keyCode <= 57 ) { // Keys 1-9
+			var slotIndex = keyCode - 49; // 0-8
+			if (!this.inventoryOpen) {
+				this.selectHotbarSlot(slotIndex);
+			}
+		}
+	}
+	
 	if ( !down && keyCode == 27 ) { // ESC key
-		if (this.pointerLocked) {
+		if (this.inventoryOpen) {
+			this.toggleInventory();
+		} else if (this.pointerLocked) {
 			document.exitPointerLock();
 		} else if (typeof pauseGame === 'function') {
 			pauseGame();
@@ -445,12 +1157,76 @@ Player.prototype.doBlockActionAtCenter = function( destroy )
 
 Player.prototype.getEyePos = function()
 {
-	// En modo espectador, los ojos están en la posición del jugador (sin offset)
+	// En modo espectador, siempre usar primera persona (sin offset de altura)
 	if ( this.spectatorMode ) {
 		return this.pos;
 	}
+	
 	// Ejes: X y Z = horizontal, Y = vertical (altura)
-	return this.pos.add( new Vector( 0.0, 1.7, 0.0 ) );
+	var eyePos = this.pos.add( new Vector( 0.0, 1.7, 0.0 ) );
+	
+	// Ajustar posición de la cámara según el modo de perspectiva
+	// En modo espectador, solo primera persona está permitida
+	if ( this.cameraMode === 1 ) {
+		// Primera persona: cámara en los ojos del jugador
+		return eyePos;
+	} else if ( this.cameraMode === 2 ) {
+		// Segunda persona: cámara detrás del jugador, conectada rígidamente a la cabeza
+		// Como si hubiera un fierro invisible entre la cabeza y la cámara
+		// Si la cabeza baja, la cámara sube (y viceversa)
+		var yaw = this.angles[1];
+		var pitch = this.angles[0];
+		var distance = 2.0; // Distancia fija desde la cabeza
+		
+		// Calcular posición horizontal basada en yaw
+		// La cámara está detrás del jugador (opuesta a donde mira)
+		// yawOffset = PI para estar detrás del jugador
+		var yawOffset = Math.PI;
+		var adjustedYaw = yaw + yawOffset;
+		
+		// Calcular posición horizontal (X, Z)
+		// Ejes: X y Z = horizontal, Y = vertical (altura)
+		// El sistema usa: Math.cos(Math.PI/2 - yaw) para X y Math.sin(Math.PI/2 - yaw) para Z
+		var cosPitch = Math.cos( pitch );
+		var offsetX = Math.cos( Math.PI / 2 - adjustedYaw ) * distance * cosPitch;
+		var offsetZ = Math.sin( Math.PI / 2 - adjustedYaw ) * distance * cosPitch;
+		
+		// Calcular posición vertical: si la cabeza baja (pitch negativo), la cámara sube (offsetY positivo)
+		// El pitch se invierte para que la cámara esté en el extremo opuesto
+		var offsetY = -Math.sin( pitch ) * distance;
+		
+		// La cabeza está en pos.y + 1.7, la cámara está a offsetY de esa altura
+		return this.pos.add( new Vector( offsetX, 1.7 + offsetY, offsetZ ) );
+	} else if ( this.cameraMode === 3 ) {
+		// Tercera persona: cámara delante del jugador, conectada rígidamente a la cabeza
+		// Como si hubiera un fierro invisible entre la cabeza y la cámara (de frente a Steve)
+		// Si la cabeza baja, la cámara también baja (pero la cámara mira hacia arriba)
+		var yaw = this.angles[1];
+		var pitch = this.angles[0];
+		var distance = 2.5; // 1/4 más lejos que segunda persona (2.0 * 1.25 = 2.5)
+		
+		// Calcular posición horizontal basada en yaw
+		// La cámara está delante del jugador (en la dirección donde mira)
+		// yawOffset = 0 para estar delante del jugador
+		var yawOffset = 0;
+		var adjustedYaw = yaw + yawOffset;
+		
+		// Calcular posición horizontal (X, Z)
+		// Ejes: X y Z = horizontal, Y = vertical (altura)
+		// El sistema usa: Math.cos(Math.PI/2 - yaw) para X y Math.sin(Math.PI/2 - yaw) para Z
+		var cosPitch = Math.cos( pitch );
+		var offsetX = Math.cos( Math.PI / 2 - adjustedYaw ) * distance * cosPitch;
+		var offsetZ = Math.sin( Math.PI / 2 - adjustedYaw ) * distance * cosPitch;
+		
+		// Calcular posición vertical: si la cabeza baja (pitch negativo), la cámara también baja (offsetY negativo)
+		// NO se invierte el pitch, la cámara sigue el movimiento de la cabeza
+		var offsetY = Math.sin( pitch ) * distance;
+		
+		// La cabeza está en pos.y + 1.7, la cámara está a offsetY de esa altura
+		return this.pos.add( new Vector( offsetX, 1.7 + offsetY, offsetZ ) );
+	}
+	
+	return eyePos;
 }
 
 // update()
@@ -491,22 +1267,23 @@ Player.prototype.update = function()
 			var flySpeed = 12;
 			
 			// Movimiento horizontal (WASD)
+			// Ejes: X y Z = horizontal, Y = vertical (altura)
 			var walkVelocity = new Vector( 0, 0, 0 );
 			if ( this.keys["w"] ) {
 				walkVelocity.x += Math.cos( Math.PI / 2 - this.angles[1] );
-				walkVelocity.y += Math.sin( Math.PI / 2 - this.angles[1] );
+				walkVelocity.z += Math.sin( Math.PI / 2 - this.angles[1] ); // Z es horizontal
 			}
 			if ( this.keys["s"] ) {
 				walkVelocity.x += Math.cos( Math.PI + Math.PI / 2 - this.angles[1] );
-				walkVelocity.y += Math.sin( Math.PI + Math.PI / 2 - this.angles[1] );
+				walkVelocity.z += Math.sin( Math.PI + Math.PI / 2 - this.angles[1] ); // Z es horizontal
 			}
 			if ( this.keys["a"] ) {
 				walkVelocity.x += Math.cos( Math.PI / 2 + Math.PI / 2 - this.angles[1] );
-				walkVelocity.y += Math.sin( Math.PI / 2 + Math.PI / 2 - this.angles[1] );
+				walkVelocity.z += Math.sin( Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
 			}
 			if ( this.keys["d"] ) {
 				walkVelocity.x += Math.cos( -Math.PI / 2 + Math.PI / 2 - this.angles[1] );
-				walkVelocity.y += Math.sin( -Math.PI / 2 + Math.PI / 2 - this.angles[1] );
+				walkVelocity.z += Math.sin( -Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
 			}
 			
 			// Movimiento vertical (Espacio para subir, Shift para bajar)
