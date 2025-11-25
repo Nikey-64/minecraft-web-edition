@@ -4,6 +4,11 @@
 	src: url('./minecraftia.ttf') format('truetype');
 }
 
+/* GUI Scale variable - can be changed via JavaScript */
+:root {
+	--gui-scale: 1;
+}
+
 /* General page style */
 
 body {
@@ -95,7 +100,8 @@ body {
 	position: fixed;
 	bottom: 0;
 	left: 50%;
-	transform: translateX(-50%);
+	transform: translateX(-50%) scale(var(--gui-scale));
+	transform-origin: center bottom;
 	display: flex;
 	gap: 0;
 	z-index: 10;
@@ -156,8 +162,13 @@ body {
 	padding-top: 0;
 }
 
+/* Hide health and armor icons when inventory is open */
+/* These icons are rendered on the canvas using icons.png, so we need to handle them in the render code */
+/* The class 'inventory-open' is added to body when inventory is open to help identify this state */
+
 .inventory-overlay {
 	position: fixed;
+	image-rendering: pixelated;
 	top: 0;
 	left: 0;
 	width: 100%;
@@ -170,6 +181,8 @@ body {
 	position: relative;
 	width: 176px;
 	height: 166px;
+	transform: scale(var(--gui-scale));
+	transform-origin: center center;
 	background: url( '../media/gui/inventory.png' );
 	background-size: 176px 166px;
 	background-position: 0 0;
@@ -208,19 +221,22 @@ body {
 	left: 80px;
 	width: 64px;
 	height: 64px;
+	z-index: 10;
 	/* Player model area - visual only */
 }
 
 .inventory-player-canvas {
-	width: 100%;
-	height: 100%;
+	width: 64px;
+	height: 64px;
 	image-rendering: pixelated;
 	cursor: move;
 	position: absolute;
 	top: 0;
 	left: 0;
-	z-index: 1;
+	z-index: 10;
 	pointer-events: auto;
+	background: transparent;
+	display: block;
 }
 
 .inventory-crafting {
@@ -237,16 +253,6 @@ body {
 	grid-template-columns: repeat(2, 18px);
 	grid-template-rows: repeat(2, 18px);
 	gap: 0;
-}
-
-.crafting-arrow {
-	width: 22px;
-	height: 15px;
-	background: url( '../media/gui/icons.png' );
-	background-size: 256px 256px;
-	background-position: -22px -1px;
-	image-rendering: pixelated;
-	margin: 0 2px;
 }
 
 .crafting-output {

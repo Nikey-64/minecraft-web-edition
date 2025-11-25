@@ -155,6 +155,33 @@ function Renderer( id )
 	};
 	grassColorTexture.image.src = "media/misc/grasscolor.png";
 	
+	// Load foliage color texture for biome coloring (used by leaves)
+	var foliageColorTexture = this.texFoliageColor = gl.createTexture();
+	foliageColorTexture.image = new Image();
+	foliageColorTexture.image.onload = function()
+	{
+		gl.bindTexture( gl.TEXTURE_2D, foliageColorTexture );
+		gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, foliageColorTexture.image );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT );
+		
+		// Create canvas to read pixel data from foliage color texture
+		var canvas = document.createElement( "canvas" );
+		canvas.width = foliageColorTexture.image.width;
+		canvas.height = foliageColorTexture.image.height;
+		var ctx = canvas.getContext( "2d" );
+		ctx.drawImage( foliageColorTexture.image, 0, 0 );
+		foliageColorTexture.imageData = ctx.getImageData( 0, 0, canvas.width, canvas.height );
+	};
+	foliageColorTexture.image.onerror = function()
+	{
+		console.warn( "Failed to load foliagecolor.png, leaves blocks will appear white" );
+		foliageColorTexture.imageData = null;
+	};
+	foliageColorTexture.image.src = "media/misc/foliagecolor.png";
+	
 	// Create canvas used to draw name tags
 	var textCanvas = this.textCanvas = document.createElement( "canvas" );
 	textCanvas.width = 256;
@@ -1346,10 +1373,11 @@ Renderer.prototype.getGrassColor = function( x, y )
 	var width = imageData.width;
 	var height = imageData.height;
 	
-	// Use a single fixed pixel for all blocks to ensure uniform coloring
-	// Using the center pixel of the texture (or top-left if preferred)
-	var texX = Math.floor( width / 2 ); // Center X
-	var texY = Math.floor( height / 2 ); // Center Y
+	// Use a uniform grass color for the entire world to avoid abrupt color changes
+	// Read a single representative pixel from the center of the texture
+	// This ensures all grass blocks have similar color throughout the world
+	var texX = Math.floor( width / 2 );
+	var texY = Math.floor( height / 2 );
 	
 	// Ensure coordinates are within valid range
 	if ( texX >= width ) texX = width - 1;
@@ -1360,23 +1388,97 @@ Renderer.prototype.getGrassColor = function( x, y )
 	var index = ( texY * width + texX ) * 4;
 	
 	// Get RGB values and normalize to 0-1 range
+	// ImageData format is RGBA: [R, G, B, A, R, G, B, A, ...]
+	// index = Red channel
+	// index + 1 = Green channel (this is what we want to read for grass)
+	// index + 2 = Blue channel
+	// index + 3 = Alpha channel
 	var r = imageData.data[index] / 255.0;
-	var g = imageData.data[index + 1] / 255.0;
+	var g = imageData.data[index + 1] / 255.0; // Green channel - this tints the grass
 	var b = imageData.data[index + 2] / 255.0;
+	
+	// Ensure values are in valid range
+	r = Math.max(0.0, Math.min(1.0, r));
+	g = Math.max(0.0, Math.min(1.0, g));
+	b = Math.max(0.0, Math.min(1.0, b));
+	
+	// Ignore white pixels - replace with default grass green color
+	// White is considered when all RGB channels are above 0.95
+	var isWhite = (r > 0.95 && g > 0.95 && b > 0.95);
+	if (isWhite) {
+		// Use default grass green color instead of white
+		// This is a typical grass green: RGB(124, 175, 71) normalized
+		return [ 124/255.0, 175/255.0, 71/255.0 ];
+	}
 	
 	return [ r, g, b ];
 }
 
-// loadPlayerHeadModel()
+// getFoliageColor( x, y )
 //
-// Loads the player head model into a vertex buffer for rendering.
+// Returns the foliage color from foliagecolor.png at the specified world coordinates.
+// Returns [1, 1, 1] (white) if foliagecolor.png is not loaded.
+// Uses uniform color for entire world to avoid abrupt color changes.
 
-Renderer.prototype.loadPlayerHeadModel = function()
+Renderer.prototype.getFoliageColor = function( x, y )
 {
-	var gl = this.gl;
+	var foliageColorTex = this.texFoliageColor;
+	if ( !foliageColorTex || !foliageColorTex.imageData ) {
+		return [ 1.0, 1.0, 1.0 ]; // White if not loaded
+	}
 	
-	// Player head
-	var vertices = [
+	var imageData = foliageColorTex.imageData;
+	var width = imageData.width;
+	var height = imageData.height;
+	
+	// Use a uniform foliage color for the entire world to avoid abrupt color changes
+	// Read a single representative pixel from the center of the texture
+	// This ensures all leaves blocks have similar color throughout the world
+	var texX = Math.floor( width / 2 );
+	var texY = Math.floor( height / 2 );
+	
+	// Ensure coordinates are within valid range
+	if ( texX >= width ) texX = width - 1;
+	if ( texY >= height ) texY = height - 1;
+	if ( texX < 0 ) texX = 0;
+	if ( texY < 0 ) texY = 0;
+	
+	var index = ( texY * width + texX ) * 4;
+	
+	// Get RGB values and normalize to 0-1 range
+	// ImageData format is RGBA: [R, G, B, A, R, G, B, A, ...]
+	// index = Red channel
+	// index + 1 = Green channel (this is what we want to read for foliage)
+	// index + 2 = Blue channel
+	// index + 3 = Alpha channel
+	var r = imageData.data[index] / 255.0;
+	var g = imageData.data[index + 1] / 255.0; // Green channel - this tints the foliage
+	var b = imageData.data[index + 2] / 255.0;
+	
+	// Ensure values are in valid range
+	r = Math.max(0.0, Math.min(1.0, r));
+	g = Math.max(0.0, Math.min(1.0, g));
+	b = Math.max(0.0, Math.min(1.0, b));
+	
+	// Ignore white pixels - replace with default foliage green color
+	// White is considered when all RGB channels are above 0.95
+	var isWhite = (r > 0.95 && g > 0.95 && b > 0.95);
+	if (isWhite) {
+		// Use default foliage green color instead of white
+		// This is a typical foliage green: RGB(124, 175, 71) normalized
+		return [ 124/255.0, 175/255.0, 71/255.0 ];
+	}
+	
+	return [ r, g, b ];
+}
+
+// getPlayerHeadVertices()
+//
+// Returns the vertex data for the player head model (shared function).
+
+function getPlayerHeadVertices()
+{
+	return [
 		// Top
 		-0.25, -0.25, 0.25, 8/64, 0, 1, 1, 1, 1,
 		0.25, -0.25, 0.25, 16/64, 0, 1, 1, 1, 1,
@@ -1425,6 +1527,16 @@ Renderer.prototype.loadPlayerHeadModel = function()
 		0.25, 0.25, 0.25, 8/64, 8/32, 1, 1, 1, 1,
 		0.25, -0.25, 0.25, 0, 8/32, 1, 1, 1, 1
 	];
+}
+
+// loadPlayerHeadModel()
+//
+// Loads the player head model into a vertex buffer for rendering.
+
+Renderer.prototype.loadPlayerHeadModel = function()
+{
+	var gl = this.gl;
+	var vertices = getPlayerHeadVertices();
 	
 	var buffer = this.playerHead = gl.createBuffer();
 	buffer.vertices = vertices.length / 9;
@@ -1432,15 +1544,13 @@ Renderer.prototype.loadPlayerHeadModel = function()
 	gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.DYNAMIC_DRAW );
 }
 
-// loadPlayerBodyModel()
+// getPlayerBodyVertices()
 //
-// Loads the player body model into a vertex buffer for rendering.
+// Returns the vertex data for the player body model (shared function).
 
-Renderer.prototype.loadPlayerBodyModel = function()
+function getPlayerBodyVertices()
 {
-	var gl = this.gl;
-	
-	var vertices = [
+	return [
 		// Player torso
 		
 		// Top
@@ -1492,6 +1602,16 @@ Renderer.prototype.loadPlayerBodyModel = function()
 		0.30, -0.125, 1.45, 28/64, 20/32, 1, 1, 1, 1,
 		
 	];
+}
+
+// loadPlayerBodyModel()
+//
+// Loads the player body model into a vertex buffer for rendering.
+
+Renderer.prototype.loadPlayerBodyModel = function()
+{
+	var gl = this.gl;
+	var vertices = getPlayerBodyVertices();
 	
 	var buffer = this.playerBody = gl.createBuffer();
 	buffer.vertices = vertices.length / 9;

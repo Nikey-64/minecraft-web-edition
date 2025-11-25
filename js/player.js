@@ -177,8 +177,9 @@ Player.prototype.initInventoryPlayerModel = function()
 	canvas.style.width = "64px";
 	canvas.style.height = "64px";
 	
-	// Get WebGL context
-	var gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+	// Get WebGL context with alpha channel for transparency
+	var gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: false }) || 
+	         canvas.getContext("experimental-webgl", { alpha: true, premultipliedAlpha: false });
 	if (!gl) {
 		console.warn("WebGL not supported for inventory player model");
 		return;
@@ -226,9 +227,15 @@ Player.prototype.initInventoryPlayerModel = function()
 		startRenderLoop: function() {
 			if (this.renderLoopId) return;
 			var self = this;
+			var frameCount = 0;
 			function loop() {
 				if (pl.inventoryOpen && pl.inventoryModelYaw !== undefined && pl.inventoryModelPitch !== undefined) {
 					pl.renderInventoryPlayerModel(pl.inventoryModelYaw, pl.inventoryModelPitch);
+					frameCount++;
+					// Log cada 60 frames para verificar que se está renderizando
+					if (frameCount % 60 === 0) {
+						console.log('Inventory player model render loop activo - frame:', frameCount);
+					}
 				}
 				self.renderLoopId = requestAnimationFrame(loop);
 			}
@@ -332,6 +339,15 @@ Player.prototype.initInventoryPlayerWebGL = function(gl)
 	gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 	gl.clearColor(0, 0, 0, 0); // Transparent background
 	
+	// Create a temporary white texture while player.png loads
+	var whiteTexture = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, whiteTexture);
+	var whitePixel = new Uint8Array([255, 255, 255, 255]);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, whitePixel);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+	this.inventoryPlayerTexture = whiteTexture; // Usar textura blanca temporal
+	
 	// Load player texture
 	var playerTexture = gl.createTexture();
 	var img = new Image();
@@ -341,9 +357,14 @@ Player.prototype.initInventoryPlayerWebGL = function(gl)
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-		self.inventoryPlayerTexture = playerTexture;
+		self.inventoryPlayerTexture = playerTexture; // Reemplazar con la textura real
 		// Render after texture loads
-		self.renderInventoryPlayerModel(0, 0);
+		if (self.inventoryOpen) {
+			self.renderInventoryPlayerModel(self.inventoryModelYaw || 0, self.inventoryModelPitch || 0);
+		}
+	};
+	img.onerror = function() {
+		console.error('Error cargando player.png para el modelo del inventario');
 	};
 	img.src = "media/player.png";
 	
@@ -373,112 +394,15 @@ Player.prototype.compileShader = function(gl, type, source)
 // loadInventoryPlayerModels( gl )
 //
 // Loads player head and body models for inventory rendering.
+// Reuses vertex data from the main renderer to save memory.
 
 Player.prototype.loadInventoryPlayerModels = function(gl)
 {
-	// Player head vertices (scaled down for inventory)
-	var headVertices = [
-		// Top
-		-0.25, -0.25, 0.25, 8/64, 0, 1, 1, 1, 1,
-		0.25, -0.25, 0.25, 16/64, 0, 1, 1, 1, 1,
-		0.25, 0.25, 0.25, 16/64, 8/32, 1, 1, 1, 1,
-		0.25, 0.25, 0.25, 16/64, 8/32, 1, 1, 1, 1,
-		-0.25, 0.25, 0.25, 8/64, 8/32, 1, 1, 1, 1,
-		-0.25, -0.25, 0.25, 8/64, 0, 1, 1, 1, 1,
-		
-		// Bottom
-		-0.25, -0.25, -0.25, 16/64, 0, 1, 1, 1, 1,
-		-0.25, 0.25, -0.25, 16/64, 8/32, 1, 1, 1, 1,
-		0.25, 0.25, -0.25, 24/64, 8/32, 1, 1, 1, 1,
-		0.25, 0.25, -0.25, 24/64, 8/32, 1, 1, 1, 1,
-		0.25, -0.25, -0.25, 24/64, 0, 1, 1, 1, 1,
-		-0.25, -0.25, -0.25, 16/64, 0, 1, 1, 1, 1,
-		
-		// Front
-		-0.25, -0.25, 0.25, 8/64, 8/32, 1, 1, 1, 1,
-		-0.25, -0.25, -0.25, 8/64, 16/32, 1, 1, 1, 1,
-		0.25, -0.25, -0.25, 16/64, 16/32, 1, 1, 1, 1,
-		0.25, -0.25, -0.25, 16/64, 16/32, 1, 1, 1, 1,
-		0.25, -0.25, 0.25, 16/64, 8/32, 1, 1, 1, 1,
-		-0.25, -0.25, 0.25, 8/64, 8/32, 1, 1, 1, 1,
-		
-		// Rear
-		-0.25, 0.25, 0.25, 24/64, 8/32, 1, 1, 1, 1,
-		0.25, 0.25, 0.25, 32/64, 8/32, 1, 1, 1, 1,
-		0.25, 0.25, -0.25, 32/64, 16/32, 1, 1, 1, 1,
-		0.25, 0.25, -0.25, 32/64, 16/32, 1, 1, 1, 1,
-		-0.25, 0.25, -0.25, 24/64, 16/32, 1, 1, 1, 1,
-		-0.25, 0.25, 0.25, 24/64, 8/32, 1, 1, 1, 1,
-		
-		// Right
-		-0.25, -0.25, 0.25, 16/64, 8/32, 1, 1, 1, 1,
-		-0.25, 0.25, 0.25, 24/64, 8/32, 1, 1, 1, 1,
-		-0.25, 0.25, -0.25, 24/64, 16/32, 1, 1, 1, 1,
-		-0.25, 0.25, -0.25, 24/64, 16/32, 1, 1, 1, 1,
-		-0.25, -0.25, -0.25, 16/64, 16/32, 1, 1, 1, 1,
-		-0.25, -0.25, 0.25, 16/64, 8/32, 1, 1, 1, 1,
-		
-		// Left
-		0.25, -0.25, 0.25, 0, 8/32, 1, 1, 1, 1,
-		0.25, -0.25, -0.25, 0, 16/32, 1, 1, 1, 1,
-		0.25, 0.25, -0.25, 8/64, 16/32, 1, 1, 1, 1,
-		0.25, 0.25, -0.25, 8/64, 16/32, 1, 1, 1, 1,
-		0.25, 0.25, 0.25, 8/64, 8/32, 1, 1, 1, 1,
-		0.25, -0.25, 0.25, 0, 8/32, 1, 1, 1, 1
-	];
+	// Reuse vertex data from the main renderer (shared functions)
+	var headVertices = getPlayerHeadVertices();
+	var bodyVertices = getPlayerBodyVertices();
 	
-	// Player body vertices (scaled down)
-	var bodyVertices = [
-		// Top
-		-0.30, -0.125, 1.45, 20/64, 16/32, 1, 1, 1, 1,
-		0.30, -0.125, 1.45, 28/64, 16/32, 1, 1, 1, 1,
-		0.30, 0.125, 1.45, 28/64, 20/32, 1, 1, 1, 1,
-		0.30, 0.125, 1.45, 28/64, 20/32, 1, 1, 1, 1,
-		-0.30, 0.125, 1.45, 20/64, 20/32, 1, 1, 1, 1,
-		-0.30, -0.125, 1.45, 20/64, 16/32, 1, 1, 1, 1,
-		
-		// Bottom
-		-0.30, -0.125, 0.73, 28/64, 16/32, 1, 1, 1, 1,
-		-0.30, 0.125, 0.73, 28/64, 20/32, 1, 1, 1, 1,
-		0.30, 0.125, 0.73, 36/64, 20/32, 1, 1, 1, 1,
-		0.30, 0.125, 0.73, 36/64, 20/32, 1, 1, 1, 1,
-		0.30, -0.125, 0.73, 36/64, 16/32, 1, 1, 1, 1,
-		-0.30, -0.125, 0.73, 28/64, 16/32, 1, 1, 1, 1,
-		
-		// Front
-		-0.30, -0.125, 1.45, 20/64, 20/32, 1, 1, 1, 1,
-		-0.30, -0.125, 0.73, 20/64, 32/32, 1, 1, 1, 1,
-		0.30, -0.125, 0.73, 28/64, 32/32, 1, 1, 1, 1,
-		0.30, -0.125, 0.73, 28/64, 32/32, 1, 1, 1, 1,
-		0.30, -0.125, 1.45, 28/64, 20/32, 1, 1, 1, 1,
-		-0.30, -0.125, 1.45, 20/64, 20/32, 1, 1, 1, 1,
-		
-		// Rear
-		-0.30, 0.125, 1.45, 40/64, 20/32, 1, 1, 1, 1,
-		0.30, 0.125, 1.45, 32/64, 20/32, 1, 1, 1, 1,
-		0.30, 0.125, 0.73, 32/64, 32/32, 1, 1, 1, 1,
-		0.30, 0.125, 0.73, 32/64, 32/32, 1, 1, 1, 1,
-		-0.30, 0.125, 0.73, 40/64, 32/32, 1, 1, 1, 1,
-		-0.30, 0.125, 1.45, 40/64, 20/32, 1, 1, 1, 1,
-		
-		// Right
-		-0.30, -0.125, 1.45, 16/64, 20/32, 1, 1, 1, 1,
-		-0.30, 0.125, 1.45, 20/64, 20/32, 1, 1, 1, 1,
-		-0.30, 0.125, 0.73, 20/64, 32/32, 1, 1, 1, 1,
-		-0.30, 0.125, 0.73, 20/64, 32/32, 1, 1, 1, 1,
-		-0.30, -0.125, 0.73, 16/64, 32/32, 1, 1, 1, 1,
-		-0.30, -0.125, 1.45, 16/64, 20/32, 1, 1, 1, 1,
-		
-		// Left
-		0.30, -0.125, 1.45, 28/64, 20/32, 1, 1, 1, 1,
-		0.30, -0.125, 0.73, 28/64, 32/32, 1, 1, 1, 1,
-		0.30, 0.125, 0.73, 32/64, 32/32, 1, 1, 1, 1,
-		0.30, 0.125, 0.73, 32/64, 32/32, 1, 1, 1, 1,
-		0.30, 0.125, 1.45, 32/64, 20/32, 1, 1, 1, 1,
-		0.30, -0.125, 1.45, 28/64, 20/32, 1, 1, 1, 1
-	];
-	
-	// Create buffers
+	// Create buffers in this WebGL context
 	var headBuffer = gl.createBuffer();
 	gl.bindBuffer(gl.ARRAY_BUFFER, headBuffer);
 	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(headVertices), gl.STATIC_DRAW);
@@ -500,11 +424,26 @@ Player.prototype.renderInventoryPlayerModel = function(yaw, pitch)
 {
 	var gl = this.inventoryPlayerGL;
 	var canvas = this.inventoryPlayerCanvas;
-	if (!gl || !canvas || !this.inventoryPlayerHead || !this.inventoryPlayerBody) return;
+	if (!gl || !canvas || !this.inventoryPlayerHead || !this.inventoryPlayerBody) {
+		console.warn('Inventory player model: faltan recursos', {
+			gl: !!gl,
+			canvas: !!canvas,
+			head: !!this.inventoryPlayerHead,
+			body: !!this.inventoryPlayerBody,
+			texture: !!this.inventoryPlayerTexture
+		});
+		return;
+	}
 	
 	// Set viewport
 	gl.viewport(0, 0, canvas.width, canvas.height);
 	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+	
+	// Check for WebGL errors
+	var error = gl.getError();
+	if (error !== gl.NO_ERROR) {
+		console.warn('WebGL error before render:', error);
+	}
 	
 	// Use the shader program
 	gl.useProgram(this.inventoryPlayerProgram);
@@ -517,40 +456,86 @@ Player.prototype.renderInventoryPlayerModel = function(yaw, pitch)
 	// Projection: perspective looking at player from front
 	mat4.perspective(projMatrix, Math.PI / 4, canvas.width / canvas.height, 0.1, 10.0);
 	
-	// View: camera looking at player from front, slightly above
-	// El shader espera: X y Y = horizontal, Z = vertical (altura)
-	// Camera position: [x, y, z] donde z es altura
-	// Look at: [x, y, z] donde z es altura
-	mat4.lookAt(viewMatrix, [0, 3, 1.5], [0, 0, 1.0], [0, 0, 1]);
+	// View: cámara en tercera persona estática, mirando al jugador desde el frente
+	// IMPORTANTE: El shader espera [x, y, z] donde z es altura
+	// Pero cuando se renderiza el modelo del jugador en el renderer principal, se hace:
+	// mat4.translate(modelMatrix, [player.pos.x, player.pos.z, player.pos.y + 1.7])
+	// Esto significa que se pasa [x, z, y] al shader, donde y es altura
+	// Entonces, el shader interpreta esto como [x, y, z] donde z=y (altura)
+	// Por lo tanto, en el sistema del shader: X y Y = horizontal, Z = vertical (altura)
+	// El modelo del cuerpo va de Z=0.73 a Z=1.45 en el sistema original
+	// Después del scale 1.5x: Z=1.095 a Z=2.175
+	// El centro del cuerpo está en Z=(1.095 + 2.175) / 2 = 1.635
+	// La cabeza está en Z=1.7 * 1.5 = 2.55 (centro de la cabeza)
+	// Cámara estática en tercera persona: delante del jugador, mirando hacia él
+	var cameraDistance = 4.0; // Distancia fija desde el jugador (eje Y positivo en el sistema del shader)
+	var modelCenterHeight = 1.635; // Centro del modelo después del scale: (1.095 + 2.175) / 2 = 1.635
+	// Posición de la cámara: delante del jugador (eje Y positivo en el sistema del shader)
+	// Mirando hacia el jugador en el origen, centrado verticalmente
+	// lookAt espera: [eyeX, eyeY, eyeZ], [centerX, centerY, centerZ], [upX, upY, upZ]
+	// En el sistema del shader: X y Y = horizontal, Z = vertical (altura)
+	mat4.lookAt(viewMatrix, [0, cameraDistance, modelCenterHeight], [0, 0, modelCenterHeight], [0, 0, 1]);
 	
-	// Bind texture
-	if (this.inventoryPlayerTexture) {
-		gl.activeTexture(gl.TEXTURE0);
-		gl.bindTexture(gl.TEXTURE_2D, this.inventoryPlayerTexture);
-		gl.uniform1i(this.inventoryPlayerUniforms.sampler, 0);
+	// Bind texture (siempre debería existir, al menos la textura blanca temporal)
+	if (!this.inventoryPlayerTexture) {
+		// Si por alguna razón no hay textura, crear una blanca temporal
+		var whiteTexture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, whiteTexture);
+		var whitePixel = new Uint8Array([255, 255, 255, 255]);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, whitePixel);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+		this.inventoryPlayerTexture = whiteTexture;
 	}
+	gl.activeTexture(gl.TEXTURE0);
+	gl.bindTexture(gl.TEXTURE_2D, this.inventoryPlayerTexture);
+	gl.uniform1i(this.inventoryPlayerUniforms.sampler, 0);
 	
 	// Set uniforms
 	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.viewMat, false, viewMatrix);
 	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.projMat, false, projMatrix);
 	
-	// Draw body (no rotation, but rotate entire model to face camera)
-	// Ejes del modelo: X y Z = horizontal, Y = vertical (altura)
-	// El shader espera: X y Y = horizontal, Z = vertical (altura)
-	// Por lo tanto, intercambiamos Y y Z: [x, z, y] donde z es altura para el shader
+	// Draw body
+	// IMPORTANTE: El modelo está definido con coordenadas [x, y, z] donde z es altura
+	// En el renderer principal, cuando se renderiza el modelo del jugador, se hace:
+	// mat4.translate(modelMatrix, [player.pos.x, player.pos.z, player.pos.y + 1.7])
+	// Esto significa que se pasa [x, z, y] al shader, donde y es altura
+	// El shader interpreta esto como [x, y, z] donde z=y (altura)
+	// Por lo tanto, en el sistema del shader: X y Y = horizontal, Z = vertical (altura)
+	// El modelo del cuerpo va de Z=0.73 a Z=1.45 en el sistema original
+	// Después del scale 1.5x: Z=1.095 a Z=2.175
+	// El centro del cuerpo está en Z=(1.095 + 2.175) / 2 = 1.635
 	mat4.identity(modelMatrix);
-	mat4.translate(modelMatrix, [0, 0, 0.01]); // [x, z, y] donde z es altura
-	mat4.rotateZ(modelMatrix, Math.PI); // Rotate 180 degrees to face camera
+	// Centrar el modelo en el origen verticalmente
+	// El cuerpo va de Z=1.095 a Z=2.175 después del scale, centro en Z=1.635
+	// Para centrarlo, mover hacia abajo por 1.635
+	mat4.translate(modelMatrix, [0, 0, -1.635]); // [x, y, z] donde z es altura - mover hacia abajo para centrar
+	mat4.scale(modelMatrix, [1.5, 1.5, 1.5]); // Escalar 1.5x para que sea más visible
+	// Rotar 180 grados para que mire hacia la cámara (como en el renderer principal)
+	mat4.rotateZ(modelMatrix, Math.PI);
 	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.modelMat, false, modelMatrix);
 	this.drawInventoryBuffer(this.inventoryPlayerBody);
 	
 	// Draw head (follows mouse)
 	mat4.identity(modelMatrix);
-	mat4.translate(modelMatrix, [0, 0, 1.7]); // [x, z, y] donde z es altura
-	mat4.rotateZ(modelMatrix, Math.PI - yaw); // Rotate around Z (horizontal rotation)
+	// El modelo de la cabeza va de Z=-0.25 a Z=0.25 en el sistema original
+	// Después del scale 1.5x: Z=-0.375 a Z=0.375, centro en Z=0
+	// El cuerpo termina en Z=2.175, así que la cabeza debe estar en Z=2.175 + 0.375 = 2.55
+	// Pero el centro de la cabeza está en Z=0, así que necesito posicionarla en Z=2.55
+	// Para centrarlo verticalmente, mover hacia abajo por 1.635 (igual que el cuerpo)
+	mat4.translate(modelMatrix, [0, 0, 2.55 - 1.635]); // [x, y, z] donde z es altura - cabeza a 2.55, centrado
+	mat4.scale(modelMatrix, [1.5, 1.5, 1.5]); // Escalar 1.5x para que sea más visible
+	// Rotar 180 grados para que mire hacia la cámara, luego aplicar rotación del mouse
+	mat4.rotateZ(modelMatrix, Math.PI - yaw); // Rotate around Z (horizontal rotation) - invertir yaw
 	mat4.rotateX(modelMatrix, -pitch); // Rotate around X (vertical rotation)
 	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.modelMat, false, modelMatrix);
 	this.drawInventoryBuffer(this.inventoryPlayerHead);
+	
+	// Check for WebGL errors after rendering
+	var error = gl.getError();
+	if (error !== gl.NO_ERROR) {
+		console.warn('WebGL error after render:', error);
+	}
 }
 
 // drawInventoryBuffer( buffer )
@@ -804,8 +789,13 @@ Player.prototype.toggleInventory = function()
 	
 	if (this.inventoryOpen) {
 		inventory.style.display = "flex";
-		// Update inventory display
-		this.updateInventoryHotbarDisplay();
+		// Add class to body to hide health/armor icons when inventory is open
+		document.body.classList.add("inventory-open");
+		// Clear all keys to prevent movement while inventory is open
+		// This prevents keys from being "stuck" when inventory is opened
+		this.keys = {};
+		// Update inventory display (main grid and hotbar)
+		this.updateInventoryDisplay();
 		// Start rendering the miniature player model
 		if (this.inventoryPlayerRenderer) {
 			this.inventoryPlayerRenderer.startRenderLoop();
@@ -827,6 +817,8 @@ Player.prototype.toggleInventory = function()
 		}
 	} else {
 		inventory.style.display = "none";
+		// Remove class from body to show health/armor icons when inventory is closed
+		document.body.classList.remove("inventory-open");
 		// Stop rendering the miniature player model
 		if (this.inventoryPlayerRenderer) {
 			this.inventoryPlayerRenderer.stopRenderLoop();
@@ -858,6 +850,22 @@ Player.prototype.on = function( event, callback )
 Player.prototype.onKeyEvent = function( keyCode, down )
 {
 	var key = String.fromCharCode( keyCode ).toLowerCase();
+	
+	// If inventory is open, only process E and Esc keys
+	if (this.inventoryOpen) {
+		// Inventory toggle (E key)
+		if ( !down && (keyCode == 69 || key == "e") ) {
+			this.toggleInventory();
+		}
+		// ESC key to close inventory
+		if ( !down && keyCode == 27 ) {
+			this.toggleInventory();
+		}
+		// Don't process any other keys when inventory is open
+		return;
+	}
+	
+	// Normal key processing when inventory is closed
 	this.keys[key] = down;
 	this.keys[keyCode] = down;
 
@@ -885,16 +893,12 @@ Player.prototype.onKeyEvent = function( keyCode, down )
 	if ( !down ) {
 		if ( keyCode >= 49 && keyCode <= 57 ) { // Keys 1-9
 			var slotIndex = keyCode - 49; // 0-8
-			if (!this.inventoryOpen) {
-				this.selectHotbarSlot(slotIndex);
-			}
+			this.selectHotbarSlot(slotIndex);
 		}
 	}
 	
 	if ( !down && keyCode == 27 ) { // ESC key
-		if (this.inventoryOpen) {
-			this.toggleInventory();
-		} else if (this.pointerLocked) {
+		if (this.pointerLocked) {
 			document.exitPointerLock();
 		} else if (typeof pauseGame === 'function') {
 			pauseGame();
@@ -1002,8 +1006,9 @@ Player.prototype.raycast = function( start, direction, maxDistance )
 		
 		var block = world.getBlock( blockX, blockY, blockZ );
 		
-		// Si encontramos un bloque sólido
-		if ( block != BLOCK.AIR && block && !block.transparent )
+		// Si encontramos un bloque sólido (puede ser transparente o no, pero no AIR)
+		// Los bloques transparentes como glass y leaves también deben ser detectables para destrucción
+		if ( block != BLOCK.AIR && block )
 		{
 			return {
 				x: blockX,

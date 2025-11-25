@@ -354,6 +354,7 @@ BLOCK.LEAVES = {
 	solid: true,
 	flammable: true,
 	explosive: false,
+	useFoliageColor: true, // Flag to indicate this block uses foliage color filtering on all faces
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 4/16, 3/16, 5/16, 4/16 ]; }
 };
 
@@ -362,7 +363,7 @@ var ANIMATED_BLOCKS = [ BLOCK.TNT, BLOCK.LAVA, BLOCK.SAND, BLOCK.GRAVEL];
 
 // BLOCK.ANIMATED es una plantilla/base que indica propiedades comunes de bloques animados
 // No se usa directamente, sino como referencia para crear bloques animados dinámicamente
-// IMPORTANTE: Este bloque NO se invoca constantemente, es solo una referencia/base
+// IMPORTANTE: Este bloque NO se invoca constantemente, es solo una referencia/base o un valor global
 // Las propiedades se toman del bloque original cuando se crea con createAnimatedBlock
 // const: false indica que no es un bloque permanente (se crea dinámicamente)
 BLOCK.ANIMATED = {
@@ -559,19 +560,34 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		if ( block.selflit ) lightMultiplier = 1.0;
 		
 		// Apply grass color filter if this is a grass block top face
+		// Apply foliage color filter if this is a leaves block (all faces)
 		var grassColor = [ 1.0, 1.0, 1.0 ]; // Default white
-		if ( block.useGrassColor && blockLit && world.renderer ) {
+		var foliageColor = [ 1.0, 1.0, 1.0 ]; // Default GREE
+		if ( block.useGrassColor && world.renderer ) {
 			// Use integer block coordinates for consistent coloring
 			// getGrassColor espera (x, y) donde y es la coordenada horizontal
 			// En el mundo: x=X, y=Y(altura), z=Z(horizontal)
 			// Por lo tanto, pasamos (x, z) donde z es horizontal
 			grassColor = world.renderer.getGrassColor( x, z );
 		}
+		if ( block.useFoliageColor && world.renderer ) {
+			// Use integer block coordinates for consistent coloring
+			// getFoliageColor espera (x, y) donde y es la coordenada horizontal
+			// En el mundo: x=X, y=Y(altura), z=Z(horizontal)
+			// Por lo tanto, pasamos (x, z) donde z es horizontal
+			foliageColor = world.renderer.getFoliageColor( x, z );
+		}
 		
-		// Multiply grass color with light multiplier
-		var r = grassColor[0] * lightMultiplier;
-		var g = grassColor[1] * lightMultiplier;
-		var b = grassColor[2] * lightMultiplier;
+		// Apply color and light multiplier
+		// For grass blocks, use grassColor; for leaves blocks, use foliageColor
+		// The color from the texture is multiplied with the texture color in the shader
+		// The light multiplier is applied to simulate lighting
+		// White (1.0, 1.0, 1.0) preserves original texture color
+		var useFoliage = block.useFoliageColor;
+		var color = useFoliage ? foliageColor : grassColor;
+		var r = color[0] * lightMultiplier;
+		var g = color[1] * lightMultiplier;
+		var b = color[2] * lightMultiplier;
 		
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
@@ -598,6 +614,19 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
 		
+		// Apply foliage color if this is a leaves block
+		var foliageColor = [ 1.0, 1.0, 1.0 ]; // Default white
+		if ( block.useFoliageColor && world.renderer ) {
+			foliageColor = world.renderer.getFoliageColor( x, z );
+		}
+		
+		// Apply color and light multiplier
+		var useFoliage = block.useFoliageColor;
+		var color = useFoliage ? foliageColor : [1.0, 1.0, 1.0];
+		var r = color[0] * lightMultiplier;
+		var g = color[1] * lightMultiplier;
+		var b = color[2] * lightMultiplier;
+		
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
@@ -605,10 +634,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		var renderY = y + yOffset;
 		pushQuad(
 			vertices,							
-			[ x - OFFSET, z + 1.0 + OFFSET, renderY, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, renderY, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z - OFFSET, renderY, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, z + 1.0 + OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z - OFFSET, renderY, c[2], c[1], r, g, b, 1.0 ],
+			[ x - OFFSET, z - OFFSET, renderY, c[0], c[1], r, g, b, 1.0 ]
 		);
 	}
 	
@@ -625,6 +654,19 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		var lightMultiplier = ( z == 0 || y >= adjLightY ) ? 1.0 : 0.6;
 		if ( block.selflit ) lightMultiplier = 1.0;
 		
+		// Apply foliage color if this is a leaves block
+		var foliageColor = [ 1.0, 1.0, 1.0 ]; // Default white
+		if ( block.useFoliageColor && world.renderer ) {
+			foliageColor = world.renderer.getFoliageColor( x, z );
+		}
+		
+		// Apply color and light multiplier
+		var useFoliage = block.useFoliageColor;
+		var color = useFoliage ? foliageColor : [1.0, 1.0, 1.0];
+		var r = color[0] * lightMultiplier;
+		var g = color[1] * lightMultiplier;
+		var b = color[2] * lightMultiplier;
+		
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
@@ -632,10 +674,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		var renderY = y + yOffset;
 		pushQuad(
 			vertices,
-			[ x - OFFSET, z - OFFSET, renderY, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, renderY, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, renderY + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z - OFFSET, renderY + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, z - OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z - OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z - OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x - OFFSET, z - OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ]
 		);
 	}
 	
@@ -649,6 +691,19 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
 		
+		// Apply foliage color if this is a leaves block
+		var foliageColor = [ 1.0, 1.0, 1.0 ]; // Default GREEN! las hojas sonverdes
+		if ( block.useFoliageColor && world.renderer ) {
+			foliageColor = world.renderer.getFoliageColor( x, z );
+		}
+		
+		// Apply color and light multiplier
+		var useFoliage = block.useFoliageColor;
+		var color = useFoliage ? foliageColor : [1.0, 1.0, 1.0];
+		var r = color[0] * lightMultiplier;
+		var g = color[1] * lightMultiplier;
+		var b = color[2] * lightMultiplier;
+		
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
@@ -656,10 +711,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		var renderY = y + yOffset;
 		pushQuad(
 			vertices,
-			[ x - OFFSET, z + 1.0 + OFFSET, renderY + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET, renderY, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, z + 1.0 + OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
+			[ x - OFFSET, z + 1.0 + OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ]
 		);
 	}
 	
@@ -673,6 +728,19 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
 		
+		// Apply foliage color if this is a leaves block
+		var foliageColor = [ 1.0, 1.0, 1.0 ]; // Default green! las hojas son verdes
+		if ( block.useFoliageColor && world.renderer ) {
+			foliageColor = world.renderer.getFoliageColor( x, z );
+		}
+		
+		// Apply color and light multiplier
+		var useFoliage = block.useFoliageColor;
+		var color = useFoliage ? foliageColor : [1.0, 1.0, 1.0];
+		var r = color[0] * lightMultiplier;
+		var g = color[1] * lightMultiplier;
+		var b = color[2] * lightMultiplier;
+		
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
@@ -680,10 +748,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		var renderY = y + yOffset;
 		pushQuad(
 			vertices,
-			[ x - OFFSET, z - OFFSET, renderY + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET, renderY + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET, renderY, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x - OFFSET, z - OFFSET, renderY, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x - OFFSET, z - OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x - OFFSET, z + 1.0 + OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
+			[ x - OFFSET, z + 1.0 + OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
+			[ x - OFFSET, z - OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ]
 		);
 	}
 	
@@ -700,6 +768,19 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		var lightMultiplier = ( x == world.sx - 1 || y >= adjLightY ) ? 1.0 : 0.6;
 		if ( block.selflit ) lightMultiplier = 1.0;
 		
+		// Apply foliage color if this is a leaves block
+		var foliageColor = [ 1.0, 1.0, 1.0 ]; // Default green! las hojas deben ser verdes
+		if ( block.useFoliageColor && world.renderer ) {
+			foliageColor = world.renderer.getFoliageColor( x, z );
+		}
+		
+		// Apply color and light multiplier
+		var useFoliage = block.useFoliageColor;
+		var color = useFoliage ? foliageColor : [1.0, 1.0, 1.0];
+		var r = color[0] * lightMultiplier;
+		var g = color[1] * lightMultiplier;
+		var b = color[2] * lightMultiplier;
+		
 		// Coordenadas: x, y (altura), z (horizontal)
 		// El shader espera: x, y (horizontal), z (altura)
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
@@ -707,10 +788,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		var renderY = y + yOffset;
 		pushQuad(
 			vertices,
-			[ x + 1.0 + OFFSET, z - OFFSET, renderY, c[0], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY, c[2], c[3], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY + bH, c[2], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, renderY + bH, c[0], c[1], lightMultiplier, lightMultiplier, lightMultiplier, 1.0 ]
+			[ x + 1.0 + OFFSET, z - OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z - OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ]
 		);
 	}
 }

@@ -4,8 +4,10 @@
 		<title>minecraft web edition 0.0.0-B</title>
 		
 		<!-- Character encoding -->
-		<meta http-equiv="content-type" content="text/html" charset="UTF-8">
-		
+		<meta content="text/html" charset="UTF-8">
+		<!-- Favicon -->
+		<link rel="icon" href="media/gui/favicon.png">
+
 		<!-- Stylesheet -->
 		<link href="style/main.css" rel="stylesheet" type="text/css">
 		
@@ -74,7 +76,6 @@
 						<div class="inventory-slot" data-craft="2"></div>
 						<div class="inventory-slot" data-craft="3"></div>
 					</div>
-					<div class="crafting-arrow"></div>
 					<div class="crafting-output">
 						<div class="inventory-slot" data-craft="output"></div>
 					</div>
@@ -119,6 +120,10 @@
 				<div style="margin: 20px 0;">
 					<label for="pauseRenderDistanceSlider" style="color: white; font-family: Minecraftia;">Render Distance: <span id="pauseRenderDistanceValue">8</span> chunks</label><br>
 					<input type="range" id="pauseRenderDistanceSlider" min="4" max="16" value="8" step="1" style="width: 200px; margin-top: 10px;">
+				</div>
+				<div style="margin: 20px 0;">
+					<label for="pauseGuiScaleSlider" style="color: white; font-family: Minecraftia;">GUI Scale: <span id="pauseGuiScaleValue">100</span>%</label><br>
+					<input type="range" id="pauseGuiScaleSlider" min="50" max="200" value="100" step="10" style="width: 200px; margin-top: 10px;">
 				</div>
 				<div style="margin: 20px 0;">
 					<label style="color: white; font-family: Minecraftia;">
@@ -199,6 +204,8 @@
 
 			var pauseRenderDistanceSlider = document.getElementById('pauseRenderDistanceSlider');
 			var pauseRenderDistanceValue = document.getElementById('pauseRenderDistanceValue');
+			var pauseGuiScaleSlider = document.getElementById('pauseGuiScaleSlider');
+			var pauseGuiScaleValue = document.getElementById('pauseGuiScaleValue');
 			var pauseFpsToggle = document.getElementById('pauseFpsToggle');
 
 			initGame();
@@ -355,11 +362,30 @@
 				};
 			}
 
+			// Function to set GUI scale
+			function setGuiScale(scale) {
+				// scale is a percentage (50-200), convert to decimal (0.5-2.0)
+				var scaleDecimal = scale / 100;
+				document.documentElement.style.setProperty('--gui-scale', scaleDecimal);
+				localStorage.setItem('guiScale', scale);
+			}
+
+			// Function to get GUI scale from localStorage or default
+			function getGuiScale() {
+				var savedScale = localStorage.getItem('guiScale');
+				return savedScale ? parseInt(savedScale) : 100; // Default 100%
+			}
+
 			function initialisePauseSettings() {
 				var savedRenderDistance = localStorage.getItem('renderDistance') || '8';
 				pauseRenderDistanceSlider.value = savedRenderDistance;
 				pauseRenderDistanceValue.textContent = savedRenderDistance;
 				render.setRenderDistance(parseInt(savedRenderDistance));
+
+				var savedGuiScale = getGuiScale();
+				pauseGuiScaleSlider.value = savedGuiScale;
+				pauseGuiScaleValue.textContent = savedGuiScale;
+				setGuiScale(savedGuiScale);
 
 				var savedShowFPS = localStorage.getItem('showFPS') || 'false';
 				pauseFpsToggle.checked = savedShowFPS === 'true';
@@ -704,6 +730,12 @@
 				pauseRenderDistanceValue.textContent = value;
 				localStorage.setItem('renderDistance', value);
 				if ( render ) render.setRenderDistance(value);
+			};
+
+			pauseGuiScaleSlider.oninput = function() {
+				var value = parseInt(this.value);
+				pauseGuiScaleValue.textContent = value;
+				setGuiScale(value);
 			};
 
 			pauseFpsToggle.onchange = function() {
