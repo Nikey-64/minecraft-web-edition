@@ -347,7 +347,7 @@ BLOCK.SPONGE = {
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 0/16, 3/16, 1/16, 4/16 ]; }
 };
 
-// Leaves (not implemented yet)
+// Leaves 
 BLOCK.LEAVES = {
 	id: 19,
 	spawnable: true,
@@ -548,34 +548,73 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	// Y es altura, Z es horizontal
 	var bH = block.fluid && ( y == world.sy - 1 || !blockTop.fluid ) ? 0.9 : 1.0;
 	
+	// Helper function to determine if a face should be rendered based on transparency rules
+	// Rules:
+	// 1. All faces adjacent to AIR must be rendered
+	// 2. If two transparent blocks of the same type are adjacent, their adjacent faces are NOT rendered
+	// 3. If two transparent blocks of different types are adjacent, their adjacent faces are rendered based on viewing angle
+	// 4. If two solid non-transparent blocks are adjacent, their adjacent faces are NOT rendered
+	var shouldRenderFaceBetweenBlocks = function( currentBlock, adjacentBlock, currentX, currentY, currentZ, adjacentX, adjacentY, adjacentZ ) {
+		// Rule 1: Always render faces adjacent to AIR
+		if ( !adjacentBlock || adjacentBlock == BLOCK.AIR ) {
+			return true;
+		}
+		
+		// Rule 4: If both blocks are solid and non-transparent, don't render
+		if ( !currentBlock.transparent && !adjacentBlock.transparent ) {
+			return false;
+		}
+		
+		// If current block is transparent and adjacent is not, render
+		if ( currentBlock.transparent && !adjacentBlock.transparent ) {
+			return true;
+		}
+		
+		// If current block is not transparent and adjacent is, render
+		if ( !currentBlock.transparent && adjacentBlock.transparent ) {
+			return true;
+		}
+		
+		// Both blocks are transparent
+		if ( currentBlock.transparent && adjacentBlock.transparent ) {
+			// Rule 2: Same type - don't render
+			if ( currentBlock.id === adjacentBlock.id ) {
+				return false;
+			}
+			
+			// Rule 3: Different types - render only ONE face based on viewing angle
+			// Render the face of the block FARTHER from camera
+			// Example: if camera is on leaves side, show inner face of glass (glass is farther)
+			// If camera is on glass side, show face of leaves (leaves is farther)
+			if ( world.renderer && world.renderer.camPos ) {
+				var camPos = world.renderer.camPos;
+				// Distance from camera to current block center
+				var dx1 = ( currentX + 0.5 ) - camPos[0];
+				var dy1 = ( currentY + 0.5 ) - camPos[1];
+				var dz1 = ( currentZ + 0.5 ) - camPos[2];
+				var dist1 = Math.sqrt( dx1 * dx1 + dy1 * dy1 + dz1 * dz1 );
+				// Distance from camera to adjacent block center
+				var dx2 = ( adjacentX + 0.5 ) - camPos[0];
+				var dy2 = ( adjacentY + 0.5 ) - camPos[1];
+				var dz2 = ( adjacentZ + 0.5 ) - camPos[2];
+				var dist2 = Math.sqrt( dx2 * dx2 + dy2 * dy2 + dz2 * dz2 );
+				// Render face if current block is FARTHER from camera (only one face is rendered)
+				return ( dist1 > dist2 );
+			} else {
+				// If no camera position, don't render face (fallback)
+				return false;
+			}
+		}
+		
+		// Default: render
+		return true;
+	};
+	
 	// Top - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Top es Y+1 (arriba)
 	// Si el bloque está animado, siempre mostrar la cara superior (está en el aire)
-	// For two adjacent transparent solid blocks with DIFFERENT IDs, only render the face of the block farther from camera
-	// AIR is transparent but not solid, so faces to AIR must always be rendered
-	var shouldRenderFace = true;
-	if ( block.transparent && (block.solid !== false) && blockTop && blockTop != BLOCK.AIR && blockTop.transparent && (blockTop.solid !== false) && block.id !== blockTop.id ) {
-		// Two transparent solid blocks with different IDs adjacent - render only the face of the block farther from camera
-		if ( world.renderer && world.renderer.camPos ) {
-			var camPos = world.renderer.camPos;
-			// Distance from camera to current block center
-			var dx1 = ( x + 0.5 ) - camPos[0];
-			var dy1 = ( y + 0.5 ) - camPos[1];
-			var dz1 = ( z + 0.5 ) - camPos[2];
-			var dist1 = Math.sqrt( dx1 * dx1 + dy1 * dy1 + dz1 * dz1 );
-			// Distance from camera to adjacent block center (top block is at y+1)
-			var dx2 = ( x + 0.5 ) - camPos[0];
-			var dy2 = ( (y + 1) + 0.5 ) - camPos[1];
-			var dz2 = ( z + 0.5 ) - camPos[2];
-			var dist2 = Math.sqrt( dx2 * dx2 + dy2 * dy2 + dz2 * dz2 );
-			// Only render face if current block is closer to camera (render the inner face of the closer block)
-			shouldRenderFace = ( dist1 < dist2 );
-		} else {
-			// If no camera position, don't render face (fallback)
-			shouldRenderFace = false;
-		}
-	}
-	if ( shouldRenderFace && ( yOffset != 0 || y == world.sy - 1 || !blockTop || blockTop == BLOCK.AIR || blockTop.transparent || block.fluid ) )
+	var shouldRenderTop = shouldRenderFaceBetweenBlocks( block, blockTop, x, y, z, x, y + 1, z );
+	if ( shouldRenderTop && ( yOffset != 0 || y == world.sy - 1 || !blockTop || blockTop == BLOCK.AIR || blockTop.transparent || block.fluid ) )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.UP );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
@@ -631,32 +670,8 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	// Bottom - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Bottom es Y-1 (abajo)
 	// Si el bloque está animado, siempre mostrar la cara inferior (está en el aire)
-	// Los bloques animados se comportan como si estuvieran en el aire, mostrando todas las caras
-	// For two adjacent transparent solid blocks with DIFFERENT IDs, only render the face of the block farther from camera
-	// AIR is transparent but not solid, so faces to AIR must always be rendered
-	var shouldRenderFace = true;
-	if ( block.transparent && (block.solid !== false) && blockBottom && blockBottom != BLOCK.AIR && blockBottom.transparent && (blockBottom.solid !== false) && block.id !== blockBottom.id ) {
-		// Two transparent solid blocks adjacent - render only the face of the block farther from camera
-		if ( world.renderer && world.renderer.camPos ) {
-			var camPos = world.renderer.camPos;
-			// Distance from camera to current block center
-			var dx1 = ( x + 0.5 ) - camPos[0];
-			var dy1 = ( y + 0.5 ) - camPos[1];
-			var dz1 = ( z + 0.5 ) - camPos[2];
-			var dist1 = Math.sqrt( dx1 * dx1 + dy1 * dy1 + dz1 * dz1 );
-			// Distance from camera to adjacent block center (bottom block is at y-1)
-			var dx2 = ( x + 0.5 ) - camPos[0];
-			var dy2 = ( (y - 1) + 0.5 ) - camPos[1];
-			var dz2 = ( z + 0.5 ) - camPos[2];
-			var dist2 = Math.sqrt( dx2 * dx2 + dy2 * dy2 + dz2 * dz2 );
-			// Only render face if current block is closer to camera (render the inner face of the closer block)
-			shouldRenderFace = ( dist1 < dist2 );
-		} else {
-			// If no camera position, don't render face (fallback)
-			shouldRenderFace = false;
-		}
-	}
-	if ( shouldRenderFace && ( yOffset != 0 || y == 0 || !blockBottom || blockBottom == BLOCK.AIR || blockBottom.transparent ) )
+	var shouldRenderBottom = shouldRenderFaceBetweenBlocks( block, blockBottom, x, y, z, x, y - 1, z );
+	if ( shouldRenderBottom && ( yOffset != 0 || y == 0 || !blockBottom || blockBottom == BLOCK.AIR || blockBottom.transparent ) )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.DOWN );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
@@ -693,31 +708,8 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	// Front - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Front es Z-1 (hacia -Z, horizontal)
 	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
-	// For two adjacent transparent solid blocks with DIFFERENT IDs, only render the face of the block farther from camera
-	// AIR is transparent but not solid, so faces to AIR must always be rendered
-	var shouldRenderFace = true;
-	if ( block.transparent && (block.solid !== false) && blockFront && blockFront != BLOCK.AIR && blockFront.transparent && (blockFront.solid !== false) && block.id !== blockFront.id ) {
-		// Two transparent solid blocks adjacent - render only the face of the block farther from camera
-		if ( world.renderer && world.renderer.camPos ) {
-			var camPos = world.renderer.camPos;
-			// Distance from camera to current block center
-			var dx1 = ( x + 0.5 ) - camPos[0];
-			var dy1 = ( y + 0.5 ) - camPos[1];
-			var dz1 = ( z + 0.5 ) - camPos[2];
-			var dist1 = Math.sqrt( dx1 * dx1 + dy1 * dy1 + dz1 * dz1 );
-			// Distance from camera to adjacent block center (front block is at z-1)
-			var dx2 = ( x + 0.5 ) - camPos[0];
-			var dy2 = ( y + 0.5 ) - camPos[1];
-			var dz2 = ( (z - 1) + 0.5 ) - camPos[2];
-			var dist2 = Math.sqrt( dx2 * dx2 + dy2 * dy2 + dz2 * dz2 );
-			// Only render face if current block is closer to camera (render the inner face of the closer block)
-			shouldRenderFace = ( dist1 < dist2 );
-		} else {
-			// If no camera position, don't render face (fallback)
-			shouldRenderFace = false;
-		}
-	}
-	if ( shouldRenderFace && ( yOffset != 0 || z == 0 || !blockFront || blockFront == BLOCK.AIR || blockFront.transparent ) )
+	var shouldRenderFront = shouldRenderFaceBetweenBlocks( block, blockFront, x, y, z, x, y, z - 1 );
+	if ( shouldRenderFront && ( yOffset != 0 || z == 0 || !blockFront || blockFront == BLOCK.AIR || blockFront.transparent ) )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.FORWARD );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
@@ -757,31 +749,8 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	// Back - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Back es Z+1 (hacia +Z, horizontal)
 	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
-	// For two adjacent transparent solid blocks with DIFFERENT IDs, only render the face of the block farther from camera
-	// AIR is transparent but not solid, so faces to AIR must always be rendered
-	var shouldRenderFace = true;
-	if ( block.transparent && (block.solid !== false) && blockBack && blockBack != BLOCK.AIR && blockBack.transparent && (blockBack.solid !== false) && block.id !== blockBack.id ) {
-		// Two transparent solid blocks adjacent - render only the face of the block farther from camera
-		if ( world.renderer && world.renderer.camPos ) {
-			var camPos = world.renderer.camPos;
-			// Distance from camera to current block center
-			var dx1 = ( x + 0.5 ) - camPos[0];
-			var dy1 = ( y + 0.5 ) - camPos[1];
-			var dz1 = ( z + 0.5 ) - camPos[2];
-			var dist1 = Math.sqrt( dx1 * dx1 + dy1 * dy1 + dz1 * dz1 );
-			// Distance from camera to adjacent block center (back block is at z+1)
-			var dx2 = ( x + 0.5 ) - camPos[0];
-			var dy2 = ( y + 0.5 ) - camPos[1];
-			var dz2 = ( (z + 1) + 0.5 ) - camPos[2];
-			var dist2 = Math.sqrt( dx2 * dx2 + dy2 * dy2 + dz2 * dz2 );
-			// Only render face if current block is closer to camera (render the inner face of the closer block)
-			shouldRenderFace = ( dist1 < dist2 );
-		} else {
-			// If no camera position, don't render face (fallback)
-			shouldRenderFace = false;
-		}
-	}
-	if ( shouldRenderFace && ( yOffset != 0 || z == world.sz - 1 || !blockBack || blockBack == BLOCK.AIR || blockBack.transparent ) )
+	var shouldRenderBack = shouldRenderFaceBetweenBlocks( block, blockBack, x, y, z, x, y, z + 1 );
+	if ( shouldRenderBack && ( yOffset != 0 || z == world.sz - 1 || !blockBack || blockBack == BLOCK.AIR || blockBack.transparent ) )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.BACK );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
@@ -818,31 +787,8 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	// Left - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Left es X-1
 	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
-	// For two adjacent transparent solid blocks with DIFFERENT IDs, only render the face of the block farther from camera
-	// AIR is transparent but not solid, so faces to AIR must always be rendered
-	var shouldRenderFace = true;
-	if ( block.transparent && (block.solid !== false) && blockLeft && blockLeft != BLOCK.AIR && blockLeft.transparent && (blockLeft.solid !== false) && block.id !== blockLeft.id ) {
-		// Two transparent solid blocks adjacent - render only the face of the block farther from camera
-		if ( world.renderer && world.renderer.camPos ) {
-			var camPos = world.renderer.camPos;
-			// Distance from camera to current block center
-			var dx1 = ( x + 0.5 ) - camPos[0];
-			var dy1 = ( y + 0.5 ) - camPos[1];
-			var dz1 = ( z + 0.5 ) - camPos[2];
-			var dist1 = Math.sqrt( dx1 * dx1 + dy1 * dy1 + dz1 * dz1 );
-			// Distance from camera to adjacent block center (left block is at x-1)
-			var dx2 = ( (x - 1) + 0.5 ) - camPos[0];
-			var dy2 = ( y + 0.5 ) - camPos[1];
-			var dz2 = ( z + 0.5 ) - camPos[2];
-			var dist2 = Math.sqrt( dx2 * dx2 + dy2 * dy2 + dz2 * dz2 );
-			// Only render face if current block is closer to camera (render the inner face of the closer block)
-			shouldRenderFace = ( dist1 < dist2 );
-		} else {
-			// If no camera position, don't render face (fallback)
-			shouldRenderFace = false;
-		}
-	}
-	if ( shouldRenderFace && ( yOffset != 0 || x == 0 || !blockLeft || blockLeft == BLOCK.AIR || blockLeft.transparent ) )
+	var shouldRenderLeft = shouldRenderFaceBetweenBlocks( block, blockLeft, x, y, z, x - 1, y, z );
+	if ( shouldRenderLeft && ( yOffset != 0 || x == 0 || !blockLeft || blockLeft == BLOCK.AIR || blockLeft.transparent ) )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.LEFT );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
@@ -879,31 +825,8 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	// Right - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Right es X+1
 	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
-	// For two adjacent transparent solid blocks with DIFFERENT IDs, only render the face of the block farther from camera
-	// AIR is transparent but not solid, so faces to AIR must always be rendered
-	var shouldRenderFace = true;
-	if ( block.transparent && (block.solid !== false) && blockRight && blockRight != BLOCK.AIR && blockRight.transparent && (blockRight.solid !== false) && block.id !== blockRight.id ) {
-		// Two transparent solid blocks adjacent - render only the face of the block farther from camera
-		if ( world.renderer && world.renderer.camPos ) {
-			var camPos = world.renderer.camPos;
-			// Distance from camera to current block center
-			var dx1 = ( x + 0.5 ) - camPos[0];
-			var dy1 = ( y + 0.5 ) - camPos[1];
-			var dz1 = ( z + 0.5 ) - camPos[2];
-			var dist1 = Math.sqrt( dx1 * dx1 + dy1 * dy1 + dz1 * dz1 );
-			// Distance from camera to adjacent block center (right block is at x+1)
-			var dx2 = ( (x + 1) + 0.5 ) - camPos[0];
-			var dy2 = ( y + 0.5 ) - camPos[1];
-			var dz2 = ( z + 0.5 ) - camPos[2];
-			var dist2 = Math.sqrt( dx2 * dx2 + dy2 * dy2 + dz2 * dz2 );
-			// Only render face if current block is closer to camera (render the inner face of the closer block)
-			shouldRenderFace = ( dist1 < dist2 );
-		} else {
-			// If no camera position, don't render face (fallback)
-			shouldRenderFace = false;
-		}
-	}
-	if ( shouldRenderFace && ( yOffset != 0 || x == world.sx - 1 || !blockRight || blockRight == BLOCK.AIR || blockRight.transparent ) )
+	var shouldRenderRight = shouldRenderFaceBetweenBlocks( block, blockRight, x, y, z, x + 1, y, z );
+	if ( shouldRenderRight && ( yOffset != 0 || x == world.sx - 1 || !blockRight || blockRight == BLOCK.AIR || blockRight.transparent ) )
 	{
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.RIGHT );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
