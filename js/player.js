@@ -10,6 +10,12 @@ MOUSE.DOWN = 1;
 MOUSE.UP = 2;
 MOUSE.MOVE = 3;
 
+// Game mode enumeration
+var GAME_MODE = {};
+GAME_MODE.SURVIVAL = 0;
+GAME_MODE.CREATIVE = 1;
+GAME_MODE.SPECTATOR = 2;
+
 // Constructor()
 //
 // Creates a new local player manager.
@@ -36,11 +42,29 @@ Player.prototype.setWorld = function( world )
 	this.spectatorMode = false; // Modo espectador: volar libremente sin colisiones
 	this.cameraMode = 1; // Modo de cámara: 1 = primera persona, 2 = segunda persona, 3 = tercera persona
 	
+	// Game mode system
+	this.gameMode = GAME_MODE.SURVIVAL; // Default: Survival mode
+	this.health = 20; // Health (0-20, like Minecraft)
+	this.maxHealth = 20;
+	this.hunger = 20; // Hunger (0-20, like Minecraft)
+	this.maxHunger = 20;
+	
 	// Inventory system
-	this.hotbar = new Array(9).fill(null); // 9 slots del hotbar
+	this.hotbar = new Array(9).fill(null); // 9 slots del hotbar (can be Block or ItemStack)
 	this.inventory = new Array(27).fill(null); // 27 slots del inventario (3 filas x 9 columnas)
 	this.selectedHotbarSlot = 0; // Slot seleccionado (0-8)
 	this.inventoryOpen = false;
+	
+	// Item system support (optional, for future use)
+	this.useItemSystem = false; // Set to true to use ItemStack instead of Block
+	
+	// Initialize game mode UI
+	// Use setTimeout to ensure DOM is ready
+	setTimeout(function() {
+		if (this.updateGameModeUI) {
+			this.updateGameModeUI();
+		}
+	}.bind(this), 100);
 }
 
 // setClient( client )
@@ -148,416 +172,176 @@ Player.prototype.initInventory = function()
 		};
 	}
 	
-	// Initialize with DIRT in first slot
-	this.setHotbarSlot(0, BLOCK.DIRT);
-	this.selectHotbarSlot(0);
+	// Don't initialize with any blocks by default
+	// Inventory will be populated based on game mode
+	this.clearInventory();
 	
-	// Populate inventory with all spawnable blocks
+	// Update display
+	this.updateHotbarDisplay();
 	this.updateInventoryDisplay();
 	
-	// Initialize 3D player model in inventory
-	this.initInventoryPlayerModel();
+	// Setup creative inventory button
+	this.setupCreativeInventoryButton();
+	
+	// Note: The inventory player model renderer and 1x1x3 environment
+	// will be initialized in startGameLoop() to ensure everything is ready
 }
 
-// initInventoryPlayerModel()
+// setupCreativeInventoryButton()
 //
-// Initializes a mini 3D WebGL renderer for the player model in the inventory.
+// Sets up the creative inventory button click handlers.
 
-Player.prototype.initInventoryPlayerModel = function()
+Player.prototype.setupCreativeInventoryButton = function()
 {
-	var canvas = document.getElementById("inventoryPlayerCanvas");
-	if (!canvas) return;
+	var pl = this;
+	var creativeInventoryButton = document.getElementById("creativeInventoryButton");
+	var creativeInventoryCloseButton = document.getElementById("creativeInventoryCloseButton");
+	var creativeInventory = document.getElementById("creativeInventory");
+	
+	if (creativeInventoryButton) {
+		creativeInventoryButton.onclick = function() {
+			pl.openCreativeInventory();
+		};
+	}
+	
+	if (creativeInventoryCloseButton) {
+		creativeInventoryCloseButton.onclick = function() {
+			pl.closeCreativeInventory();
+		};
+	}
+	
+	if (creativeInventory) {
+		// Close when clicking overlay
+		creativeInventory.onclick = function(e) {
+			if (e.target === creativeInventory || e.target.classList.contains("creative-inventory-overlay")) {
+				pl.closeCreativeInventory();
+			}
+		};
+	}
+}
+
+
+
+// clearInventory()
+//
+// Clears all items from hotbar and inventory.
+
+Player.prototype.clearInventory = function()
+{
+	// Clear hotbar
+	for (var i = 0; i < this.hotbar.length; i++) {
+		this.hotbar[i] = null;
+	}
+	
+	// Clear inventory
+	for (var i = 0; i < this.inventory.length; i++) {
+		this.inventory[i] = null;
+	}
+	
+	// Reset build material to AIR
+	this.buildMaterial = BLOCK.AIR;
+	
+	// Reset selected slot to 0
+	this.selectedHotbarSlot = 0;
+	
+	// Update displays
+	this.updateHotbarDisplay();
+}
+
+// openCreativeInventory()
+//
+// Opens the creative inventory menu (only available in creative mode).
+
+Player.prototype.openCreativeInventory = function()
+{
+	if (this.gameMode !== GAME_MODE.CREATIVE) return;
+	
+	var creativeInventory = document.getElementById("creativeInventory");
+	if (!creativeInventory) return;
+	
+	creativeInventory.style.display = "flex";
+	this.inventoryOpen = true;
+	this.updateCreativeInventoryDisplay();
+}
+
+// closeCreativeInventory()
+//
+// Closes the creative inventory menu.
+
+Player.prototype.closeCreativeInventory = function()
+{
+	var creativeInventory = document.getElementById("creativeInventory");
+	if (creativeInventory) {
+		creativeInventory.style.display = "none";
+	}
+	this.inventoryOpen = false;
+}
+
+// updateCreativeInventoryDisplay()
+//
+// Populates the creative inventory with all available blocks and items.
+
+Player.prototype.updateCreativeInventoryDisplay = function()
+{
+	var creativeInventoryGrid = document.getElementById("creativeInventoryGrid");
+	if (!creativeInventoryGrid) return;
 	
 	var pl = this;
 	
-	// Set canvas size (must match CSS size)
-	var rect = canvas.getBoundingClientRect();
-	canvas.width = 64;
-	canvas.height = 64;
-	canvas.style.width = "64px";
-	canvas.style.height = "64px";
+	// Clear existing slots
+	creativeInventoryGrid.innerHTML = "";
 	
-	// Get WebGL context with alpha channel for transparency
-	var gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: false }) || 
-	         canvas.getContext("experimental-webgl", { alpha: true, premultipliedAlpha: false });
-	if (!gl) {
-		console.warn("WebGL not supported for inventory player model");
-		return;
+	// Get all spawnable blocks
+	var allBlocks = [];
+	for (var mat in BLOCK) {
+		if (typeof(BLOCK[mat]) == "object" && BLOCK[mat].spawnable == true && BLOCK[mat] !== BLOCK.AIR) {
+			allBlocks.push(BLOCK[mat]);
+		}
 	}
 	
-	// Store gl context
-	this.inventoryPlayerGL = gl;
-	this.inventoryPlayerCanvas = canvas;
-	
-	// Initialize WebGL
-	this.initInventoryPlayerWebGL(gl);
-	
-	// Mouse tracking for head rotation
-	var modelYaw = 0;
-	var modelPitch = 0;
-	
-	// Store rotation state
-	this.inventoryModelYaw = modelYaw;
-	this.inventoryModelPitch = modelPitch;
-	
-	// Mouse move listener for player model rotation (follows mouse without dragging)
-	canvas.addEventListener("mousemove", function(e) {
-		if (!pl.inventoryOpen) return;
-		
-		var rect = canvas.getBoundingClientRect();
-		var mouseX = e.clientX - rect.left;
-		var mouseY = e.clientY - rect.top;
-		
-		// Normalize mouse coordinates to -1 to 1 range
-		var normalizedX = (mouseX / rect.width) * 2 - 1;
-		var normalizedY = (mouseY / rect.height) * 2 - 1;
-		
-		// Adjust sensitivity and limits
-		modelYaw = normalizedX * Math.PI * 0.2; // Max 36 degrees left/right
-		modelPitch = -normalizedY * Math.PI * 0.2; // Max 36 degrees up/down
-		
-		pl.inventoryModelYaw = modelYaw;
-		pl.inventoryModelPitch = modelPitch;
-		pl.renderInventoryPlayerModel(modelYaw, modelPitch);
+	// Sort blocks by ID
+	allBlocks.sort(function(a, b) {
+		return (a.id || 0) - (b.id || 0);
 	});
 	
-	// Create render loop for continuous rendering when inventory is open
-	this.inventoryPlayerRenderer = {
-		renderLoopId: null,
-		startRenderLoop: function() {
-			if (this.renderLoopId) return;
-			var self = this;
-			var frameCount = 0;
-			function loop() {
-				if (pl.inventoryOpen && pl.inventoryModelYaw !== undefined && pl.inventoryModelPitch !== undefined) {
-					pl.renderInventoryPlayerModel(pl.inventoryModelYaw, pl.inventoryModelPitch);
-					frameCount++;
-					// Log cada 60 frames para verificar que se está renderizando
-					if (frameCount % 60 === 0) {
-						console.log('Inventory player model render loop activo - frame:', frameCount);
-					}
+	// Create slots for each block (display in a scrollable grid)
+	for (var i = 0; i < allBlocks.length; i++) {
+		var block = allBlocks[i];
+		var slot = document.createElement("div");
+		slot.className = "creative-inventory-slot";
+		slot.blockData = block;
+		
+		// Render thumbnail
+		var thumb = this.renderBlockThumbnail(block, 32);
+		thumb.className = "block-thumbnail";
+		slot.appendChild(thumb);
+		
+		// Add block name label
+		var label = document.createElement("div");
+		label.className = "creative-slot-label";
+		label.textContent = this.getBlockDisplayName(block);
+		slot.appendChild(label);
+		
+		// Set up click handler - add to hotbar
+		slot.onclick = function() {
+			var selectedBlock = this.blockData;
+			if (selectedBlock) {
+				// Add to first empty hotbar slot, or replace current selected slot
+				var emptySlot = pl.hotbar.indexOf(null);
+				if (emptySlot !== -1) {
+					pl.setHotbarSlot(emptySlot, selectedBlock);
+					pl.selectHotbarSlot(emptySlot);
+				} else {
+					pl.setHotbarSlot(pl.selectedHotbarSlot, selectedBlock);
 				}
-				self.renderLoopId = requestAnimationFrame(loop);
+				// Close creative inventory after selection
+				pl.closeCreativeInventory();
 			}
-			loop();
-		},
-		stopRenderLoop: function() {
-			if (this.renderLoopId) {
-				cancelAnimationFrame(this.renderLoopId);
-				this.renderLoopId = null;
-			}
-		}
-	};
-	
-	// Initial render
-	this.renderInventoryPlayerModel(0, 0);
-}
-
-// initInventoryPlayerWebGL( gl )
-//
-// Initializes WebGL context for inventory player model rendering.
-
-Player.prototype.initInventoryPlayerWebGL = function(gl)
-{
-	// Vertex shader (same as main renderer)
-	var vertexShaderSource = `
-		attribute vec3 aPosition;
-		attribute vec2 aTexCoord;
-		attribute vec4 aColor;
-		uniform mat4 uModelMat;
-		uniform mat4 uViewMat;
-		uniform mat4 uProjMat;
-		varying vec2 vTexCoord;
-		varying vec4 vColor;
-		void main() {
-			gl_Position = uProjMat * uViewMat * uModelMat * vec4(aPosition, 1.0);
-			vTexCoord = aTexCoord;
-			vColor = aColor;
-		}
-	`;
-	
-	// Fragment shader (same as main renderer)
-	var fragmentShaderSource = `
-		precision mediump float;
-		uniform sampler2D uSampler;
-		varying vec2 vTexCoord;
-		varying vec4 vColor;
-		void main() {
-			gl_FragColor = texture2D(uSampler, vTexCoord) * vColor;
-		}
-	`;
-	
-	// Compile shaders
-	var vertexShader = this.compileShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
-	var fragmentShader = this.compileShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
-	
-	// Create program
-	var program = gl.createProgram();
-	gl.attachShader(program, vertexShader);
-	gl.attachShader(program, fragmentShader);
-	gl.linkProgram(program);
-	
-	if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-		console.error("Error linking program:", gl.getProgramInfoLog(program));
-		return;
-	}
-	
-	gl.useProgram(program);
-	
-	// Get attribute and uniform locations
-	var aPosition = gl.getAttribLocation(program, "aPosition");
-	var aTexCoord = gl.getAttribLocation(program, "aTexCoord");
-	var aColor = gl.getAttribLocation(program, "aColor");
-	var uModelMat = gl.getUniformLocation(program, "uModelMat");
-	var uViewMat = gl.getUniformLocation(program, "uViewMat");
-	var uProjMat = gl.getUniformLocation(program, "uProjMat");
-	var uSampler = gl.getUniformLocation(program, "uSampler");
-	
-	// Store program and locations
-	this.inventoryPlayerProgram = program;
-	this.inventoryPlayerAttribs = {
-		position: aPosition,
-		texCoord: aTexCoord,
-		color: aColor
-	};
-	this.inventoryPlayerUniforms = {
-		modelMat: uModelMat,
-		viewMat: uViewMat,
-		projMat: uProjMat,
-		sampler: uSampler
-	};
-	
-	// Enable attributes
-	gl.enableVertexAttribArray(aPosition);
-	gl.enableVertexAttribArray(aTexCoord);
-	gl.enableVertexAttribArray(aColor);
-	
-	// WebGL state
-	gl.enable(gl.DEPTH_TEST);
-	gl.enable(gl.CULL_FACE);
-	gl.enable(gl.BLEND);
-	gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-	gl.clearColor(0, 0, 0, 0); // Transparent background
-	
-	// Create a temporary white texture while player.png loads
-	var whiteTexture = gl.createTexture();
-	gl.bindTexture(gl.TEXTURE_2D, whiteTexture);
-	var whitePixel = new Uint8Array([255, 255, 255, 255]);
-	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, whitePixel);
-	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-	this.inventoryPlayerTexture = whiteTexture; // Usar textura blanca temporal
-	
-	// Load player texture
-	var playerTexture = gl.createTexture();
-	var img = new Image();
-	var self = this;
-	img.onload = function() {
-		gl.bindTexture(gl.TEXTURE_2D, playerTexture);
-		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-		self.inventoryPlayerTexture = playerTexture; // Reemplazar con la textura real
-		// Render after texture loads
-		if (self.inventoryOpen) {
-			self.renderInventoryPlayerModel(self.inventoryModelYaw || 0, self.inventoryModelPitch || 0);
-		}
-	};
-	img.onerror = function() {
-		console.error('Error cargando player.png para el modelo del inventario');
-	};
-	img.src = "media/player.png";
-	
-	// Load player models (head and body)
-	this.loadInventoryPlayerModels(gl);
-}
-
-// compileShader( gl, type, source )
-//
-// Compiles a WebGL shader.
-
-Player.prototype.compileShader = function(gl, type, source)
-{
-	var shader = gl.createShader(type);
-	gl.shaderSource(shader, source);
-	gl.compileShader(shader);
-	
-	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-		console.error("Error compiling shader:", gl.getShaderInfoLog(shader));
-		gl.deleteShader(shader);
-		return null;
-	}
-	
-	return shader;
-}
-
-// loadInventoryPlayerModels( gl )
-//
-// Loads player head and body models for inventory rendering.
-// Reuses vertex data from the main renderer to save memory.
-
-Player.prototype.loadInventoryPlayerModels = function(gl)
-{
-	// Reuse vertex data from the main renderer (shared functions)
-	var headVertices = getPlayerHeadVertices();
-	var bodyVertices = getPlayerBodyVertices();
-	
-	// Create buffers in this WebGL context
-	var headBuffer = gl.createBuffer();
-	gl.bindBuffer(gl.ARRAY_BUFFER, headBuffer);
-	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(headVertices), gl.STATIC_DRAW);
-	headBuffer.vertices = headVertices.length / 9;
-	this.inventoryPlayerHead = headBuffer;
-	
-	var bodyBuffer = gl.createBuffer();
-	gl.bindBuffer(gl.ARRAY_BUFFER, bodyBuffer);
-	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(bodyVertices), gl.STATIC_DRAW);
-	bodyBuffer.vertices = bodyVertices.length / 9;
-	this.inventoryPlayerBody = bodyBuffer;
-}
-
-// renderInventoryPlayerModel( yaw, pitch )
-//
-// Renders the player model in the inventory with head following mouse.
-
-Player.prototype.renderInventoryPlayerModel = function(yaw, pitch)
-{
-	var gl = this.inventoryPlayerGL;
-	var canvas = this.inventoryPlayerCanvas;
-	if (!gl || !canvas || !this.inventoryPlayerHead || !this.inventoryPlayerBody) {
-		console.warn('Inventory player model: faltan recursos', {
-			gl: !!gl,
-			canvas: !!canvas,
-			head: !!this.inventoryPlayerHead,
-			body: !!this.inventoryPlayerBody,
-			texture: !!this.inventoryPlayerTexture
-		});
-		return;
-	}
-	
-	// Set viewport
-	gl.viewport(0, 0, canvas.width, canvas.height);
-	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-	
-	// Check for WebGL errors
-	var error = gl.getError();
-	if (error !== gl.NO_ERROR) {
-		console.warn('WebGL error before render:', error);
-	}
-	
-	// Use the shader program
-	gl.useProgram(this.inventoryPlayerProgram);
-	
-	// Setup matrices
-	var modelMatrix = mat4.create();
-	var viewMatrix = mat4.create();
-	var projMatrix = mat4.create();
-	
-	// Projection: perspective looking at player from front
-	mat4.perspective(projMatrix, Math.PI / 4, canvas.width / canvas.height, 0.1, 10.0);
-	
-	// View: cámara en tercera persona estática, mirando al jugador desde el frente
-	// IMPORTANTE: El shader espera [x, y, z] donde z es altura
-	// Pero cuando se renderiza el modelo del jugador en el renderer principal, se hace:
-	// mat4.translate(modelMatrix, [player.pos.x, player.pos.z, player.pos.y + 1.7])
-	// Esto significa que se pasa [x, z, y] al shader, donde y es altura
-	// Entonces, el shader interpreta esto como [x, y, z] donde z=y (altura)
-	// Por lo tanto, en el sistema del shader: X y Y = horizontal, Z = vertical (altura)
-	// El modelo del cuerpo va de Z=0.73 a Z=1.45 en el sistema original
-	// Después del scale 1.5x: Z=1.095 a Z=2.175
-	// El centro del cuerpo está en Z=(1.095 + 2.175) / 2 = 1.635
-	// La cabeza está en Z=1.7 * 1.5 = 2.55 (centro de la cabeza)
-	// Cámara estática en tercera persona: delante del jugador, mirando hacia él
-	var cameraDistance = 4.0; // Distancia fija desde el jugador (eje Y positivo en el sistema del shader)
-	var modelCenterHeight = 1.635; // Centro del modelo después del scale: (1.095 + 2.175) / 2 = 1.635
-	// Posición de la cámara: delante del jugador (eje Y positivo en el sistema del shader)
-	// Mirando hacia el jugador en el origen, centrado verticalmente
-	// lookAt espera: [eyeX, eyeY, eyeZ], [centerX, centerY, centerZ], [upX, upY, upZ]
-	// En el sistema del shader: X y Y = horizontal, Z = vertical (altura)
-	mat4.lookAt(viewMatrix, [0, cameraDistance, modelCenterHeight], [0, 0, modelCenterHeight], [0, 0, 1]);
-	
-	// Bind texture (siempre debería existir, al menos la textura blanca temporal)
-	if (!this.inventoryPlayerTexture) {
-		// Si por alguna razón no hay textura, crear una blanca temporal
-		var whiteTexture = gl.createTexture();
-		gl.bindTexture(gl.TEXTURE_2D, whiteTexture);
-		var whitePixel = new Uint8Array([255, 255, 255, 255]);
-		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, whitePixel);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-		this.inventoryPlayerTexture = whiteTexture;
-	}
-	gl.activeTexture(gl.TEXTURE0);
-	gl.bindTexture(gl.TEXTURE_2D, this.inventoryPlayerTexture);
-	gl.uniform1i(this.inventoryPlayerUniforms.sampler, 0);
-	
-	// Set uniforms
-	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.viewMat, false, viewMatrix);
-	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.projMat, false, projMatrix);
-	
-	// Draw body
-	// IMPORTANTE: El modelo está definido con coordenadas [x, y, z] donde z es altura
-	// En el renderer principal, cuando se renderiza el modelo del jugador, se hace:
-	// mat4.translate(modelMatrix, [player.pos.x, player.pos.z, player.pos.y + 1.7])
-	// Esto significa que se pasa [x, z, y] al shader, donde y es altura
-	// El shader interpreta esto como [x, y, z] donde z=y (altura)
-	// Por lo tanto, en el sistema del shader: X y Y = horizontal, Z = vertical (altura)
-	// El modelo del cuerpo va de Z=0.73 a Z=1.45 en el sistema original
-	// Después del scale 1.5x: Z=1.095 a Z=2.175
-	// El centro del cuerpo está en Z=(1.095 + 2.175) / 2 = 1.635
-	mat4.identity(modelMatrix);
-	// Centrar el modelo en el origen verticalmente
-	// El cuerpo va de Z=1.095 a Z=2.175 después del scale, centro en Z=1.635
-	// Para centrarlo, mover hacia abajo por 1.635
-	mat4.translate(modelMatrix, [0, 0, -1.635]); // [x, y, z] donde z es altura - mover hacia abajo para centrar
-	mat4.scale(modelMatrix, [1.5, 1.5, 1.5]); // Escalar 1.5x para que sea más visible
-	// Rotar 180 grados para que mire hacia la cámara (como en el renderer principal)
-	mat4.rotateZ(modelMatrix, Math.PI);
-	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.modelMat, false, modelMatrix);
-	this.drawInventoryBuffer(this.inventoryPlayerBody);
-	
-	// Draw head (follows mouse)
-	mat4.identity(modelMatrix);
-	// El modelo de la cabeza va de Z=-0.25 a Z=0.25 en el sistema original
-	// Después del scale 1.5x: Z=-0.375 a Z=0.375, centro en Z=0
-	// El cuerpo termina en Z=2.175, así que la cabeza debe estar en Z=2.175 + 0.375 = 2.55
-	// Pero el centro de la cabeza está en Z=0, así que necesito posicionarla en Z=2.55
-	// Para centrarlo verticalmente, mover hacia abajo por 1.635 (igual que el cuerpo)
-	mat4.translate(modelMatrix, [0, 0, 2.55 - 1.635]); // [x, y, z] donde z es altura - cabeza a 2.55, centrado
-	mat4.scale(modelMatrix, [1.5, 1.5, 1.5]); // Escalar 1.5x para que sea más visible
-	// Rotar 180 grados para que mire hacia la cámara, luego aplicar rotación del mouse
-	mat4.rotateZ(modelMatrix, Math.PI - yaw); // Rotate around Z (horizontal rotation) - invertir yaw
-	mat4.rotateX(modelMatrix, -pitch); // Rotate around X (vertical rotation)
-	gl.uniformMatrix4fv(this.inventoryPlayerUniforms.modelMat, false, modelMatrix);
-	this.drawInventoryBuffer(this.inventoryPlayerHead);
-	
-	// Check for WebGL errors after rendering
-	var error = gl.getError();
-	if (error !== gl.NO_ERROR) {
-		console.warn('WebGL error after render:', error);
+		};
+		
+		creativeInventoryGrid.appendChild(slot);
 	}
 }
-
-// drawInventoryBuffer( buffer )
-//
-// Draws a vertex buffer in the inventory player model renderer.
-
-Player.prototype.drawInventoryBuffer = function(buffer)
-{
-	var gl = this.inventoryPlayerGL;
-	if (!gl || !buffer) return;
-	
-	gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-	
-	var stride = 9 * 4; // 9 floats per vertex (x, y, z, u, v, r, g, b, a)
-	
-	gl.vertexAttribPointer(this.inventoryPlayerAttribs.position, 3, gl.FLOAT, false, stride, 0);
-	gl.vertexAttribPointer(this.inventoryPlayerAttribs.texCoord, 2, gl.FLOAT, false, stride, 3 * 4);
-	gl.vertexAttribPointer(this.inventoryPlayerAttribs.color, 4, gl.FLOAT, false, stride, 5 * 4);
-	
-	gl.drawArrays(gl.TRIANGLES, 0, buffer.vertices);
-}
-
 
 // selectHotbarSlot( index )
 //
@@ -587,6 +371,81 @@ Player.prototype.selectHotbarSlot = function(index)
 	} else {
 		this.buildMaterial = BLOCK.AIR;
 	}
+	
+	// Show item title
+	this.showItemTitle(block);
+}
+
+// showItemTitle( block )
+//
+// Shows the item name as a title when switching hotbar slots.
+
+Player.prototype.showItemTitle = function(block)
+{
+	var titleEl = document.getElementById("itemTitleDisplay");
+	var titleTextEl = document.getElementById("itemTitleText");
+	if (!titleEl || !titleTextEl) return;
+	
+	// Get item name
+	var itemName = "Air";
+	if (block && block !== BLOCK.AIR) {
+		// Try to get name from ItemStack if using item system
+		if (block instanceof ItemStack && block.item) {
+			itemName = block.item.name || "Unknown Item";
+		}
+		// Try to get name from ITEM_REGISTRY
+		else if (typeof ITEM_REGISTRY !== 'undefined') {
+			var item = ITEM_REGISTRY.getByBlock(block);
+			if (item) {
+				itemName = item.name || "Unknown Item";
+			} else {
+				// Fallback: get name from block property name
+				itemName = this.getBlockDisplayName(block);
+			}
+		}
+		// Fallback: get name from block property name
+		else {
+			itemName = this.getBlockDisplayName(block);
+		}
+	}
+	
+	// Update title text
+	titleTextEl.textContent = itemName;
+	
+	// Show title with fade in
+	titleEl.style.opacity = "1";
+	
+	// Hide title after 2 seconds with fade out
+	if (this.itemTitleTimeout) {
+		clearTimeout(this.itemTitleTimeout);
+	}
+	this.itemTitleTimeout = setTimeout(function() {
+		titleEl.style.opacity = "0";
+	}, 2000);
+}
+
+// getBlockDisplayName( block )
+//
+// Gets a display name for a block by finding its property name in BLOCK.
+
+Player.prototype.getBlockDisplayName = function(block)
+{
+	if (!block) return "Air";
+	
+	// Search for block in BLOCK object
+	for (var prop in BLOCK) {
+		if (BLOCK.hasOwnProperty(prop) && BLOCK[prop] === block) {
+			// Convert property name to display name
+			// e.g., "PLANKS_STAIRS" -> "Planks Stairs"
+			var name = prop.replace(/_/g, ' ').toLowerCase();
+			// Capitalize first letter of each word
+			name = name.replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+			return name;
+		}
+	}
+	
+	// Fallback: use block id or generic name
+	return "Block " + (block.id || "?");
 }
 
 // setHotbarSlot( index, block )
@@ -600,6 +459,109 @@ Player.prototype.setHotbarSlot = function(index, block)
 	this.hotbar[index] = block;
 	this.updateHotbarDisplay();
 }
+
+// Item System Methods (for future use with ItemStack)
+
+// addItemStack( itemStack )
+//
+// Adds an ItemStack to the inventory. Returns true if successful.
+
+Player.prototype.addItemStack = function(itemStack) {
+	if (!itemStack || !itemStack.item || itemStack.isEmpty()) {
+		return false;
+	}
+	
+	// Try to add to existing stacks first
+	for (var i = 0; i < this.hotbar.length; i++) {
+		var slot = this.hotbar[i];
+		if (slot && slot instanceof ItemStack && slot.item && slot.item.id === itemStack.item.id) {
+			if (!slot.isFull()) {
+				var toAdd = Math.min(itemStack.count, slot.item.maxStack - slot.count);
+				slot.add(toAdd);
+				itemStack.remove(toAdd);
+				if (itemStack.isEmpty()) {
+					this.updateHotbarDisplay();
+					return true;
+				}
+			}
+		}
+	}
+	
+	// Try inventory slots
+	for (var i = 0; i < this.inventory.length; i++) {
+		var slot = this.inventory[i];
+		if (slot && slot instanceof ItemStack && slot.item && slot.item.id === itemStack.item.id) {
+			if (!slot.isFull()) {
+				var toAdd = Math.min(itemStack.count, slot.item.maxStack - slot.count);
+				slot.add(toAdd);
+				itemStack.remove(toAdd);
+				if (itemStack.isEmpty()) {
+					this.updateInventoryDisplay();
+					return true;
+				}
+			}
+		}
+	}
+	
+	// Try to add to empty hotbar slot
+	for (var i = 0; i < this.hotbar.length; i++) {
+		if (!this.hotbar[i] || (this.hotbar[i] instanceof ItemStack && this.hotbar[i].isEmpty())) {
+			this.hotbar[i] = itemStack.clone();
+			this.updateHotbarDisplay();
+			return true;
+		}
+	}
+	
+	// Try to add to empty inventory slot
+	for (var i = 0; i < this.inventory.length; i++) {
+		if (!this.inventory[i] || (this.inventory[i] instanceof ItemStack && this.inventory[i].isEmpty())) {
+			this.inventory[i] = itemStack.clone();
+			this.updateInventoryDisplay();
+			return true;
+		}
+	}
+	
+	// No space available
+	return false;
+};
+
+// getSelectedItem()
+//
+// Gets the currently selected item/block from hotbar.
+
+Player.prototype.getSelectedItem = function() {
+	var slot = this.hotbar[this.selectedHotbarSlot];
+	if (!slot) return null;
+	
+	// If using ItemStack system
+	if (slot instanceof ItemStack) {
+		return slot.isEmpty() ? null : slot.item;
+	}
+	
+	// Legacy: return block directly
+	return slot;
+};
+
+// getSelectedBlock()
+//
+// Gets the currently selected block (for compatibility).
+
+Player.prototype.getSelectedBlock = function() {
+	var item = this.getSelectedItem();
+	if (!item) return null;
+	
+	// If item is a block type
+	if (item.type === ITEM_TYPE.BLOCK && item.data && item.data.block) {
+		return item.data.block;
+	}
+	
+	// Legacy: might be a block directly
+	if (item && item.id !== undefined && item.texture) {
+		return item;
+	}
+	
+	return null;
+};
 
 // updateHotbarDisplay()
 //
@@ -621,7 +583,13 @@ Player.prototype.updateHotbarDisplay = function()
 		
 		// Add thumbnail if block exists
 		if (block && block !== BLOCK.AIR) {
-			var thumb = this.renderBlockThumbnail(block, 32);
+			// Get actual block from ItemStack if using item system
+			var actualBlock = block;
+			if (block instanceof ItemStack && block.item && block.item.type === ITEM_TYPE.BLOCK && block.item.data && block.item.data.block) {
+				actualBlock = block.item.data.block;
+			}
+			
+			var thumb = this.renderBlockThumbnail(actualBlock, 16);
 			thumb.className = "block-thumbnail";
 			slot.appendChild(thumb);
 		}
@@ -633,7 +601,9 @@ Player.prototype.updateHotbarDisplay = function()
 
 // updateInventoryDisplay()
 //
-// Populates the inventory grid with all spawnable blocks.
+// Updates the inventory grid to show player's collected items.
+// In survival mode, only shows items the player has collected.
+// In creative mode, this is not used (use creative inventory instead).
 
 Player.prototype.updateInventoryDisplay = function()
 {
@@ -645,48 +615,55 @@ Player.prototype.updateInventoryDisplay = function()
 	// Clear existing slots
 	inventoryGrid.innerHTML = "";
 	
-	// Get all spawnable blocks
-	var spawnableBlocks = [];
-	for (var mat in BLOCK) {
-		if (typeof(BLOCK[mat]) == "object" && BLOCK[mat].spawnable == true) {
-			spawnableBlocks.push(BLOCK[mat]);
+	// In survival mode, show only collected items from inventory array
+	// In creative mode, inventory is managed separately via creative inventory
+	var itemsToShow = [];
+	if (this.gameMode === GAME_MODE.SURVIVAL) {
+		// Show only items from player's inventory
+		for (var i = 0; i < this.inventory.length; i++) {
+			if (this.inventory[i] && this.inventory[i] !== BLOCK.AIR) {
+				itemsToShow.push(this.inventory[i]);
+			}
 		}
 	}
 	
-	// Create slots for each block
-	for (var i = 0; i < spawnableBlocks.length && i < 27; i++) {
+	// Create slots for each item (max 27 slots)
+	for (var i = 0; i < 27; i++) {
 		var slot = document.createElement("div");
 		slot.className = "inventory-slot";
-		slot.blockData = spawnableBlocks[i];
 		
-		// Render thumbnail
-		var thumb = this.renderBlockThumbnail(spawnableBlocks[i], 16);
-		thumb.className = "block-thumbnail";
-		slot.appendChild(thumb);
-		
-		// Set up click handler
-		slot.onclick = function() {
-			var block = this.blockData;
-			if (block) {
-				// Add to first empty hotbar slot
-				var emptySlot = pl.hotbar.indexOf(null);
-				if (emptySlot !== -1) {
-					pl.setHotbarSlot(emptySlot, block);
-					pl.selectHotbarSlot(emptySlot);
-				} else {
-					// Replace current selected slot
-					pl.setHotbarSlot(pl.selectedHotbarSlot, block);
-				}
+		if (i < itemsToShow.length) {
+			var item = itemsToShow[i];
+			slot.blockData = item;
+			
+			// Get actual block from ItemStack if using item system
+			var actualBlock = item;
+			if (item instanceof ItemStack && item.item && item.item.type === ITEM_TYPE.BLOCK && item.item.data && item.item.data.block) {
+				actualBlock = item.item.data.block;
 			}
-		};
+			
+			// Render thumbnail
+			var thumb = this.renderBlockThumbnail(actualBlock, 16);
+			thumb.className = "block-thumbnail";
+			slot.appendChild(thumb);
+			
+			// Set up click handler
+			slot.onclick = function() {
+				var block = this.blockData;
+				if (block) {
+					// Add to first empty hotbar slot
+					var emptySlot = pl.hotbar.indexOf(null);
+					if (emptySlot !== -1) {
+						pl.setHotbarSlot(emptySlot, block);
+						pl.selectHotbarSlot(emptySlot);
+					} else {
+						// Replace current selected slot
+						pl.setHotbarSlot(pl.selectedHotbarSlot, block);
+					}
+				}
+			};
+		}
 		
-		inventoryGrid.appendChild(slot);
-	}
-	
-	// Fill remaining slots with empty slots
-	for (var i = spawnableBlocks.length; i < 27; i++) {
-		var slot = document.createElement("div");
-		slot.className = "inventory-slot";
 		inventoryGrid.appendChild(slot);
 	}
 	
@@ -717,7 +694,13 @@ Player.prototype.updateInventoryHotbarDisplay = function()
 		
 		// Add thumbnail if block exists
 		if (block && block !== BLOCK.AIR) {
-			var thumb = this.renderBlockThumbnail(block, 16);
+			// Get actual block from ItemStack if using item system
+			var actualBlock = block;
+			if (block instanceof ItemStack && block.item && block.item.type === ITEM_TYPE.BLOCK && block.item.data && block.item.data.block) {
+				actualBlock = block.item.data.block;
+			}
+			
+			var thumb = this.renderBlockThumbnail(actualBlock, 16);
 			thumb.className = "block-thumbnail";
 			slot.appendChild(thumb);
 		}
@@ -736,11 +719,99 @@ Player.prototype.updateInventoryHotbarDisplay = function()
 	}
 }
 
+// Block to thumbnail image filename mapping
+var BLOCK_PRE_RENDERED_MAP = {
+	2: 'dirt.png', // DIRT
+	3: 'Oak_block.png', // WOOD
+	4: 'dynamite.png', // TNT
+	5: 'bookshelf.png', // BOOKCASE
+	7: 'oak_planks.png', // PLANK
+	8: 'coblestone.png', // COBBLESTONE
+	9: 'stone.png', // CONCRETE (using stone as fallback)
+	10: 'stone_bricks.png', // BRICK
+	11: 'Arena.png', // SAND
+	12: 'gravel.png', // GRAVEL
+	13: 'iron_ore.png', // IRON
+	14: 'gold_ore.png', // GOLD
+	15: 'diamond_ore.png', // DIAMOND
+	16: 'Obsidian.png', // OBSIDIAN
+	17: 'cristal_pane.png', // GLASS
+	18: 'stone.png', // SPONGE (using stone as fallback - need sponge image)
+	19: 'leaves.png', // LEAVES
+	22: 'bedrock.png', // BEDROCK
+	23: 'grass_block.png', // GRASS (using Césped which is Spanish for grass)
+	24: 'oak_stairs.png', // PLANKS_STAIRS (using oak_stairs as fallback)
+	25: 'stone.png' // WOOL (need wool image)
+};
+
+// getBlockPreRenderedFilename( block )
+//
+// Gets the pre-rendered image filename for a block, or null if not found.
+
+function getBlockPreRenderedFilename(block)
+{
+	if (!block || !block.id) return null;
+	
+	// Check direct ID mapping
+	if (BLOCK_PRE_RENDERED_MAP[block.id]) {
+		return BLOCK_PRE_RENDERED_MAP[block.id];
+	}
+	
+	// Try to find by block name
+	for (var prop in BLOCK) {
+		if (BLOCK.hasOwnProperty(prop) && BLOCK[prop] === block) {
+			// Convert property name to filename format
+			var filename = prop.toLowerCase().replace(/_/g, '_') + '.png';
+			return filename;
+		}
+	}
+	
+	return null;
+}
+
 // renderBlockThumbnail( block, size )
 //
-// Renders a block thumbnail using canvas and terrain.png.
+// Renders a block thumbnail using pre-rendered images from media/thumbnails/ folder.
+// Falls back to 3D rendering if thumbnail image is not available.
 
 Player.prototype.renderBlockThumbnail = function(block, size)
+{
+	// Try to get pre-rendered image filename
+	var filename = getBlockPreRenderedFilename(block);
+	
+	if (filename) {
+		// Create image element
+		var img = document.createElement('img');
+		img.src = 'media/thumbnails/' + filename;
+		img.style.width = size + 'px';
+		img.style.height = size + 'px';
+		img.style.imageRendering = 'pixelated';
+		img.style.display = 'block';
+		img.alt = 'Block thumbnail';
+		
+		// Handle load errors - fallback to 3D rendering
+		img.onerror = function() {
+			console.warn('Thumbnail image not found: ' + filename + ', falling back to 3D rendering');
+			// Replace with canvas if image fails to load
+			var canvas = this.renderBlock3D(block, size);
+			if (img.parentNode) {
+				img.parentNode.replaceChild(canvas, img);
+			}
+		}.bind(this);
+		
+		return img;
+	}
+	
+	// Fallback to 3D rendering if no pre-rendered image mapping
+	return this.renderBlock3D(block, size);
+}
+
+// renderBlock3D( block, size )
+//
+// Renders a block in 3D isometric perspective using canvas and terrain.png.
+// Draws 3 visible faces: top, front, and right side in isometric view.
+
+Player.prototype.renderBlock3D = function(block, size)
 {
 	var canvas = document.createElement("canvas");
 	canvas.width = size;
@@ -750,25 +821,111 @@ Player.prototype.renderBlockThumbnail = function(block, size)
 	// Load terrain.png
 	var img = new Image();
 	img.onload = function() {
-		// Get block texture coordinates (use top face for thumbnail)
-		var texCoords = block.texture(null, null, true, 0, 0, 0, DIRECTION.UP);
+		ctx.imageSmoothingEnabled = false; // Pixelated rendering
+		
+		// Minecraft inventory block preview - isometric projection
+		// Standard isometric: 2:1 ratio (26.565 degrees)
+		var isoAngle = Math.atan(0.5); // ~26.565 degrees
+		var cosAngle = Math.cos(isoAngle); // ~0.8944
+		var sinAngle = Math.sin(isoAngle); // ~0.4472
+		
+		// Block size - use most of canvas
+		var blockSize = size * 0.8;
+		var halfSize = blockSize / 2;
+		
+		// Center of canvas
+		var centerX = size / 2;
+		var centerY = size / 2;
+		
+		// Get texture coordinates for each face (same as render.js)
+		var topTex = block.texture(null, null, true, 0, 0, 0, DIRECTION.UP);
+		var frontTex = block.texture(null, null, true, 0, 0, 0, DIRECTION.FORWARD);
+		var rightTex = block.texture(null, null, true, 0, 0, 0, DIRECTION.RIGHT);
 		
 		// Convert normalized coordinates to pixel coordinates
 		var texWidth = img.width;
 		var texHeight = img.height;
-		var u_min = texCoords[0] * texWidth;
-		var v_min = texCoords[1] * texHeight;
-		var u_max = texCoords[2] * texWidth;
-		var v_max = texCoords[3] * texHeight;
-		var texSize = u_max - u_min;
 		
-		// Draw texture to canvas
-		ctx.imageSmoothingEnabled = false;
+		function getTexPixels(texCoords) {
+			var u_min = texCoords[0] * texWidth;
+			var v_min = texCoords[1] * texHeight;
+			var u_max = texCoords[2] * texWidth;
+			var v_max = texCoords[3] * texHeight;
+			var texSize = u_max - u_min;
+			return { u_min: u_min, v_min: v_min, texSize: texSize };
+		}
+		
+		var topPixels = getTexPixels(topTex);
+		var frontPixels = getTexPixels(frontTex);
+		var rightPixels = getTexPixels(rightTex);
+		
+		// Isometric projection: standard 2:1 ratio
+		// Draw order: back to front (right, front, top)
+		// In isometric: X axis goes right-up, Z axis goes left-up, Y axis is vertical
+		
+		// Isometric offsets (2:1 ratio)
+		// For a cube in isometric: horizontal offset = size/2, vertical offset = size/4
+		var isoX = halfSize; // Horizontal offset for isometric
+		var isoY = halfSize * 0.5; // Vertical offset for isometric (2:1 ratio)
+		
+		// 1. RIGHT FACE (X+1 direction) - draw first (furthest back)
+		ctx.save();
+		// Position: right side of cube in isometric view
+		ctx.translate(centerX + isoX * 0.5, centerY + isoY);
+		// Rotate to match isometric perspective (tilted to the right)
+		ctx.rotate(Math.PI / 2 - isoAngle);
+		// Scale vertically to compress for isometric
+		ctx.scale(1, cosAngle);
+		// Draw right face
 		ctx.drawImage(
 			img,
-			u_min, v_min, texSize, texSize,
-			0, 0, size, size
+			rightPixels.u_min, rightPixels.v_min, rightPixels.texSize, rightPixels.texSize,
+			-halfSize, -halfSize, blockSize, blockSize
 		);
+		ctx.restore();
+		
+		// 2. FRONT FACE (Z-1 direction) - draw second (middle layer)
+		ctx.save();
+		// Position: front side of cube in isometric view
+		ctx.translate(centerX - isoX * 0.5, centerY + isoY);
+		// Rotate to match isometric perspective (tilted to the left)
+		ctx.rotate(-Math.PI / 2 + isoAngle);
+		// Scale vertically to compress for isometric
+		ctx.scale(1, cosAngle);
+		// Draw front face
+		ctx.drawImage(
+			img,
+			frontPixels.u_min, frontPixels.v_min, frontPixels.texSize, frontPixels.texSize,
+			-halfSize, -halfSize, blockSize, blockSize
+		);
+		ctx.restore();
+		
+		// 3. TOP FACE (Y+1 direction) - draw last (frontmost)
+		ctx.save();
+		// Position: top of cube (centered, slightly above)
+		ctx.translate(centerX, centerY - isoY * 0.4);
+		
+		// Create diamond shape for top face in isometric projection
+		// The diamond has 4 vertices matching the isometric view
+		ctx.beginPath();
+		ctx.moveTo(0, -isoY); // Top vertex (north)
+		ctx.lineTo(isoX * 0.5, 0); // Right vertex (east)
+		ctx.lineTo(0, isoY); // Bottom vertex (south)
+		ctx.lineTo(-isoX * 0.5, 0); // Left vertex (west)
+		ctx.closePath();
+		ctx.clip();
+		
+		// Draw top texture (rotate 45 degrees to align with diamond)
+		ctx.save();
+		ctx.rotate(Math.PI / 4); // 45 degree rotation
+		ctx.scale(1.414, 1.414); // Scale by sqrt(2) to cover entire diamond
+		ctx.drawImage(
+			img,
+			topPixels.u_min, topPixels.v_min, topPixels.texSize, topPixels.texSize,
+			-halfSize, -halfSize, blockSize, blockSize
+		);
+		ctx.restore();
+		ctx.restore();
 	};
 	img.src = "media/terrain.png";
 	
@@ -779,9 +936,25 @@ Player.prototype.renderBlockThumbnail = function(block, size)
 //
 // Opens or closes the inventory. Game does not pause when inventory is open.
 // Inventory releases pointer lock to allow mouse interaction, but game continues running.
+// In creative mode, opens/closes the creative inventory instead.
 
 Player.prototype.toggleInventory = function()
 {
+	// In creative mode, toggle creative inventory instead
+	if (this.gameMode === GAME_MODE.CREATIVE) {
+		var creativeInventory = document.getElementById("creativeInventory");
+		if (!creativeInventory) return;
+		
+		var isOpen = creativeInventory.style.display !== "none";
+		if (isOpen) {
+			this.closeCreativeInventory();
+		} else {
+			this.openCreativeInventory();
+		}
+		return;
+	}
+	
+	// In survival mode, toggle normal inventory
 	var inventory = document.getElementById("inventory");
 	if (!inventory) return;
 	
@@ -796,15 +969,15 @@ Player.prototype.toggleInventory = function()
 		this.keys = {};
 		// Update inventory display (main grid and hotbar)
 		this.updateInventoryDisplay();
-		// Start rendering the miniature player model
-		if (this.inventoryPlayerRenderer) {
-			this.inventoryPlayerRenderer.startRenderLoop();
-		}
+		// Resume rendering the miniature player model
+		if (this.inventoryPlayerModelRenderer) {
+			this.inventoryPlayerModelRenderer.resumeRenderLoop();
 		// Render immediately when opening inventory
-		if (this.inventoryModelYaw !== undefined && this.inventoryModelPitch !== undefined) {
-			this.renderInventoryPlayerModel(this.inventoryModelYaw, this.inventoryModelPitch);
+			if (this.inventoryPlayerModelRenderer.modelYaw !== undefined && this.inventoryPlayerModelRenderer.modelPitch !== undefined) {
+				this.inventoryPlayerModelRenderer.render(this.inventoryPlayerModelRenderer.modelYaw, this.inventoryPlayerModelRenderer.modelPitch);
 		} else {
-			this.renderInventoryPlayerModel(0, 0);
+				this.inventoryPlayerModelRenderer.render(0, 0);
+			}
 		}
 		// Release pointer lock to allow mouse interaction with inventory
 		// The pointerlockchange listener will check inventoryOpen and won't pause the game
@@ -819,9 +992,9 @@ Player.prototype.toggleInventory = function()
 		inventory.style.display = "none";
 		// Remove class from body to show health/armor icons when inventory is closed
 		document.body.classList.remove("inventory-open");
-		// Stop rendering the miniature player model
-		if (this.inventoryPlayerRenderer) {
-			this.inventoryPlayerRenderer.stopRenderLoop();
+		// Pause rendering the miniature player model (don't stop completely, just pause)
+		if (this.inventoryPlayerModelRenderer) {
+			this.inventoryPlayerModelRenderer.pauseRenderLoop();
 		}
 		// Re-enable pointer events on canvas
 		if (this.canvas) {
@@ -853,13 +1026,25 @@ Player.prototype.onKeyEvent = function( keyCode, down )
 	
 	// If inventory is open, only process E and Esc keys
 	if (this.inventoryOpen) {
+		// Check if creative inventory is open
+		var creativeInventory = document.getElementById("creativeInventory");
+		var isCreativeInventoryOpen = creativeInventory && creativeInventory.style.display !== "none";
+		
 		// Inventory toggle (E key)
 		if ( !down && (keyCode == 69 || key == "e") ) {
-			this.toggleInventory();
+			if (isCreativeInventoryOpen) {
+				this.closeCreativeInventory();
+			} else {
+				this.toggleInventory();
+			}
 		}
 		// ESC key to close inventory
 		if ( !down && keyCode == 27 ) {
-			this.toggleInventory();
+			if (isCreativeInventoryOpen) {
+				this.closeCreativeInventory();
+			} else {
+				this.toggleInventory();
+			}
 		}
 		// Don't process any other keys when inventory is open
 		return;
@@ -893,7 +1078,7 @@ Player.prototype.onKeyEvent = function( keyCode, down )
 	if ( !down ) {
 		if ( keyCode >= 49 && keyCode <= 57 ) { // Keys 1-9
 			var slotIndex = keyCode - 49; // 0-8
-			this.selectHotbarSlot(slotIndex);
+				this.selectHotbarSlot(slotIndex);
 		}
 	}
 	
@@ -1265,8 +1450,14 @@ Player.prototype.update = function()
 			if ( this.angles[0] > Math.PI/2 ) this.angles[0] = Math.PI/2;
 		}
 
+		// Modo creativo: no recibir daño ni hambre
+		if ( this.gameMode === GAME_MODE.CREATIVE ) {
+			this.health = this.maxHealth;
+			this.hunger = this.maxHunger;
+		}
+		
 		// Modo espectador: volar libremente sin colisiones ni gravedad
-		if ( this.spectatorMode )
+		if ( this.spectatorMode || this.gameMode === GAME_MODE.SPECTATOR )
 		{
 			// Velocidad de vuelo más rápida
 			var flySpeed = 12;
@@ -1381,6 +1572,194 @@ Player.prototype.update = function()
 	}
 
 	this.lastUpdate = new Date().getTime();
+	
+	// Update health/hunger icons periodically in survival mode
+	if (this.gameMode === GAME_MODE.SURVIVAL) {
+		if (!this._lastIconUpdate || (new Date().getTime() - this._lastIconUpdate) > 100) {
+			this.updateHealthHungerIcons();
+			this._lastIconUpdate = new Date().getTime();
+		}
+	}
+}
+
+// setGameMode( mode )
+//
+// Sets the game mode (SURVIVAL, CREATIVE, SPECTATOR) and updates UI accordingly.
+
+Player.prototype.setGameMode = function(mode)
+{
+	if (mode !== GAME_MODE.SURVIVAL && mode !== GAME_MODE.CREATIVE && mode !== GAME_MODE.SPECTATOR) {
+		console.error('Invalid game mode: ' + mode);
+		return;
+	}
+	
+	this.gameMode = mode;
+	
+	// Clear inventory when changing game mode
+	this.clearInventory();
+	
+	this.updateGameModeUI();
+	
+	// Reset health/hunger to max in creative mode
+	if (mode === GAME_MODE.CREATIVE) {
+		this.health = this.maxHealth;
+		this.hunger = this.maxHunger;
+	}
+	
+	// Enable spectator mode for spectator game mode
+	this.spectatorMode = (mode === GAME_MODE.SPECTATOR);
+}
+
+// updateGameModeUI()
+//
+// Updates UI elements based on current game mode.
+
+Player.prototype.updateGameModeUI = function()
+{
+	var hotbar = document.getElementById("hotbar");
+	var healthIcons = document.getElementById("healthIcons");
+	var hungerIcons = document.getElementById("hungerIcons");
+	var creativeInventoryButton = document.getElementById("creativeInventoryButton");
+	
+	if (!hotbar) return;
+	
+	// Spectator mode: hide hotbar
+	if (this.gameMode === GAME_MODE.SPECTATOR) {
+		hotbar.style.display = "none";
+		if (healthIcons) healthIcons.style.display = "none";
+		if (hungerIcons) hungerIcons.style.display = "none";
+		if (creativeInventoryButton) creativeInventoryButton.style.display = "none";
+	} else {
+		hotbar.style.display = "flex";
+	}
+	
+	// Creative mode: hide status icons, show creative inventory button
+	if (this.gameMode === GAME_MODE.CREATIVE) {
+		document.body.classList.add("creative-mode");
+		if (healthIcons) healthIcons.style.display = "none";
+		if (hungerIcons) hungerIcons.style.display = "none";
+		if (creativeInventoryButton) creativeInventoryButton.style.display = "block";
+	} else {
+		document.body.classList.remove("creative-mode");
+		if (creativeInventoryButton) creativeInventoryButton.style.display = "none";
+	}
+	
+	// Survival mode: show status icons, hide creative inventory button
+	if (this.gameMode === GAME_MODE.SURVIVAL) {
+		document.body.classList.add("survival-mode");
+		document.body.classList.remove("creative-mode");
+		if (healthIcons) healthIcons.style.display = "flex";
+		if (hungerIcons) hungerIcons.style.display = "flex";
+		if (creativeInventoryButton) creativeInventoryButton.style.display = "none";
+		this.updateHealthHungerIcons();
+	} else {
+		document.body.classList.remove("survival-mode");
+	}
+}
+
+// updateHealthHungerIcons()
+//
+// Updates the health and hunger icons display using icons.png texture.
+// Only visible in SURVIVAL mode.
+
+Player.prototype.updateHealthHungerIcons = function()
+{
+	if (this.gameMode !== GAME_MODE.SURVIVAL) return;
+	
+	var healthContainer = document.getElementById("healthIcons");
+	var hungerContainer = document.getElementById("hungerIcons");
+	
+	if (!healthContainer || !hungerContainer) return;
+	
+	// Clear existing icons
+	healthContainer.innerHTML = "";
+	hungerContainer.innerHTML = "";
+	
+	// Load icons.png once
+	if (!this._iconsImage) {
+		this._iconsImage = new Image();
+		this._iconsImage.onload = function() {
+			if (this.world && this.world.localPlayer) {
+				this.world.localPlayer.updateHealthHungerIcons();
+			}
+		}.bind(this);
+		this._iconsImage.src = "media/gui/icons.png";
+		return; // Will be called again when image loads
+	}
+	
+	// icons.png texture coordinates for health/hunger
+	// Health: full heart at (52, 0), half heart at (61, 0), empty heart at (16, 0)
+	// Hunger: full drumstick at (52, 27), half drumstick at (61, 27), empty drumstick at (16, 27)
+	// Each icon is 9x9 pixels in the texture
+	
+	var iconsImg = this._iconsImage;
+	var iconSize = 9; // Size of each icon in icons.png
+	
+	// Render health icons (10 hearts, each representing 2 health)
+	var maxHearts = Math.ceil(this.maxHealth / 2); // Maximum hearts (10)
+	var currentHealth = Math.max(0, Math.min(this.health, this.maxHealth));
+	
+	for (var i = 0; i < maxHearts; i++) {
+		var icon = document.createElement("div");
+		icon.className = "health-icon";
+		
+		var heartHealth = currentHealth - (i * 2); // Health for this specific heart
+		var texX, texY;
+		
+		if (heartHealth >= 2) {
+			// Full heart
+			texX = 52;
+			texY = 0;
+		} else if (heartHealth >= 1) {
+			// Half heart
+			texX = 61;
+			texY = 0;
+		} else {
+			// Empty heart
+			texX = 16;
+			texY = 0;
+		}
+		
+		icon.style.backgroundImage = "url(" + iconsImg.src + ")";
+		icon.style.backgroundPosition = "-" + texX + "px -" + texY + "px";
+		icon.style.width = iconSize + "px";
+		icon.style.height = iconSize + "px";
+		
+		healthContainer.appendChild(icon);
+	}
+	
+	// Render hunger icons (10 drumsticks, each representing 2 hunger)
+	var maxHungerIcons = Math.ceil(this.maxHunger / 2); // Maximum drumsticks (10)
+	var currentHunger = Math.max(0, Math.min(this.hunger, this.maxHunger));
+	
+	for (var i = 0; i < maxHungerIcons; i++) {
+		var icon = document.createElement("div");
+		icon.className = "hunger-icon";
+		
+		var hungerAmount = currentHunger - (i * 2); // Hunger for this specific drumstick
+		var texX, texY;
+		
+		if (hungerAmount >= 2) {
+			// Full drumstick
+			texX = 52;
+			texY = 27;
+		} else if (hungerAmount >= 1) {
+			// Half drumstick
+			texX = 61;
+			texY = 27;
+		} else {
+			// Empty drumstick
+			texX = 16;
+			texY = 27;
+		}
+		
+		icon.style.backgroundImage = "url(" + iconsImg.src + ")";
+		icon.style.backgroundPosition = "-" + texX + "px -" + texY + "px";
+		icon.style.width = iconSize + "px";
+		icon.style.height = iconSize + "px";
+		
+		hungerContainer.appendChild(icon);
+	}
 }
 
 // resolveCollision( pos, bPos, velocity )

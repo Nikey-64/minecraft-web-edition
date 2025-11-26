@@ -6,7 +6,7 @@
 
 /* GUI Scale variable - can be changed via JavaScript */
 :root {
-	--gui-scale: 1;
+	--gui-scale: 2; /* Default 200% (2.0x scale) */
 }
 
 /* General page style */
@@ -145,6 +145,199 @@ body {
 	image-rendering: pixelated;
 }
 
+/* Health and Hunger Icons */
+.health-icons, .hunger-icons {
+	position: fixed;
+	bottom: 22px;
+	transform: scale(var(--gui-scale));
+	transform-origin: center bottom;
+	z-index: 10;
+	image-rendering: pixelated;
+	pointer-events: none;
+	display: flex;
+	flex-direction: row;
+	gap: 1px;
+	align-items: center;
+}
+
+/* Health icons - left side of hotbar */
+.health-icons {
+	left: 50%;
+	transform: translateX(calc(-50% - 100px)) scale(var(--gui-scale));
+	/* Hotbar is 182px wide, centered. Offset left by half hotbar width (91px) + margin (9px) = 100px */
+}
+
+/* Hunger icons - right side of hotbar */
+.hunger-icons {
+	left: 50%;
+	transform: translateX(calc(-50% + 100px)) scale(var(--gui-scale));
+	/* Hotbar is 182px wide, centered. Offset right by half hotbar width (91px) + margin (9px) = 100px */
+}
+
+.health-icon, .hunger-icon {
+	width: 9px;
+	height: 9px;
+	image-rendering: pixelated;
+	background-size: 256px 256px;
+}
+
+/* Hide status icons in creative mode */
+body.creative-mode .health-icons,
+body.creative-mode .hunger-icons {
+	display: none !important;
+}
+
+/* Hide hotbar in spectator mode (handled via JavaScript in updateGameModeUI) */
+
+/* Creative Inventory Button */
+.creative-inventory-button {
+	position: fixed;
+	bottom: 30px;
+	left: 50%;
+	transform: translateX(calc(-50% + 91px)) scale(var(--gui-scale));
+	transform-origin: center bottom;
+	z-index: 11;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	cursor: pointer;
+	image-rendering: pixelated;
+}
+
+.creative-inventory-button img {
+	width: 100%;
+	height: 100%;
+	image-rendering: pixelated;
+}
+
+.creative-inventory-button:hover {
+	opacity: 0.8;
+}
+
+/* Creative Inventory Menu */
+.creative-inventory {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	z-index: 30;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: auto;
+}
+
+.creative-inventory-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	background: rgba(0, 0, 0, 0.7);
+	z-index: 29;
+}
+
+.creative-inventory-container {
+	position: relative;
+	width: 80%;
+	max-width: 800px;
+	height: 80%;
+	max-height: 600px;
+	background: rgba(0, 0, 0, 0.9);
+	border: 4px solid #999;
+	border-radius: 4px;
+	z-index: 31;
+	display: flex;
+	flex-direction: column;
+	padding: 20px;
+	box-sizing: border-box;
+}
+
+.creative-inventory-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 15px;
+	color: white;
+	font-family: Minecraftia;
+	font-size: 18px;
+}
+
+.creative-inventory-close {
+	background: transparent;
+	border: none;
+	color: white;
+	font-size: 32px;
+	cursor: pointer;
+	width: 32px;
+	height: 32px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	line-height: 1;
+	padding: 0;
+	font-family: Arial, sans-serif;
+}
+
+.creative-inventory-close:hover {
+	background: rgba(255, 255, 255, 0.2);
+	border-radius: 4px;
+}
+
+.creative-inventory-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+	gap: 8px;
+	overflow-y: auto;
+	flex: 1;
+	padding: 10px;
+	box-sizing: border-box;
+}
+
+.creative-inventory-slot {
+	position: relative;
+	width: 60px;
+	height: 70px;
+	background: rgba(255, 255, 255, 0.1);
+	border: 2px solid #666;
+	border-radius: 4px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	transition: all 0.2s;
+	box-sizing: border-box;
+	padding: 4px;
+}
+
+.creative-inventory-slot:hover {
+	background: rgba(255, 255, 255, 0.2);
+	border-color: #aaa;
+	transform: scale(1.05);
+}
+
+.creative-inventory-slot .block-thumbnail {
+	width: 32px;
+	height: 32px;
+	image-rendering: pixelated;
+}
+
+.creative-slot-label {
+	color: white;
+	font-family: Minecraftia;
+	font-size: 10px;
+	text-align: center;
+	margin-top: 4px;
+	word-break: break-word;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-height: 24px;
+}
+
 /* Inventory */
 
 #inventory {
@@ -218,25 +411,41 @@ body {
 .inventory-player-model {
 	position: absolute;
 	top: 8px;
-	left: 80px;
-	width: 64px;
-	height: 64px;
+	left: 30px; /* Exact position of black area in inventory.png: between armor (26px) and crafting (138px) */
+	/* Black area in inventory.png is 54x54px (base size, before GUI scale) */
+	/* With GUI scale 2x, the visual size is 108x108px, but container should match base size */
+	width: 54px; /* Base size of black area in inventory.png (will be scaled by GUI scale) */
+	height: 54px; /* Base size of black area in inventory.png */
 	z-index: 10;
-	/* Player model area - visual only */
+	pointer-events: auto;
+	/* Player model area - matches the black area in inventory.png texture */
+	/* No background needed - the black area is part of inventory.png */
+	display: block;
+	overflow: hidden; /* Ensure canvas stays within the black area bounds - clip anything outside */
+	box-sizing: border-box; /* Include padding/border in width/height */
+	padding: 0;
+	margin: 0;
 }
 
 .inventory-player-canvas {
-	width: 64px;
-	height: 64px;
+	/* Canvas must match container size exactly - no scaling, must fit inside black area */
+	/* Container is 54x54px base, canvas must be exactly the same */
+	width: 54px; /* Exact size - matches container and black area in inventory.png */
+	height: 54px; /* Exact size - matches container and black area in inventory.png */
 	image-rendering: pixelated;
-	cursor: move;
+	cursor: default;
 	position: absolute;
 	top: 0;
 	left: 0;
+	/* Canvas fills container exactly - no transforms, no scaling */
 	z-index: 10;
-	pointer-events: auto;
-	background: transparent;
+	pointer-events: none; /* Allow mouse events to pass through - model follows mouse anywhere */
+	background: transparent !important; /* Transparent background - black area shows from inventory.png */
 	display: block;
+	/* Ensure canvas doesn't overflow container */
+	max-width: 54px;
+	max-height: 54px;
+	box-sizing: border-box;
 }
 
 .inventory-crafting {
@@ -245,22 +454,26 @@ body {
 	left: 138px;
 	display: flex;
 	align-items: center;
+	cursor: default;
 	gap: 0;
 }
 
 .crafting-grid {
 	display: grid;
+	cursor: default;
 	grid-template-columns: repeat(2, 18px);
 	grid-template-rows: repeat(2, 18px);
 	gap: 0;
 }
 
 .crafting-output {
+	cursor: default;
 	width: 18px;
 	height: 18px;
 }
 
 .inventory-grid {
+	cursor: default;
 	position: absolute;
 	top: 84px;
 	left: 8px;
@@ -273,6 +486,7 @@ body {
 
 .inventory-hotbar {
 	position: absolute;
+	cursor: default;
 	top: 142px;
 	left: 8px;
 	display: flex;
@@ -281,6 +495,7 @@ body {
 }
 
 .inventory-slot {
+	cursor: default;
 	width: 18px;
 	height: 18px;
 	/* No individual background - slots are part of the unified inventory.png hover */
@@ -290,12 +505,12 @@ body {
 	align-items: center;
 	justify-content: center;
 	image-rendering: pixelated;
-	cursor: pointer;
 }
 
 /* No individual slot hover - using unified inventory.png hover instead */
 
 .inventory-slot .block-thumbnail {
+	cursor: default;
 	width: 16px;
 	height: 16px;
 	image-rendering: pixelated;
@@ -434,7 +649,7 @@ body {
     background-repeat: no-repeat;
     background-size: cover;
     border-radius: 0px;
-    cursor: pointer;
+    cursor: default;
     font-family: minecraftia;
     font-size: 15px;
     min-width: 400px;
@@ -519,7 +734,7 @@ body {
     background-size: cover;
     border: none;
     border-radius: 0;
-    cursor: pointer;
+    cursor: default;
     font-family: minecraftia;
     font-size: 10px;
     min-width: 60px;

@@ -32,6 +32,12 @@ function World( sx, sy, sz )
 	this.sz = sz;
 	
 	this.players = {};
+	
+	// Entity system
+	this.entities = {}; // id -> Entity
+	this.entityUpdateInterval = null; // For entity update loop
+	this.lastEntityUpdate = 0;
+	
 	// Tamaño de chunks: 8x8x256 (8x8 horizontal, 256 vertical completo)
 	// Ejes: X y Z = horizontal, Y = vertical (altura)
 	// Esto optimiza el almacenamiento de aire ya que cada chunk cubre toda la altura
@@ -419,6 +425,166 @@ World.prototype.toNetworkString = function()
 	
 	return blockArray.join( "" );
 }
+
+// Entity Management Methods
+
+// addEntity( entity )
+//
+// Adds an entity to the world.
+
+World.prototype.addEntity = function(entity) {
+	if (!entity || !entity.id) {
+		console.warn("Cannot add entity without id");
+		return false;
+	}
+	
+	entity.world = this;
+	this.entities[entity.id] = entity;
+	
+	// Start entity update loop if not already running
+	if (!this.entityUpdateInterval && typeof window !== 'undefined') {
+		this.startEntityUpdateLoop();
+	}
+	
+	return true;
+};
+
+// removeEntity( entityId )
+//
+// Removes an entity from the world.
+
+World.prototype.removeEntity = function(entityId) {
+	if (this.entities[entityId]) {
+		delete this.entities[entityId];
+		return true;
+	}
+	return false;
+};
+
+// getEntity( entityId )
+//
+// Gets an entity by ID.
+
+World.prototype.getEntity = function(entityId) {
+	return this.entities[entityId] || null;
+};
+
+// getAllEntities()
+//
+// Gets all entities in the world.
+
+World.prototype.getAllEntities = function() {
+	var all = [];
+	for (var id in this.entities) {
+		if (this.entities.hasOwnProperty(id)) {
+			all.push(this.entities[id]);
+		}
+	}
+	return all;
+};
+
+// getEntitiesInRange( pos, radius )
+//
+// Gets all entities within a certain radius of a position.
+
+World.prototype.getEntitiesInRange = function(pos, radius) {
+	var entities = [];
+	var radiusSq = radius * radius;
+	
+	for (var id in this.entities) {
+		if (this.entities.hasOwnProperty(id)) {
+			var entity = this.entities[id];
+			var dx = entity.pos.x - pos.x;
+			var dy = entity.pos.y - pos.y;
+			var dz = entity.pos.z - pos.z;
+			var distSq = dx * dx + dy * dy + dz * dz;
+			
+			if (distSq <= radiusSq) {
+				entities.push(entity);
+			}
+		}
+	}
+	
+	return entities;
+};
+
+// startEntityUpdateLoop()
+//
+// Starts the entity update loop (called every frame).
+
+World.prototype.startEntityUpdateLoop = function() {
+	if (this.entityUpdateInterval) return; // Already running
+	
+	var world = this;
+	var lastTime = Date.now();
+	
+	function updateEntities() {
+		var currentTime = Date.now();
+		var deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
+		lastTime = currentTime;
+		
+		// Cap delta time to prevent large jumps
+		if (deltaTime > 0.1) deltaTime = 0.1;
+		
+		// Update all entities
+		for (var id in world.entities) {
+			if (world.entities.hasOwnProperty(id)) {
+				var entity = world.entities[id];
+				try {
+					entity.update(deltaTime);
+					
+					// Remove dead entities
+					if (entity.dead) {
+						world.removeEntity(id);
+					}
+				} catch (e) {
+					console.error("Error updating entity " + id + ":", e);
+				}
+			}
+		}
+		
+		// Continue loop if there are entities
+		if (Object.keys(world.entities).length > 0) {
+			requestAnimationFrame(updateEntities);
+		} else {
+			world.entityUpdateInterval = null;
+		}
+	}
+	
+	// Start the loop
+	requestAnimationFrame(updateEntities);
+};
+
+// stopEntityUpdateLoop()
+//
+// Stops the entity update loop.
+
+World.prototype.stopEntityUpdateLoop = function() {
+	// The loop will stop automatically when there are no entities
+	// But we can clear the interval reference
+	this.entityUpdateInterval = null;
+};
+
+// spawnMob( mobType, x, y, z )
+//
+// Spawns a mob at the specified position.
+
+World.prototype.spawnMob = function(mobType, x, y, z) {
+	if (typeof Mob === 'undefined') {
+		console.warn("Mob class not loaded, cannot spawn mob");
+		return null;
+	}
+	
+	var mob = new Mob(null, mobType, this);
+	mob.pos = new Vector(x, y, z);
+	mob.spawnPos = new Vector(x, y, z);
+	
+	if (this.addEntity(mob)) {
+		return mob;
+	}
+	
+	return null;
+};
 
 // Export to node.js
 if ( typeof( exports ) != "undefined" )

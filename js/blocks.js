@@ -79,12 +79,29 @@ BLOCK.AIR = {
 
 // Bedrock
 BLOCK.BEDROCK = {
-	id: 1,
+	id: 22,
 	spawnable: false,
 	transparent: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 1/16, 1/16, 2/16, 2/16 ]; }
 };
 
+BLOCK.GRASS = {
+	id: 23,
+	spawnable: true,
+	transparent: false,
+	useGrassColor: true,
+	texture: function( world, lightmap, lit, x, y, z, dir )
+	 { if ( dir == DIRECTION.UP && lit )
+		// Grass top texture - posición (0, 0) en el atlas de texturas
+		return [ 0/16, 0/16, 1/16, 1/16 ];
+	else if ( dir == DIRECTION.DOWN || !lit ) 
+		// Dirt texture - posición (2, 0) en el atlas de texturas
+		return [ 2/16, 0/16, 3/16, 1/16 ];
+	else
+		// Grass side texture - posición (3, 0) en el atlas de texturas
+		return [ 3/16, 0/16, 4/16, 1/16 ];
+	}
+};
 // Dirt
 BLOCK.DIRT = {
 	id: 2,
@@ -93,19 +110,7 @@ BLOCK.DIRT = {
 	selflit: false,
 	gravity: false,
 	fluid: false,
-	useGrassColor: true, // Flag to indicate this block uses grass color filtering
-	texture: function( world, lightmap, lit, x, y, z, dir )
-	{
-		if ( dir == DIRECTION.UP && lit )
-			// Grass top texture - posición (0, 0) en el atlas de texturas
-			return [ 0/16, 0/16, 1/16, 1/16 ];
-		else if ( dir == DIRECTION.DOWN || !lit ) 
-			// Dirt texture - posición (2, 0) en el atlas de texturas
-			return [ 2/16, 0/16, 3/16, 1/16 ];
-		else
-			// Grass side texture - posición (3, 0) en el atlas de texturas
-			return [ 3/16, 0/16, 4/16, 1/16 ];
-	}
+	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 2/16, 0/16, 3/16, 1/16 ]; }
 };
 
 // Wood
@@ -177,6 +182,22 @@ BLOCK.LAVA = {
 	flammable: true,
 	explosive: true,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 13/16, 14/16, 14/16, 15/16 ]; }
+};
+
+// Water
+BLOCK.WATER = {
+	id: 1,
+	spawnable: false,
+	transparent: true,
+	selflit: false,
+	gravity: true,
+	fluid: true,
+	solid: false,
+	flammable: false,
+	explosive: false,
+	// Water texture is at position (15, 12) in the 16x16 texture atlas
+	// Format: [u_min, v_min, u_max, v_max] in normalized coordinates
+	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 15/16, 12/16, 16/16, 13/16 ]; }
 };
 
 // Plank
@@ -359,6 +380,52 @@ BLOCK.LEAVES = {
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 4/16, 3/16, 5/16, 4/16 ]; }
 };
 
+// wool
+BLOCK.WHITE_WOOL = {
+	id: 25, 
+	spawnable: true,
+	transparent: false,
+	selflit: false,
+	gravity: false,
+	fluid: false,
+	solid: true,
+	getcolor: true,
+	explosive: false,
+	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 0/16, 4/16, 1/16, 5/16 ]; }
+};
+
+// planks.stairs
+// Stairs block - requires special handling for orientation and collision
+BLOCK.PLANKS_STAIRS = {
+	id: 24,
+	spawnable: true,
+	transparent: false,
+	selflit: false,
+	gravity: false,
+	fluid: false,
+	solid: true,
+	// Stairs need orientation data (stored in block metadata)
+	// For now, use simple texture - can be enhanced later with orientation support
+	texture: function( world, lightmap, lit, x, y, z, dir ) { 
+		// Use plank texture for stairs
+		return [ 4/16, 0/16, 5/16, 1/16 ]; 
+	},
+	// Stairs are special blocks that need custom collision and rendering
+	// TODO: Add orientation support (facing direction)
+	// TODO: Add custom collision box (half block height on one side)
+	isStairs: true
+};
+
+BLOCK.WATER = {
+	id: 26,
+	spawnable: false,
+	transparent: true,
+	gravity: false,
+	fluid: true,
+	solid: false,
+	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 0/16, 1/16, 1/16, 2/16 ]; }
+};
+
 // ANIMATED_BLOCKS posibilities (not allways animated) this is a list of wich blocks can be animated
 var ANIMATED_BLOCKS = [ BLOCK.TNT, BLOCK.LAVA, BLOCK.SAND, BLOCK.GRAVEL];
 
@@ -370,10 +437,28 @@ var ANIMATED_BLOCKS = [ BLOCK.TNT, BLOCK.LAVA, BLOCK.SAND, BLOCK.GRAVEL];
 BLOCK.ANIMATED = {
 	id: 20,
 	spawnable: false,
-	// NOTA: transparent NO se define aquí porque debe tomarse del bloque original
+	// transparent: true,
+	// NOTA: transparent NO se define bajo la misma variable aquí porque debe tomarse del bloque original para poder devolver la propiedad original del bloque cuando termine la animación
 	// Cada bloque animado mantiene su transparencia original para poder devolverla después
 	const: false,
 };
+
+BLOCK.BARRIER = {
+	id: 21,
+	spawnable: false,
+	transparent: true,
+	gravity: false,
+	fluid: false,
+	solid: true,
+	// Barrier no tiene textura visible (es transparente pero sólido)
+	texture: function( world, lightmap, lit, x, y, z, dir ) { 
+		// Retornar coordenadas vacías o transparentes - no se renderizará visualmente
+		// pero será sólido para colisiones
+		return [ 0, 0, 0, 0 ]; 
+	}
+};
+
+
 
 
 // createAnimatedBlock( originalBlock )

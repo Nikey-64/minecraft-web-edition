@@ -211,7 +211,36 @@ Renderer.prototype.draw = function()
 	// Actualizar camPos desde el jugador antes de updateChunks
 	if ( this.world && this.world.localPlayer ) {
 		var eyePos = this.world.localPlayer.getEyePos();
-		this.camPos = [ eyePos.x, eyePos.y, eyePos.z ];
+		var newCamPos = [ eyePos.x, eyePos.y, eyePos.z ];
+		
+		// Detectar movimiento significativo de la cámara para actualizar caras de bloques transparentes
+		if ( this.camPos && this._lastCamPos ) {
+			var dx = newCamPos[0] - this._lastCamPos[0];
+			var dy = newCamPos[1] - this._lastCamPos[1];
+			var dz = newCamPos[2] - this._lastCamPos[2];
+			var dist = Math.sqrt( dx * dx + dy * dy + dz * dz );
+			
+			// Si la cámara se movió más de 0.5 bloques, marcar chunks como dirty para recalcular caras transparentes
+			if ( dist > 0.5 ) {
+				if ( this.chunks ) {
+					for ( var i = 0; i < this.chunks.length; i++ ) {
+						var chunk = this.chunks[i];
+						if ( chunk.loaded ) {
+							chunk.dirty = true;
+							if ( this.dirtyChunks.indexOf( chunk ) === -1 ) {
+								this.dirtyChunks.push( chunk );
+							}
+						}
+					}
+				}
+				this._lastCamPos = [ newCamPos[0], newCamPos[1], newCamPos[2] ];
+			}
+		} else {
+			// Inicializar posición anterior si no existe
+			this._lastCamPos = [ newCamPos[0], newCamPos[1], newCamPos[2] ];
+		}
+		
+		this.camPos = newCamPos;
 	}
 	
 	// Actualizar chunks cada frame para mejor responsividad al moverse
@@ -822,12 +851,43 @@ Renderer.prototype.loadChunk = function( chunkIndexOrChunk )
 	if ( !chunk ) return;
 	if ( this.world && this.world.ensureChunkLoaded )
 		this.world.ensureChunkLoaded( chunk, this.chunkSize, this.chunkSizeY );
+	
+	var wasLoaded = chunk.loaded;
 	chunk.loaded = true;
 	chunk.dirty = true;
 	if ( this.loadedChunks ) this.loadedChunks.add( chunk.key );
 	// Add to dirty queue if not already there
 	if ( this.dirtyChunks && this.dirtyChunks.indexOf( chunk ) === -1 ) {
 		this.dirtyChunks.push( chunk );
+	}
+	
+	// Si el chunk se acaba de cargar, marcar chunks adyacentes como dirty para optimizar caras entre chunks
+	// Esto asegura que los bloques sólidos en los bordes se optimicen correctamente
+	if ( !wasLoaded && this.chunkLookup ) {
+		var adjacentOffsets = [
+			{ dx: -1, dz: 0 }, // Chunk a la izquierda (X-1)
+			{ dx: 1, dz: 0 },  // Chunk a la derecha (X+1)
+			{ dx: 0, dz: -1 }, // Chunk al frente (Z-1)
+			{ dx: 0, dz: 1 }   // Chunk atrás (Z+1)
+		];
+		
+		for ( var i = 0; i < adjacentOffsets.length; i++ ) {
+			var offset = adjacentOffsets[i];
+			var adjCx = chunk.cx + offset.dx;
+			var adjCz = chunk.cz + offset.dz;
+			var adjCy = 0; // Siempre 0 (un solo chunk vertical)
+			var adjKey = this.getChunkKey( adjCx, adjCz, adjCy );
+			var adjChunk = this.chunkLookup[adjKey];
+			
+			// Si el chunk adyacente existe y ya está cargado, marcarlo como dirty
+			// Esto hará que se reconstruya con la información correcta del nuevo chunk
+			if ( adjChunk && adjChunk.loaded ) {
+				adjChunk.dirty = true;
+				if ( this.dirtyChunks && this.dirtyChunks.indexOf( adjChunk ) === -1 ) {
+					this.dirtyChunks.push( adjChunk );
+				}
+			}
+		}
 	}
 };
 

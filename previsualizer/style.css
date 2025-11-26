@@ -1,0 +1,449 @@
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  font-weight: 500;
+  color: #646cff;
+  text-decoration: inherit;
+}
+a:hover {
+  color: #535bf2;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  /*place-items: center;*/
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+.card {
+  padding: 2em;
+}
+
+#app {
+  max-width: unset;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+  margin-top: 0;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
+  }
+}
+
+.lds-grid {
+  /* change color here */
+  color: #8888FF
+}
+.lds-grid,
+.lds-grid div {
+  box-sizing: border-box;
+}
+.lds-grid {
+  display: inline-block;
+  position: relative;
+  width: 80px;
+  height: 80px;
+}
+.lds-grid div {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: lds-grid 1.2s linear infinite;
+}
+.lds-grid div:nth-child(1) {
+  top: 8px;
+  left: 8px;
+  animation-delay: 0s;
+}
+.lds-grid div:nth-child(2) {
+  top: 8px;
+  left: 32px;
+  animation-delay: -0.4s;
+}
+.lds-grid div:nth-child(3) {
+  top: 8px;
+  left: 56px;
+  animation-delay: -0.8s;
+}
+.lds-grid div:nth-child(4) {
+  top: 32px;
+  left: 8px;
+  animation-delay: -0.4s;
+}
+.lds-grid div:nth-child(5) {
+  top: 32px;
+  left: 32px;
+  animation-delay: -0.8s;
+}
+.lds-grid div:nth-child(6) {
+  top: 32px;
+  left: 56px;
+  animation-delay: -1.2s;
+}
+.lds-grid div:nth-child(7) {
+  top: 56px;
+  left: 8px;
+  animation-delay: -0.8s;
+}
+.lds-grid div:nth-child(8) {
+  top: 56px;
+  left: 32px;
+  animation-delay: -1.2s;
+}
+.lds-grid div:nth-child(9) {
+  top: 56px;
+  left: 56px;
+  animation-delay: -1.6s;
+}
+@keyframes lds-grid {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* 既存のスタイルはそのまま */
+
+.main-container {
+    display: flex;
+    gap: 20px;
+    justify-content: left;
+    align-items: flex-start;
+}
+
+.controls-panel {
+    flex-shrink: 0;
+    width: 450px;
+    padding: 15px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+}
+
+.render-section {
+    display: flex;
+    flex-direction: column;
+    align-items: left;
+    min-width: 602px;
+    min-height: 670px;
+}
+
+.ui-box {
+    margin-bottom: 15px;
+    text-align: left;
+}
+.ui-box > div {
+    margin-bottom: 8px;
+}
+
+.ui-box label {
+    display: inline-block;
+    min-width: 100px;
+    text-align: right;
+    margin-right: 10px;
+}
+
+.ui-box input[type="file"],
+.ui-box select {
+    padding: 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1em;
+    min-width:8em;
+    margin-bottom: 0.5em;
+}
+
+/* Resource Pack List */
+.resource-pack-list {
+    border: 1px dashed #a0a0a0;
+    padding: 10px;
+    min-height: 80px;
+    max-height: 200px;
+    overflow-y: auto;
+    border-radius: 4px;
+}
+
+.resource-pack-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    padding: 3px;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    font-size: 0.9em;
+    background-color: #3b3b3b;
+}
+
+.resource-pack-item span {
+    flex-grow: 1;
+    margin-right: 10px;
+    word-break: break-all;
+    text-align: right;
+}
+
+.resource-pack-item button {
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    margin-left: 5px;
+    cursor: pointer;
+    font-size: 0.8em;
+    transition: background-color 0.2s ease;
+}
+
+.resource-pack-item button:hover:not(:disabled) {
+    background-color: #0056b3;
+}
+
+.resource-pack-item button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+}
+
+.resource-pack-item .remove-button {
+    background-color: #dc3545;
+}
+
+.resource-pack-item .remove-button:hover:not(:disabled) {
+    background-color: #c82333;
+}
+
+.no-files-message {
+    color: #888;
+    text-align: center;
+    padding: 10px;
+}
+
+/* Properties Box */
+.properties-box {
+    border: 1px solid #ACACAC;
+    padding: 0.5em;
+    margin-top: 1em;
+    border-radius: 4px;
+    text-align: left;
+}
+
+.properties-box .property label {
+    min-width: 90px;
+    text-align: right;
+    margin-right: 10px;
+    display:inline-block;
+}
+
+.properties-box .property select {
+    min-width: 150px;
+}
+
+.nested-model-group-wrapper {
+    margin-left: 100px;
+}
+
+.model-group-select select {
+    width: calc(100% - 10px); /* 親要素の幅に合わせて調整 */
+}
+
+.independent-models-section {
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px dashed #a0a0a0;
+}
+
+.independent-models-section h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #555;
+}
+
+.no-properties-message {
+    padding: 10px;
+    text-align: center;
+    color: #888;
+}
+
+.use-fallback-models {
+    text-align: center;
+}
+
+/* Render Box */
+.render-box {
+    background-image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAAAAABX3VL4AAAADklEQVQIHWPYXc9QvxsAB2ICdaBJUyUAAAAASUVORK5CYII=);
+    background-size: 12px 12px;
+    image-rendering: pixelated;
+    -ms-interpolation-mode: nearest-neighbor;
+    display: block;
+    position: relative;
+    line-height: 1px;
+    margin: auto;
+}
+
+.render-frame {
+    display: flex;
+    position: relative;
+    border: solid 1px #ddd;
+    min-height: 600px;
+    min-width: 600px;
+}
+
+.size-ui-box {
+    width: 100%;
+    text-align: center;
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+.size-ui-box label {
+    min-width: auto;
+    margin-right: 10px;
+}
+
+.size-ui-box input[type="radio"] {
+    margin-right: 5px;
+}
+
+.size-ui-box button {
+    background-color: #7b7b7b;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 12px;
+    cursor: pointer;
+    margin: 4px;
+    transition: background-color 0.2s ease;
+}
+
+.size-ui-box .save-btn {
+    background-color: #28a745;
+}
+
+.size-ui-box .save-btn:disabled {
+    background-color: #7b7b7b;
+    color: #3b3b3b;
+}
+
+.size-ui-box button:hover {
+    background-color: #218838;
+}
+
+hr {
+    margin: 20px 0;
+    border: 0;
+    border-top: 1px solid #eee;
+}
+
+h2, h4 {
+    text-align: center;
+    margin-bottom: 15px;
+}
+
+.progress-container {
+  width: 100%;
+  height: 20px;
+  background-color: #e0e0e0;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.progress-bar {
+  height: 100%;
+  background-color: #4caf50;
+  border-radius: 10px;
+  transition: width 0.3s ease-out;
+}
+
+.sup {
+  font-size: small;
+  vertical-align: super;
+}
+
+/* Small screens (less than 1024px) */
+@media (max-width: 1023px) {
+    .main-container {
+        flex-direction: column; /* Stack items vertically */
+        align-items: center; /* Center items in column */
+        padding: 10px;
+    }
+
+    .controls-panel {
+        width: 100%; /* Take full width on small screens */
+        max-width: 602px; /* Limit width for very large phones/small tablets */
+        box-sizing: border-box;
+        margin-bottom: 20px; /* Space between panels */
+    }
+
+    .render-section {
+        width: 100%; /* Take full width */
+        min-height: unset; /* Remove fixed min-height */
+        align-items: center;
+    }
+}
+
+/* Large screens (>= 1024px) */
+@media (min-width: 1024px) {
+    /* render-section の min-width を削除し、flex-grow を適用 */
+    .render-section {
+        min-width: unset; /* 固定の最小幅を解除 */
+        min-height: 670px; /* オリジナルは維持 */
+        flex-grow: 1; /* 残りのスペースを埋める */
+    }
+}
