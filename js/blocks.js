@@ -281,6 +281,8 @@ BLOCK.GRAVEL = {
 	solid: true,
 	flammable: true,
 	explosive: false,
+	breakable: true, breaktime: 10000, /* 10 seconds to break */ requiredtool: "shovel", tooltime: 5000, /* 5 seconds to break */
+	toollevel: 1,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 3/16, 1/16, 4/16, 2/16 ]; }
 };
 
@@ -295,6 +297,8 @@ BLOCK.IRON = {
 	solid: true,
 	flammable: true,
 	explosive: false,
+	breakable: true, breaktime: 20000, /* 20 seconds to break */ requiredtool: "iron_pickaxe", tooltime: 5000, /* 5 seconds to break */
+	toollevel: 2,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 6/16, 1/16, 7/16, 2/16 ]; }
 };
 
@@ -309,6 +313,8 @@ BLOCK.GOLD = {
 	solid: true,
 	flammable: true,
 	explosive: false,
+	breakable: true, breaktime: 10000, /* 10 seconds to break */ requiredtool: "iron_pickaxe", tooltime: 5000, /* 5 seconds to break */
+	toollevel: 2,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 7/16, 1/16, 8/16, 2/16 ]; }
 };
 
@@ -323,6 +329,8 @@ BLOCK.DIAMOND = {
 	solid: true,
 	flammable: true,
 	explosive: false,
+	breakable: true, breaktime: 20000, /* 30 seconds to break */ requiredtool: "iron_pickaxe", tooltime: 10000, /* 10 seconds to break */
+	toollevel: 2,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 8/16, 1/16, 9/16, 2/16 ]; }
 };
 
@@ -337,6 +345,7 @@ BLOCK.OBSIDIAN = {
 	solid: true,
 	flammable: true,
 	explosive: false,
+	breakable: true, breaktime: 30000, // 30 seconds to break
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 5/16, 2/16, 6/16, 3/16 ]; }
 };
 
@@ -351,6 +360,7 @@ BLOCK.GLASS = {
 	solid: true,
 	flammable: true,
 	explosive: false,
+	breakable: true,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 1/16, 3/16, 2/16, 4/16 ]; }
 };
 
@@ -365,6 +375,7 @@ BLOCK.SPONGE = {
 	solid: true,
 	flammable: true,
 	explosive: false,
+	breakable: true,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 0/16, 3/16, 1/16, 4/16 ]; }
 };
 
@@ -376,6 +387,7 @@ BLOCK.LEAVES = {
 	solid: true,
 	flammable: true,
 	explosive: false,
+	breakable: true,
 	useFoliageColor: true, // Flag to indicate this block uses foliage color filtering on all faces
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 4/16, 3/16, 5/16, 4/16 ]; }
 };
@@ -391,6 +403,7 @@ BLOCK.WHITE_WOOL = {
 	solid: true,
 	getcolor: true,
 	explosive: false,
+	breakable: true,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 0/16, 4/16, 1/16, 5/16 ]; }
 };
 
@@ -404,6 +417,7 @@ BLOCK.PLANKS_STAIRS = {
 	gravity: false,
 	fluid: false,
 	solid: true,
+	breakable: true,
 	// Stairs need orientation data (stored in block metadata)
 	// For now, use simple texture - can be enhanced later with orientation support
 	texture: function( world, lightmap, lit, x, y, z, dir ) { 
@@ -423,6 +437,7 @@ BLOCK.WATER = {
 	gravity: false,
 	fluid: true,
 	solid: false,
+	breakable: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 0/16, 1/16, 1/16, 2/16 ]; }
 };
 
@@ -450,6 +465,7 @@ BLOCK.BARRIER = {
 	gravity: false,
 	fluid: false,
 	solid: true,
+	breakable: false,
 	// Barrier no tiene textura visible (es transparente pero sólido)
 	texture: function( world, lightmap, lit, x, y, z, dir ) { 
 		// Retornar coordenadas vacías o transparentes - no se renderizará visualmente
@@ -475,6 +491,12 @@ BLOCK.createAnimatedBlock = function( originalBlock )
 		return BLOCK.AIR;
 	}
 	
+	// Verificar que el bloque original tiene la función texture
+	if ( typeof originalBlock.texture !== 'function' ) {
+		console.warn("createAnimatedBlock: originalBlock doesn't have texture function");
+		return BLOCK.AIR;
+	}
+	
 	// Crear un nuevo objeto que copia todas las propiedades del bloque original
 	var animatedBlock = {};
 	for ( var prop in originalBlock ) {
@@ -486,6 +508,11 @@ BLOCK.createAnimatedBlock = function( originalBlock )
 	// Marcar como bloque animado
 	animatedBlock.isAnimated = true;
 	animatedBlock.originalBlock = originalBlock;
+	
+	// Asegurarse de que la función texture esté presente (copiada del original)
+	if ( typeof originalBlock.texture === 'function' ) {
+		animatedBlock.texture = originalBlock.texture;
+	}
 	
 	// IMPORTANTE: Mantener la transparencia original del bloque
 	// No sobrescribir transparent porque necesitamos preservar las propiedades del original
@@ -540,13 +567,19 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		block = animatedBlockOverride;
 		isAnimated = true;
 	}
-	// Verificar que el bloque existe y tiene la función texture
-	else if ( !block || typeof block.texture !== 'function' ) {
-		block = BLOCK.AIR;
+	// Verificar que el bloque existe, no es AIR y tiene la función texture
+	if ( !block || block == BLOCK.AIR ) {
+		return; // Skip rendering if block is invalid or AIR
 	}
+	
+	// Verificar que el bloque tiene la función texture
+	if ( typeof block.texture !== 'function' ) {
+		return; // Skip rendering if block doesn't have texture function
+	}
+	
 	// Si el bloque ya es un bloque animado (viene del sistema de física), usarlo directamente
 	// Esto asegura que mantiene las propiedades del bloque original
-	else if ( block.isAnimated && block.originalBlock ) {
+	if ( block.isAnimated && block.originalBlock ) {
 		// Ya es un bloque animado, mantenerlo
 		isAnimated = true;
 	}
@@ -561,6 +594,10 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		// Si el bloque debe comportarse como animado, crear un bloque animado especial
 		if ( shouldAnimate && block != BLOCK.AIR ) {
 			block = BLOCK.createAnimatedBlock( block );
+			// Verify the animated block has texture function
+			if ( typeof block.texture !== 'function' ) {
+				return; // Skip rendering if animated block doesn't have texture function
+			}
 			isAnimated = true; // Actualizar flag para que las verificaciones de bloques adyacentes funcionen
 		}
 	}
@@ -701,6 +738,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	var shouldRenderTop = shouldRenderFaceBetweenBlocks( block, blockTop, x, y, z, x, y + 1, z );
 	if ( shouldRenderTop && ( yOffset != 0 || y == world.sy - 1 || !blockTop || blockTop == BLOCK.AIR || blockTop.transparent || block.fluid ) )
 	{
+		if ( !block || typeof block.texture !== 'function' ) return;
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.UP );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
@@ -758,6 +796,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	var shouldRenderBottom = shouldRenderFaceBetweenBlocks( block, blockBottom, x, y, z, x, y - 1, z );
 	if ( shouldRenderBottom && ( yOffset != 0 || y == 0 || !blockBottom || blockBottom == BLOCK.AIR || blockBottom.transparent ) )
 	{
+		if ( !block || typeof block.texture !== 'function' ) return;
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.DOWN );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
@@ -796,6 +835,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	var shouldRenderFront = shouldRenderFaceBetweenBlocks( block, blockFront, x, y, z, x, y, z - 1 );
 	if ( shouldRenderFront && ( yOffset != 0 || z == 0 || !blockFront || blockFront == BLOCK.AIR || blockFront.transparent ) )
 	{
+		if ( !block || typeof block.texture !== 'function' ) return;
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.FORWARD );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
@@ -837,6 +877,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	var shouldRenderBack = shouldRenderFaceBetweenBlocks( block, blockBack, x, y, z, x, y, z + 1 );
 	if ( shouldRenderBack && ( yOffset != 0 || z == world.sz - 1 || !blockBack || blockBack == BLOCK.AIR || blockBack.transparent ) )
 	{
+		if ( !block || typeof block.texture !== 'function' ) return;
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.BACK );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
@@ -875,6 +916,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	var shouldRenderLeft = shouldRenderFaceBetweenBlocks( block, blockLeft, x, y, z, x - 1, y, z );
 	if ( shouldRenderLeft && ( yOffset != 0 || x == 0 || !blockLeft || blockLeft == BLOCK.AIR || blockLeft.transparent ) )
 	{
+		if ( !block || typeof block.texture !== 'function' ) return;
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.LEFT );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
@@ -913,6 +955,7 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	var shouldRenderRight = shouldRenderFaceBetweenBlocks( block, blockRight, x, y, z, x + 1, y, z );
 	if ( shouldRenderRight && ( yOffset != 0 || x == world.sx - 1 || !blockRight || blockRight == BLOCK.AIR || blockRight.transparent ) )
 	{
+		if ( !block || typeof block.texture !== 'function' ) return;
 		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.RIGHT );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
@@ -1033,6 +1076,44 @@ if ( typeof BLOCK.setPickingPass !== 'function' ) {
 	BLOCK.setPickingPass = function( pass ) {
 		BLOCK.pickingPass = ( pass === BLOCK.PICK_PASS_DEPTH ) ? BLOCK.PICK_PASS_DEPTH : BLOCK.PICK_PASS_POSITION;
 	};
+}
+
+// break( progress, dir )
+//
+// Returns the break/crack texture coordinates for the given progress (0-1) and direction.
+// Progress is a value between 0 (not broken) and 1 (fully broken).
+// In terrain.png, break textures are typically in the top rows:
+// - Row 15 (0-15): break stage 0-9 (0%, 10%, 20%, ..., 90%)
+// Each break texture is 16x16 pixels, arranged in a row from left to right.
+// Coordinates format: [u_min, v_min, u_max, v_max] in normalized [0-1] range.
+
+BLOCK.break = function( progress, dir )
+{
+	if ( progress <= 0 ) return null; // No break texture if not breaking
+	
+	// Clamp progress to [0, 1]
+	progress = Math.max( 0, Math.min( 1, progress ) );
+	
+	// Calculate break stage (0-9, representing 0%, 10%, 20%, ..., 90%)
+	// Stage 0 = 0-10%, Stage 1 = 10-20%, etc.
+	var stage = Math.floor( progress * 10 );
+	// Cap at stage 9 (90% broken)
+	if ( stage >= 10 ) stage = 9;
+	
+	// Break textures in terrain.png are typically in row 15 (y = 15/16 = 0.9375)
+	// Each stage is 16 pixels wide, starting at x = stage * 16
+	// In a 256x256 texture with 16x16 grid: each cell is 1/16 of texture
+	var texX = stage / 16; // X position in normalized coordinates (0-1)
+	var texY = 15 / 16;    // Y position (row 15, 0-indexed)
+	
+	// Return texture coordinates [u_min, v_min, u_max, v_max]
+	// Each break texture is 16x16 pixels (1/16 of texture)
+	return [
+		texX,           // u_min: left edge
+		texY,           // v_min: top edge
+		texX + 1/16,    // u_max: right edge
+		texY + 1/16     // v_max: bottom edge
+	];
 }
 
 // Ensure it's available globally one more time

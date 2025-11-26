@@ -148,37 +148,70 @@ body {
 /* Health and Hunger Icons */
 .health-icons, .hunger-icons {
 	position: fixed;
-	bottom: 22px;
+	bottom: 48px;
 	transform: scale(var(--gui-scale));
 	transform-origin: center bottom;
-	z-index: 10;
+	z-index: 11;
 	image-rendering: pixelated;
 	pointer-events: none;
 	display: flex;
 	flex-direction: row;
-	gap: 1px;
+	gap: 0px;
 	align-items: center;
 }
 
 /* Health icons - left side of hotbar */
 .health-icons {
 	left: 50%;
-	transform: translateX(calc(-50% - 100px)) scale(var(--gui-scale));
+	transform: translateX(calc(-50% - 100px)) scale(1) scale(var(--gui-scale));
 	/* Hotbar is 182px wide, centered. Offset left by half hotbar width (91px) + margin (9px) = 100px */
+	/* Scale 0.7 to make icons smaller to match hotbar */
 }
 
 /* Hunger icons - right side of hotbar */
 .hunger-icons {
 	left: 50%;
-	transform: translateX(calc(-50% + 100px)) scale(var(--gui-scale));
+	transform: translateX(calc(-50% + 100px)) scale(1) scale(var(--gui-scale));
 	/* Hotbar is 182px wide, centered. Offset right by half hotbar width (91px) + margin (9px) = 100px */
+	/* Scale 0.7 to make icons smaller to match hotbar */
 }
 
-.health-icon, .hunger-icon {
+.health-icon-container, .hunger-icon-container {
+	position: relative;
+	width: 9px;
+	height: 9px;
+	display: inline-block;
+}
+
+.health-icon-outline, .health-icon-filled,
+.hunger-icon-outline, .hunger-icon-filled {
+	position: absolute;
+	top: 0;
+	left: 0;
 	width: 9px;
 	height: 9px;
 	image-rendering: pixelated;
 	background-size: 256px 256px;
+}
+
+.health-icon-outline {
+	background-image: url('../media/gui/icons.png');
+	background-position: -16px 0px;
+	z-index: 1;
+}
+
+.health-icon-filled {
+	z-index: 2;
+}
+
+.hunger-icon-outline {
+	background-image: url('../media/gui/icons.png');
+	background-position: -16px -27px;
+	z-index: 1;
+}
+
+.hunger-icon-filled {
+	z-index: 2;
 }
 
 /* Hide status icons in creative mode */

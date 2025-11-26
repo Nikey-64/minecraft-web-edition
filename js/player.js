@@ -58,6 +58,13 @@ Player.prototype.setWorld = function( world )
 	// Item system support (optional, for future use)
 	this.useItemSystem = false; // Set to true to use ItemStack instead of Block
 	
+	// Block breaking system (survival mode)
+	this.breakingBlock = null; // {x, y, z} - current block being broken
+	this.breakingProgress = 0; // Progress from 0 to 9 (every block is diferent and has a different breaking time)
+	this.breakingStartTime = 0; // Time when breaking started
+	this.isMouseDown = false; // Whether mouse button is currently held down
+	this.lastBreakTarget = null; // Last block targeted for breaking
+	
 	// Initialize game mode UI
 	// Use setTimeout to ensure DOM is ready
 	setTimeout(function() {
@@ -144,11 +151,19 @@ Player.prototype.setInputCanvas = function( id )
 	document.addEventListener('mousedown', function(e) {
 		if (t.pointerLocked && !t.inventoryOpen) {
 			if (e.button === 0) { // Left click
-				t.doBlockActionAtCenter(true); // Destroy
+				t.isMouseDown = true;
+				t.startBreakingBlock();
 			} else if (e.button === 2) { // Right click
 				t.doBlockActionAtCenter(false); // Place
 			}
 			e.preventDefault();
+		}
+	});
+	
+	document.addEventListener('mouseup', function(e) {
+		if (e.button === 0) { // Left mouse button released
+			t.isMouseDown = false;
+			t.stopBreakingBlock();
 		}
 	});
 }
@@ -1271,9 +1286,25 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 		var obj = this.client ? this.client : this.world;
 
 		if ( destroy )
-			obj.setBlock( block.x, block.y, block.z, BLOCK.AIR );
+		{
+			// In creative mode, break instantly
+			if (this.gameMode === GAME_MODE.CREATIVE) {
+				obj.setBlock( block.x, block.y, block.z, BLOCK.AIR );
+			}
+			// In survival mode, breaking is handled by startBreakingBlock() and updateBreakingProgress()
+			// This destroy action is now handled by mouse down event
+			// Stop any breaking when destroy action is triggered
+			if (this.breakingBlock) {
+				this.stopBreakingBlock();
+			}
+		}
 		else
 		{
+			// Stop any breaking in progress when placing a block
+			if (this.breakingBlock) {
+				this.stopBreakingBlock();
+			}
+			
 			// Calcular la posición donde se colocará el bloque
 			// Ejes: X y Z = horizontal, Y = vertical (altura)
 			// La normal apunta hacia la dirección donde se debe colocar el bloque
@@ -1323,6 +1354,9 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 				return; // No colocar el bloque dentro del jugador
 			}
 			
+			// Stop any breaking before placing a block (reset breaking state)
+			this.stopBreakingBlock();
+			
 			// Colocar el bloque
 			obj.setBlock( placeX, placeY, placeZ, this.buildMaterial );
 		}
@@ -1339,6 +1373,201 @@ Player.prototype.doBlockActionAtCenter = function( destroy )
 	var centerX = canvas.width / 2;
 	var centerY = canvas.height / 2;
 	this.doBlockAction( centerX, centerY, destroy );
+}
+
+// startBreakingBlock()
+//
+// Starts breaking the block at the center of the screen (survival mode only).
+
+Player.prototype.startBreakingBlock = function()
+{
+	// In creative mode, break instantly
+	if (this.gameMode === GAME_MODE.CREATIVE) {
+		this.doBlockActionAtCenter(true);
+		return;
+	}
+	
+	// In survival mode, start progressive breaking
+	var eyePos = this.getEyePos();
+	var pitch = this.angles[0];
+	var yaw = this.angles[1];
+	
+	var cosPitch = Math.cos(pitch);
+	var sinPitch = Math.sin(pitch);
+	var cosYaw = Math.cos(yaw);
+	var sinYaw = Math.sin(yaw);
+	
+	var direction = new Vector(
+		cosPitch * sinYaw,
+		sinPitch,
+		cosPitch * cosYaw
+	);
+	
+	// Raycast to find block
+	var block = this.raycast(eyePos, direction, 5.0);
+	
+	if (block && block != false) {
+		var blockKey = block.x + "," + block.y + "," + block.z;
+		var currentBlock = this.world.getBlock(block.x, block.y, block.z);
+		
+		// Can't break air
+		if (!currentBlock || currentBlock === BLOCK.AIR) {
+			this.stopBreakingBlock();
+			return;
+		}
+		
+		// Check if block is breakable (unless in creative mode)
+		if (this.gameMode === GAME_MODE.SURVIVAL && currentBlock.breakable === false) {
+			this.stopBreakingBlock();
+			return; // Can't break non-breakable blocks in survival
+		}
+		
+		// If breaking a different block, reset progress
+		if (!this.breakingBlock || this.breakingBlock.x !== block.x || 
+		    this.breakingBlock.y !== block.y || this.breakingBlock.z !== block.z) {
+			this.breakingBlock = { x: block.x, y: block.y, z: block.z, block: currentBlock };
+			this.breakingProgress = 0;
+			this.breakingStartTime = Date.now();
+		}
+		
+		this.lastBreakTarget = { x: block.x, y: block.y, z: block.z };
+	}
+}
+
+// stopBreakingBlock()
+//
+// Stops breaking the current block and resets progress.
+
+Player.prototype.stopBreakingBlock = function()
+{
+	this.breakingBlock = null;
+	this.breakingProgress = 0;
+	this.lastBreakTarget = null;
+}
+
+// updateBreakingProgress( delta )
+//
+// Updates the breaking progress for the current block (called every frame).
+
+Player.prototype.updateBreakingProgress = function(delta)
+{
+	// Only break in survival mode
+	if (this.gameMode !== GAME_MODE.SURVIVAL) {
+		return;
+	}
+	
+	// Check if mouse is still down and we're breaking a block
+	if (!this.isMouseDown || !this.breakingBlock) {
+		// Reset if mouse is not down
+		if (!this.isMouseDown) {
+			this.stopBreakingBlock();
+		}
+		return;
+	}
+	
+	// Check if we're still looking at the same block
+	var eyePos = this.getEyePos();
+	var pitch = this.angles[0];
+	var yaw = this.angles[1];
+	
+	var cosPitch = Math.cos(pitch);
+	var sinPitch = Math.sin(pitch);
+	var cosYaw = Math.cos(yaw);
+	var sinYaw = Math.sin(yaw);
+	
+	var direction = new Vector(
+		cosPitch * sinYaw,
+		sinPitch,
+		cosPitch * cosYaw
+	);
+	
+	var block = this.raycast(eyePos, direction, 5.0);
+	
+	// If not looking at the same block, reset
+	if (!block || block == false || 
+	    block.x !== this.breakingBlock.x || 
+	    block.y !== this.breakingBlock.y || 
+	    block.z !== this.breakingBlock.z) {
+		this.stopBreakingBlock();
+		return;
+	}
+	
+	// Check if block still exists
+	var currentBlock = this.world.getBlock(this.breakingBlock.x, this.breakingBlock.y, this.breakingBlock.z);
+	if (!currentBlock || currentBlock === BLOCK.AIR) {
+		this.stopBreakingBlock();
+		return;
+	}
+	
+	// Update progress (breaktime determines break speed in milliseconds)
+	// Default breaktime is 1000ms (1 second to break)
+	var breaktime = 1000;
+	if (currentBlock.breaktime !== undefined) {
+		breaktime = currentBlock.breaktime;
+	} else if (currentBlock.hardness !== undefined) {
+		// Fallback to hardness (convert to milliseconds)
+		breaktime = currentBlock.hardness * 1000;
+	}
+	
+	// Progress per second = 1000 / breaktime (breaktime in ms)
+	var progressPerSecond = 1000.0 / breaktime;
+	this.breakingProgress += progressPerSecond * delta;
+	
+	// Break the block when progress reaches 1.0
+	if (this.breakingProgress >= 1.0) {
+		var obj = this.client ? this.client : this.world;
+		obj.setBlock(this.breakingBlock.x, this.breakingBlock.y, this.breakingBlock.z, BLOCK.AIR);
+		
+		// Drop item
+		this.dropBlockItem(this.breakingBlock.block, this.breakingBlock.x, this.breakingBlock.y, this.breakingBlock.z);
+		
+		// Reset breaking
+		this.stopBreakingBlock();
+	}
+}
+
+// dropBlockItem( block, x, y, z )
+//
+// Drops an item entity when a block is broken.
+
+Player.prototype.dropBlockItem = function(block, x, y, z)
+{
+	if (!block || !block.spawnable || block === BLOCK.AIR) {
+		return; // Can't drop air or non-spawnable blocks
+	}
+	
+	if (!this.world || !this.world.addEntity) {
+		return; // World doesn't support entities
+	}
+	
+	// Create ItemStack for the block
+	var item = ITEM_REGISTRY.getByBlock(block);
+	if (!item) {
+		// Block doesn't have an item, create a temporary one
+		item = new Item(block.id, block.name || "Block", ITEM_TYPE.BLOCK, { block: block, maxStack: 64 });
+	}
+	
+	var itemStack = new ItemStack(item, 1);
+	
+	// Create ItemEntity
+	var itemEntity = new ItemEntity(null, itemStack, this.world);
+	
+	// Position at block center with slight random offset
+	itemEntity.pos = new Vector(
+		x + 0.5 + (Math.random() - 0.5) * 0.3,
+		y + 0.5,
+		z + 0.5 + (Math.random() - 0.5) * 0.3
+	);
+	
+	// Add small random velocity
+	itemEntity.velocity = new Vector(
+		(Math.random() - 0.5) * 0.1,
+		0.1 + Math.random() * 0.1,
+		(Math.random() - 0.5) * 0.1
+	);
+	
+	// Add to world
+	this.world.addEntity(itemEntity);
 }
 
 // getEyePos()
@@ -1455,6 +1684,9 @@ Player.prototype.update = function()
 			this.health = this.maxHealth;
 			this.hunger = this.maxHunger;
 		}
+		
+		// Update block breaking progress
+		this.updateBreakingProgress(delta);
 		
 		// Modo espectador: volar libremente sin colisiones ni gravedad
 		if ( this.spectatorMode || this.gameMode === GAME_MODE.SPECTATOR )
@@ -1648,10 +1880,18 @@ Player.prototype.updateGameModeUI = function()
 	if (this.gameMode === GAME_MODE.SURVIVAL) {
 		document.body.classList.add("survival-mode");
 		document.body.classList.remove("creative-mode");
-		if (healthIcons) healthIcons.style.display = "flex";
-		if (hungerIcons) hungerIcons.style.display = "flex";
+		if (healthIcons) {
+			healthIcons.style.display = "flex";
+		}
+		if (hungerIcons) {
+			hungerIcons.style.display = "flex";
+		}
 		if (creativeInventoryButton) creativeInventoryButton.style.display = "none";
-		this.updateHealthHungerIcons();
+		// Update icons after a small delay to ensure DOM is ready
+		var pl = this;
+		setTimeout(function() {
+			pl.updateHealthHungerIcons();
+		}, 50);
 	} else {
 		document.body.classList.remove("survival-mode");
 	}
@@ -1690,18 +1930,32 @@ Player.prototype.updateHealthHungerIcons = function()
 	// icons.png texture coordinates for health/hunger
 	// Health: full heart at (52, 0), half heart at (61, 0), empty heart at (16, 0)
 	// Hunger: full drumstick at (52, 27), half drumstick at (61, 27), empty drumstick at (16, 27)
+	// Outline icons (always visible, show max health/hunger):
+	// Health outline: (16, 9) - heart outline (white with black border)
+	// Hunger outline: (16, 36) - drumstick outline (white with black border)
 	// Each icon is 9x9 pixels in the texture
 	
 	var iconsImg = this._iconsImage;
-	var iconSize = 9; // Size of each icon in icons.png
+	var iconSize = 9; // Base size of each icon in icons.png
 	
-	// Render health icons (10 hearts, each representing 2 health)
-	var maxHearts = Math.ceil(this.maxHealth / 2); // Maximum hearts (10)
+	// Render health icons
+	// Each heart represents 2 health points
+	var maxHearts = Math.ceil(this.maxHealth / 2); // Maximum hearts (10 for 20 health)
 	var currentHealth = Math.max(0, Math.min(this.health, this.maxHealth));
 	
 	for (var i = 0; i < maxHearts; i++) {
-		var icon = document.createElement("div");
-		icon.className = "health-icon";
+		// Create container for this heart (to layer outline + fill)
+		var heartContainer = document.createElement("div");
+		heartContainer.className = "health-icon-container";
+		
+		// 1. Render outline icon (always visible, shows max health)
+		var outlineIcon = document.createElement("div");
+		outlineIcon.className = "health-icon-outline";
+		heartContainer.appendChild(outlineIcon);
+		
+		// 2. Render filled icon (shows current health)
+		var filledIcon = document.createElement("div");
+		filledIcon.className = "health-icon-filled";
 		
 		var heartHealth = currentHealth - (i * 2); // Health for this specific heart
 		var texX, texY;
@@ -1715,26 +1969,36 @@ Player.prototype.updateHealthHungerIcons = function()
 			texX = 61;
 			texY = 0;
 		} else {
-			// Empty heart
+			// Empty heart (but we still show the outline)
 			texX = 16;
 			texY = 0;
 		}
 		
-		icon.style.backgroundImage = "url(" + iconsImg.src + ")";
-		icon.style.backgroundPosition = "-" + texX + "px -" + texY + "px";
-		icon.style.width = iconSize + "px";
-		icon.style.height = iconSize + "px";
+		filledIcon.style.backgroundImage = "url(" + iconsImg.src + ")";
+		filledIcon.style.backgroundPosition = "-" + texX + "px -" + texY + "px";
+		heartContainer.appendChild(filledIcon);
 		
-		healthContainer.appendChild(icon);
+		healthContainer.appendChild(heartContainer);
 	}
 	
-	// Render hunger icons (10 drumsticks, each representing 2 hunger)
-	var maxHungerIcons = Math.ceil(this.maxHunger / 2); // Maximum drumsticks (10)
+	// Render hunger icons
+	// Each drumstick represents 2 hunger points
+	var maxHungerIcons = Math.ceil(this.maxHunger / 2); // Maximum drumsticks (10 for 20 hunger)
 	var currentHunger = Math.max(0, Math.min(this.hunger, this.maxHunger));
 	
 	for (var i = 0; i < maxHungerIcons; i++) {
-		var icon = document.createElement("div");
-		icon.className = "hunger-icon";
+		// Create container for this drumstick (to layer outline + fill)
+		var drumstickContainer = document.createElement("div");
+		drumstickContainer.className = "hunger-icon-container";
+		
+		// 1. Render outline icon (always visible, shows max hunger)
+		var outlineIcon = document.createElement("div");
+		outlineIcon.className = "hunger-icon-outline";
+		drumstickContainer.appendChild(outlineIcon);
+		
+		// 2. Render filled icon (shows current hunger)
+		var filledIcon = document.createElement("div");
+		filledIcon.className = "hunger-icon-filled";
 		
 		var hungerAmount = currentHunger - (i * 2); // Hunger for this specific drumstick
 		var texX, texY;
@@ -1748,17 +2012,16 @@ Player.prototype.updateHealthHungerIcons = function()
 			texX = 61;
 			texY = 27;
 		} else {
-			// Empty drumstick
+			// Empty drumstick (but we still show the outline)
 			texX = 16;
 			texY = 27;
 		}
 		
-		icon.style.backgroundImage = "url(" + iconsImg.src + ")";
-		icon.style.backgroundPosition = "-" + texX + "px -" + texY + "px";
-		icon.style.width = iconSize + "px";
-		icon.style.height = iconSize + "px";
+		filledIcon.style.backgroundImage = "url(" + iconsImg.src + ")";
+		filledIcon.style.backgroundPosition = "-" + texX + "px -" + texY + "px";
+		drumstickContainer.appendChild(filledIcon);
 		
-		hungerContainer.appendChild(icon);
+		hungerContainer.appendChild(drumstickContainer);
 	}
 }
 
