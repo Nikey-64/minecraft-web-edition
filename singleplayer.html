@@ -6,7 +6,7 @@
 		<!-- Character encoding -->
 		<meta content="text/html" charset="UTF-8">
 		<!-- Favicon -->
-		<link rel="icon" href="media/gui/favicon.png">
+		<link rel="icon" href="media/favicon.png">
 
 		<!-- Stylesheet -->
 		<link href="style/main.css" rel="stylesheet" type="text/css">
@@ -303,6 +303,7 @@
 			var fps = 0;
 			var lastTime = performance.now();
 			var frameCount = 0;
+			var lastFrameTime = null; // Will be initialized in startGameLoop
 
 			// Performance profiling
 			var performanceStats = {
@@ -445,12 +446,20 @@
 			}
 
 			function setupWorldManagerUI() {
+				// Hide hotbar when world selection menu is visible (initial state)
+				var worldSelectionMenu = document.getElementById("worldSelectionMenu");
+				if (worldSelectionMenu && worldSelectionMenu.style.display === "flex") {
+					document.body.classList.add("world-selection-active");
+				}
+				
 				// Create world button
 				var createButton = document.getElementById("createWorldButton");
 				if ( createButton ) {
 					createButton.onclick = function() {
 						document.getElementById("worldSelectionMenu").style.display = "none";
 						document.getElementById("createWorldMenu").style.display = "flex";
+						// Remove class to show hotbar when leaving world selection
+						document.body.classList.remove("world-selection-active");
 					};
 				}
 				
@@ -488,6 +497,8 @@
 							await loadWorldsList();
 							document.getElementById("createWorldMenu").style.display = "none";
 							document.getElementById("worldSelectionMenu").style.display = "flex";
+							// Add class to hide hotbar when showing world selection
+							document.body.classList.add("world-selection-active");
 							// Reset form
 							document.getElementById("worldNameInput").value = "";
 							document.getElementById("worldSizeSelect").value = "128";
@@ -505,6 +516,8 @@
 					createCancelButton.onclick = function() {
 						document.getElementById("createWorldMenu").style.display = "none";
 						document.getElementById("worldSelectionMenu").style.display = "flex";
+						// Add class to hide hotbar when showing world selection
+						document.body.classList.add("world-selection-active");
 						// Reset form
 						document.getElementById("worldNameInput").value = "";
 						document.getElementById("worldSizeSelect").value = "128";
@@ -523,6 +536,8 @@
 					// Hide world selection menu
 					document.getElementById("worldSelectionMenu").style.display = "none";
 					document.getElementById("createWorldMenu").style.display = "none";
+					// Remove class to show hotbar when leaving world selection
+					document.body.classList.remove("world-selection-active");
 					
 					// Show game canvas
 					var canvas = document.getElementById("renderSurface");
@@ -857,10 +872,13 @@
 				
 				// Rotation state (stored on canvas for persistence)
 				// Use same system as player.js: angles and targetAngles with interpolation
-				canvas._modelYaw = Math.PI; // Start facing forward (same as player.js default)
-				canvas._modelPitch = 0;
+				// player.js: angles[0] = pitch, angles[1] = yaw
+				canvas._angles = [0, Math.PI]; // [pitch, yaw] - start facing forward (same as player.js default)
 				canvas._targetYaw = Math.PI;
 				canvas._targetPitch = 0;
+				// Backwards compatibility
+				canvas._modelYaw = Math.PI;
+				canvas._modelPitch = 0;
 				
 				// Make canvas and context accessible globally
 				window._inventoryPlayerCanvas = canvas;
@@ -971,7 +989,13 @@
 							return;
 						}
 						
-						// Update target angles based on current mouse position (continuous tracking)
+						// Ensure angles are initialized
+						if (canvas._modelYaw === undefined) canvas._modelYaw = Math.PI;
+						if (canvas._modelPitch === undefined) canvas._modelPitch = 0;
+						if (canvas._targetYaw === undefined) canvas._targetYaw = Math.PI;
+						if (canvas._targetPitch === undefined) canvas._targetPitch = 0;
+						
+						// Update target angles based on current mouse position (replicating player.js rotation system)
 						var container = canvas.parentElement;
 						if (container) {
 							var rect = container.getBoundingClientRect();
@@ -983,50 +1007,72 @@
 							var mouseX = (canvas._lastMouseX !== undefined && canvas._lastMouseX !== null) ? canvas._lastMouseX : centerX;
 							var mouseY = (canvas._lastMouseY !== undefined && canvas._lastMouseY !== null) ? canvas._lastMouseY : centerY;
 							
+							// Calculate delta from center (like movementX/Y in player.js)
 							var deltaX = mouseX - centerX;
 							var deltaY = mouseY - centerY;
 							
-							var maxRotation = Math.PI / 2;
-							var sensitivity = Math.max(rect.width, rect.height) / 2;
-							
-							var normalizedX = Math.max(-1, Math.min(1, deltaX / sensitivity));
-							var normalizedY = Math.max(-1, Math.min(1, deltaY / sensitivity));
-							
-							// Ensure target angles are initialized
+							// Ensure angles are initialized (same as player.js: angles[0] = pitch, angles[1] = yaw)
+							if (canvas._angles === undefined) {
+								canvas._angles = [0, Math.PI]; // [pitch, yaw] - start facing forward
+							}
 							if (canvas._targetYaw === undefined) canvas._targetYaw = Math.PI;
 							if (canvas._targetPitch === undefined) canvas._targetPitch = 0;
 							
-							// Update target angles continuously based on mouse position
-							canvas._targetYaw = Math.PI + (normalizedX * maxRotation);
-							canvas._targetPitch = -(normalizedY * maxRotation);
+							// Update target angles based on mouse position (replicating player.js onMouseMove)
+							// player.js: this.targetPitch = this.angles[0] - deltaY / 200;
+							//           this.targetYaw = this.angles[1] + deltaX / 200;
+							// For inventory: use sensitivity based on container size (similar to /200 sensitivity)
+							var sensitivity = 200; // Same sensitivity as player.js
+							// Calculate sensitivity multiplier based on container size to match player.js behavior
+							var sensitivityMultiplier = Math.max(rect.width, rect.height) / 100; // Adjust based on container size
 							
-							// Clamp target pitch
+							// Update target angles (replicating player.js onMouseMove logic)
+							canvas._targetPitch = canvas._angles[0] - (deltaY / (sensitivity * sensitivityMultiplier));
+							canvas._targetYaw = canvas._angles[1] + (deltaX / (sensitivity * sensitivityMultiplier));
+							
+							// Clamp target pitch (same as player.js)
 							if (canvas._targetPitch < -Math.PI/2) canvas._targetPitch = -Math.PI/2;
 							if (canvas._targetPitch > Math.PI/2) canvas._targetPitch = Math.PI/2;
 						}
 						
-						// Interpolate angles towards target (same as player.js line 864-865)
+						// Interpolate angles towards target (same as player.js update() - line 3948-3949)
+						// player.js: this.angles[0] += ( this.targetPitch - this.angles[0] ) * 30 * delta;
+						//           this.angles[1] += ( this.targetYaw - this.angles[1] ) * 30 * delta;
 						var now = Date.now();
 						var delta = (now - lastUpdateTime) / 1000; // Convert to seconds
 						lastUpdateTime = now;
 						
-						// Smooth interpolation - faster for more responsive feel (like vanilla)
-						var interpolationSpeed = 50; // Increased from 30 for more responsive rotation
-						if (canvas._modelYaw === undefined) canvas._modelYaw = Math.PI;
-						if (canvas._modelPitch === undefined) canvas._modelPitch = 0;
+						// Ensure angles array is initialized
+						if (canvas._angles === undefined) {
+							canvas._angles = [0, Math.PI]; // [pitch, yaw]
+						}
 						if (canvas._targetYaw === undefined) canvas._targetYaw = Math.PI;
 						if (canvas._targetPitch === undefined) canvas._targetPitch = 0;
 						
-						// Interpolate towards target angles (smooth rotation)
-						canvas._modelYaw += (canvas._targetYaw - canvas._modelYaw) * interpolationSpeed * delta;
-						canvas._modelPitch += (canvas._targetPitch - canvas._modelPitch) * interpolationSpeed * delta;
+						// Interpolate with same speed as player.js (30 * delta)
+						var interpolationSpeed = 30; // Same as player.js
+						canvas._angles[0] += (canvas._targetPitch - canvas._angles[0]) * interpolationSpeed * delta;
+						canvas._angles[1] += (canvas._targetYaw - canvas._angles[1]) * interpolationSpeed * delta;
 						
-						// Clamp pitch (same as player.js line 866-867)
-						if (canvas._modelPitch < -Math.PI/2) canvas._modelPitch = -Math.PI/2;
-						if (canvas._modelPitch > Math.PI/2) canvas._modelPitch = Math.PI/2;
+						// Clamp pitch (same as player.js line 3950-3951)
+						if (canvas._angles[0] < -Math.PI/2) canvas._angles[0] = -Math.PI/2;
+						if (canvas._angles[0] > Math.PI/2) canvas._angles[0] = Math.PI/2;
 						
-						// Render with interpolated angles
-						renderInventoryPlayerModel(canvas._ctx, canvas, canvas._modelYaw, canvas._modelPitch);
+						// Use interpolated angles for rendering (same as render.js uses player.angles)
+						// render.js: Math.PI - player.angles[1] for yaw, -pitch for pitch
+						var renderYaw = canvas._angles[1]; // Will be converted to Math.PI - yaw in render function
+						var renderPitch = canvas._angles[0]; // Will be converted to -pitch in render function
+						
+						// Also update model angles for backwards compatibility
+						canvas._modelYaw = renderYaw;
+						canvas._modelPitch = renderPitch;
+						
+						// Render with interpolated angles (same as render.js uses player.angles)
+						// render.js: Math.PI - player.angles[1] for yaw, -pitch for pitch
+						if (canvas._ctx && canvas._playerTexture) {
+							// Pass angles as they are - render function will apply Math.PI - yaw and -pitch
+							renderInventoryPlayerModel(canvas._ctx, canvas, renderYaw, renderPitch);
+						}
 						
 						// Schedule next frame
 						renderLoopAnimationFrame = requestAnimationFrame(renderFrame);
@@ -1056,7 +1102,23 @@
 					lastUpdateTime = Date.now();
 					canvas._renderLoopActive = true;
 					
+					// Initialize angles if not set (same as player.js)
+					if (canvas._angles === undefined) {
+						canvas._angles = [0, Math.PI]; // [pitch, yaw] - same as player.js default
+					}
+					if (canvas._targetYaw === undefined) canvas._targetYaw = Math.PI;
+					if (canvas._targetPitch === undefined) canvas._targetPitch = 0;
+					// Backwards compatibility
+					if (canvas._modelYaw === undefined) canvas._modelYaw = Math.PI;
+					if (canvas._modelPitch === undefined) canvas._modelPitch = 0;
+					
+					// Force initial render if texture is loaded
+					if (canvas._playerTexture && canvas._ctx) {
+						renderInventoryPlayerModel(canvas._ctx, canvas, canvas._modelYaw, canvas._modelPitch);
+					}
+					
 					// Start the animation frame loop
+					console.log('Starting inventory render loop');
 					renderLoopAnimationFrame = requestAnimationFrame(renderFrame);
 				};
 				
@@ -1084,11 +1146,15 @@
 										canvas._lastMouseY = rect.top + rect.height / 2;
 									}
 									
-									// Ensure rotation state is initialized
-									if (canvas._modelYaw === undefined) canvas._modelYaw = Math.PI;
-									if (canvas._modelPitch === undefined) canvas._modelPitch = 0;
+									// Ensure rotation state is initialized (same as player.js)
+									if (canvas._angles === undefined) {
+										canvas._angles = [0, Math.PI]; // [pitch, yaw] - same as player.js default
+									}
 									if (canvas._targetYaw === undefined) canvas._targetYaw = Math.PI;
 									if (canvas._targetPitch === undefined) canvas._targetPitch = 0;
+									// Backwards compatibility
+									if (canvas._modelYaw === undefined) canvas._modelYaw = Math.PI;
+									if (canvas._modelPitch === undefined) canvas._modelPitch = 0;
 									
 									// Store startRenderLoop globally so it can be called when texture loads
 									window._startInventoryRenderLoop = startRenderLoop;
@@ -1240,11 +1306,24 @@
 				// Initialize CSS 3D player model rotation tracking
 				setupInventoryPlayerModelCSS3D();
 				
-				gameLoopInterval = setInterval( function()
-				{
+				// Use requestAnimationFrame for better performance and synchronization
+				lastFrameTime = performance.now(); // Use global variable
+				var frameId = null;
+				
+				function gameLoop(currentTime) {
 					if (!paused) {
 						var frameStart = performance.now();
-						var time = new Date().getTime() / 1000.0;
+						
+						// If lastFrameTime is null or very old, reset it to prevent huge delta
+						if (lastFrameTime === null || (currentTime - lastFrameTime) > 1000) {
+							lastFrameTime = currentTime;
+						}
+						
+						var deltaTime = (currentTime - lastFrameTime) / 1000.0; // Delta in seconds
+						lastFrameTime = currentTime;
+						
+						// Limit delta to prevent large jumps
+						if (deltaTime > 0.1) deltaTime = 0.1; // Max 100ms delta
 
 						// Simulate physics
 						measureTime('physics', function() {
@@ -1274,9 +1353,12 @@
 							player.update();
 						});
 
-						// Build a chunk
+						// Build chunks only if there are dirty chunks (optimization)
 						measureTime('buildChunks', function() {
-							render.buildChunks( 8 );
+							if (render.dirtyChunks && render.dirtyChunks.length > 0) {
+								// Build fewer chunks per frame to spread load
+								render.buildChunks( 2 ); // Reduced from 8 to 2
+							}
 						});
 
 						// Draw world
@@ -1347,7 +1429,7 @@
 							}
 						});
 						
-						// Update debug overlay
+						// Update debug overlay (only if enabled)
 						if (debugEnabled) {
 							updateDebugOverlay();
 						}
@@ -1368,10 +1450,19 @@
 							// Log performance stats every second
 							logPerformanceStats();
 						}
-
-						while ( new Date().getTime() / 1000 - time < 0.016 );
+					} else {
+						// Game is paused - reset lastFrameTime so we don't accumulate a huge delta
+						// This prevents massive catch-up when resuming
+						lastFrameTime = performance.now();
 					}
-				}, 1 );
+					
+					// Always schedule next frame, but only process game logic if not paused
+					frameId = requestAnimationFrame(gameLoop);
+				}
+				
+				// Start the loop
+				frameId = requestAnimationFrame(gameLoop);
+				gameLoopInterval = { frameId: frameId, cancel: function() { if (this.frameId) cancelAnimationFrame(this.frameId); } }; // Store for cleanup
 			}
 
 			// Update debug overlay with player information
@@ -1530,9 +1621,11 @@
 				document.getElementById('pauseOverlay').style.display = 'none';
 				document.getElementById('pauseMenu').style.display = 'none';
 				document.getElementById('pauseSettingsMenu').style.display = 'none';
-				if ( player && player.canvas ) {
-					player.canvas.requestPointerLock();
-				}
+				
+				// Reset lastFrameTime BEFORE requesting pointer lock to prevent huge delta
+				// This prevents the game from trying to catch up with all the paused time
+				lastFrameTime = performance.now();
+				
 				// Reset FPS tracking when resuming
 				lastTime = performance.now();
 				frameCount = 0;
@@ -1541,6 +1634,25 @@
 				// This prevents the player from falling through the world
 				if ( player && player.lastUpdate ) {
 					player.lastUpdate = new Date().getTime();
+				}
+				
+				// Reset renderer's updateChunks state to prevent immediate massive update
+				if ( render ) {
+					render._updateChunksState = null;
+					render._loadIndex = 0;
+					render._unloadIndex = 0;
+					// Delay first updateChunks call by setting frame count high
+					// This gives the game a few frames to stabilize before chunk updates
+					render._updateChunksFrameCount = 10; // Wait 10 frames before first update
+				}
+				
+				// Request pointer lock after a small delay to ensure state is reset
+				if ( player && player.canvas ) {
+					setTimeout(function() {
+						if (player && player.canvas && !paused) {
+							player.canvas.requestPointerLock();
+						}
+					}, 50); // Small delay to let state settle
 				}
 			}
 

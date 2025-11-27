@@ -228,7 +228,22 @@ World.prototype.ensureChunkLoaded = function( chunk, chunkSize, chunkSizeY )
 	var size = chunkSize || this.chunkSize;
 	var sizeY = chunkSizeY || this.chunkSizeY;
 	var key = this.getChunkKeyFromChunk( chunk );
-	if ( this.chunkStates && this.chunkStates[key] === "loaded" ) return;
+	
+	// Verificar si el chunk está realmente cargado en memoria
+	// No confiar solo en chunkStates porque puede estar desactualizado después de unloadChunk
+	var isActuallyLoaded = false;
+	if ( chunk.start && this.blocks ) {
+		var startX = chunk.start[0];
+		var startZ = chunk.start[2];
+		var startY = 0;
+		// Verificar si hay bloques en memoria para este chunk
+		if ( this.blocks[startX] && this.blocks[startX][startY] && this.blocks[startX][startY][startZ] !== undefined ) {
+			isActuallyLoaded = true;
+		}
+	}
+	
+	// Solo retornar temprano si está marcado como loaded Y realmente tiene datos en memoria
+	if ( this.chunkStates && this.chunkStates[key] === "loaded" && isActuallyLoaded ) return;
 	
 	// Intentar cargar desde storage
 	var data = this.readChunkFromStorage( key );
@@ -254,26 +269,62 @@ World.prototype.ensureChunkLoaded = function( chunk, chunkSize, chunkSizeY )
 		if ( chunk.needsSave !== undefined ) {
 			chunk.needsSave = false;
 		}
+		if ( !this.chunkStates ) this.chunkStates = {};
+		this.chunkStates[key] = "loaded";
 	}
-		else
-		{
-			// IMPORTANTE: Los chunks base ya deberían estar guardados en IndexedDB
-			// Si no existe, es un error - no generar, solo esperar a que IndexedDB termine de cargar
-			// Si IndexedDB retorna null después de cargar, entonces el chunk realmente no existe
-			// (esto no debería pasar si el mundo fue creado correctamente)
-			console.warn("Chunk not found in storage:", key, "- waiting for IndexedDB to finish loading");
-			// No generar - el chunk debería existir en IndexedDB
-			// El callback de IndexedDB aplicará los datos cuando termine de cargar
-			// Si IndexedDB termina y retorna null, entonces hay un problema con la generación inicial
-			return; // No generar, esperar a que IndexedDB termine
+	else
+	{
+		// Si no hay datos y no hay una carga pendiente, generar el chunk INMEDIATAMENTE
+		// Esto evita huecos cuando el chunk no existe en IndexedDB
+		if ( !this.pendingIndexedDBLoads || !this.pendingIndexedDBLoads[key] ) {
+			// No hay carga pendiente - generar el chunk ahora usando la misma estructura que generateAndSaveAllChunks
+			console.log("Chunk not in cache, generating immediately:", key);
+			var flatHeight = this.flatHeight || 4;
+			
+			// Usar la misma estructura de arrays que generateAndSaveAllChunks
+			// IMPORTANTE: blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
+			var startX = chunk.start[0];
+			var startZ = chunk.start[2];
+			var startY = 0;
+			var endX = Math.min( this.sx, startX + size );
+			var endZ = Math.min( this.sz, startZ + size );
+			var endY = Math.min( this.sy, startY + sizeY );
+			
+			for ( var x = startX; x < endX; x++ ) {
+				if ( x < 0 ) continue;
+				if ( !this.blocks[x] ) {
+					this.blocks[x] = new Array( this.sy );
+				}
+				for ( var z = startZ; z < endZ; z++ ) {
+					if ( z < 0 ) continue;
+					for ( var y = startY; y < endY; y++ ) {
+						if ( !this.blocks[x][y] ) {
+							this.blocks[x][y] = new Array( this.sz );
+						}
+						// Generar terreno plano (misma lógica que generateAndSaveAllChunks)
+						if ( y >= flatHeight ) {
+							this.blocks[x][y][z] = BLOCK.AIR;
+						} else if ( y === flatHeight - 1 ) {
+							this.blocks[x][y][z] = BLOCK.GRASS;
+						} else {
+							this.blocks[x][y][z] = BLOCK.DIRT;
+						}
+					}
+				}
+			}
+			
+			if ( !this.chunkStates ) this.chunkStates = {};
+			this.chunkStates[key] = "loaded";
+			chunk.dirty = true; // Marcar para reconstruir
+			if ( chunk.needsSave !== undefined ) {
+				chunk.needsSave = true; // Marcar para guardar
+			}
+		} else {
+			// Hay una carga pendiente - esperar a que IndexedDB termine
+			// PERO si IndexedDB retorna null, se generará en el callback
+			console.log("Chunk loading from IndexedDB, waiting:", key);
+			return; // Esperar a que IndexedDB termine
 		}
-	
-	if ( !this.chunkStates ) this.chunkStates = {};
-	this.chunkStates[key] = "loaded";
-	// Marcar chunk como "clean" ya que se generó nuevo (no modificado aún)
-	chunk.dirty = false;
-	if ( chunk.needsSave !== undefined ) {
-		chunk.needsSave = false;
 	}
 }
 
@@ -631,14 +682,17 @@ World.prototype.readChunkFromStorage = function( key )
 					}
 				}
 			} else if ( self.renderer && !data ) {
-				// Chunk no existe en IndexedDB - esto no debería pasar si el mundo fue generado correctamente
-				console.error("Chunk not found in IndexedDB:", key, "- world may not have been generated correctly");
+				// Chunk no existe en IndexedDB - generarlo INMEDIATAMENTE
+				console.log("Chunk not found in IndexedDB, generating now:", key);
 				var chunk = self.renderer.chunkLookup[key];
 				if ( chunk ) {
-					// Marcar chunk como error - no se puede cargar
-					chunk.dirty = false;
-					if ( chunk.needsSave !== undefined ) {
-						chunk.needsSave = false;
+					// Asegurar que no haya marca de carga pendiente para forzar generación inmediata
+					if ( self.pendingIndexedDBLoads ) {
+						delete self.pendingIndexedDBLoads[key];
+					}
+					// Generar inmediatamente (ensureChunkLoaded detectará que no hay datos ni carga pendiente)
+					if ( self.ensureChunkLoaded ) {
+						self.ensureChunkLoaded( chunk, self.chunkSize, self.chunkSizeY );
 					}
 				}
 			}

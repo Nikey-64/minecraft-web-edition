@@ -114,6 +114,11 @@ body {
 	background-repeat: no-repeat;
 }
 
+/* Hide hotbar when world selection menu is visible */
+body.world-selection-active #hotbar {
+	display: none !important;
+}
+
 .hotbar-slot {
 	width: 20px;
 	height: 20px;

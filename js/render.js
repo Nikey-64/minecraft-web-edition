@@ -220,15 +220,25 @@ Renderer.prototype.draw = function()
 			var dz = newCamPos[2] - this._lastCamPos[2];
 			var dist = Math.sqrt( dx * dx + dy * dy + dz * dz );
 			
-			// Si la cámara se movió más de 0.5 bloques, marcar chunks como dirty para recalcular caras transparentes
-			if ( dist > 0.5 ) {
+			// Si la cámara se movió más de 2 bloques, marcar solo chunks cercanos como dirty (optimization)
+			if ( dist > 2.0 ) {
 				if ( this.chunks ) {
+					// Only mark chunks near the camera as dirty, not all chunks
+					var playerChunkX = Math.floor(newCamPos[0] / this.chunkSize);
+					var playerChunkZ = Math.floor(newCamPos[2] / this.chunkSize);
+					var markRadius = 2; // Only mark chunks within 2 chunks of player
+					
 					for ( var i = 0; i < this.chunks.length; i++ ) {
 						var chunk = this.chunks[i];
 						if ( chunk.loaded ) {
-							chunk.dirty = true;
-							if ( this.dirtyChunks.indexOf( chunk ) === -1 ) {
-								this.dirtyChunks.push( chunk );
+							var chunkDistX = Math.abs(chunk.cx - playerChunkX);
+							var chunkDistZ = Math.abs(chunk.cz - playerChunkZ);
+							// Only mark nearby chunks as dirty
+							if (chunkDistX <= markRadius && chunkDistZ <= markRadius) {
+								chunk.dirty = true;
+								if ( this.dirtyChunks.indexOf( chunk ) === -1 ) {
+									this.dirtyChunks.push( chunk );
+								}
 							}
 						}
 					}
@@ -243,13 +253,38 @@ Renderer.prototype.draw = function()
 		this.camPos = newCamPos;
 	}
 	
-	// Actualizar chunks cada frame para mejor responsividad al moverse
+	// Actualizar chunks menos frecuentemente para mejor rendimiento
+	// But update more frequently if there's pending work (render distance change)
 	if (!this._updateChunksFrameCount) this._updateChunksFrameCount = 0;
 	this._updateChunksFrameCount++;
-	if (this._updateChunksFrameCount >= 3) { // Update chunks every 3 frames (más frecuente)
+	
+	// If there's pending incremental work, update every frame for responsive updates
+	// Otherwise, update every 10 frames for normal operation
+	var hasPendingWork = this._updateChunksState !== null || 
+	                     (this._loadIndex !== undefined && this._loadIndex > 0) ||
+	                     (this._unloadIndex !== undefined && this._unloadIndex > 0);
+	var updateFrequency = hasPendingWork ? 1 : 10;
+	
+	// Force update if frame count is 0 (was reset by setRenderDistance)
+	// But limit time budget to prevent freezing (max 5ms per frame)
+	if (this._updateChunksFrameCount >= updateFrequency || this._updateChunksFrameCount === 0) {
 		var updateStart = performance.now();
+		var maxUpdateTime = 5; // Maximum milliseconds to spend on updateChunks per frame
+		
 		this.updateChunks();
+		
 		var updateTime = performance.now() - updateStart;
+		
+		// If update took too long, stop and continue next frame
+		if (updateTime > maxUpdateTime && hasPendingWork) {
+			// Don't reset counter, allow next frame to continue immediately
+		} else {
+			// Update completed in time budget, reset counter
+			if (this._updateChunksFrameCount > 0) {
+				this._updateChunksFrameCount = 0;
+			}
+		}
+		
 		if (this._updateChunksStats) {
 			this._updateChunksStats.total += updateTime;
 			this._updateChunksStats.count++;
@@ -257,7 +292,6 @@ Renderer.prototype.draw = function()
 		} else {
 			this._updateChunksStats = { total: updateTime, count: 1, max: updateTime };
 		}
-		this._updateChunksFrameCount = 0;
 	}
 
 	// Draw level chunks
@@ -849,8 +883,13 @@ Renderer.prototype.unloadChunk = function( chunkIndexOrChunk )
 	
 	if ( !chunk.needsSave ) {
 		// Chunk no modificado - se puede limpiar de RAM (se recargará de IndexedDB si es necesario)
-		if ( this.world && this.world.clearChunkInMemory )
+		if ( this.world && this.world.clearChunkInMemory ) {
 			this.world.clearChunkInMemory( chunk.start, this.chunkSize, this.chunkSizeY );
+			// Resetear chunkStates para permitir recarga cuando el jugador regrese
+			if ( this.world.chunkStates && chunk.key ) {
+				delete this.world.chunkStates[chunk.key];
+			}
+		}
 	}
 	// Si chunk.needsSave = true, NO limpiar de RAM - los datos deben permanecer hasta que se guarden al salir
 	
@@ -873,8 +912,15 @@ Renderer.prototype.unloadChunk = function( chunkIndexOrChunk )
 Renderer.prototype.setRenderDistance = function( distance )
 {
 	this.renderDistance = distance;
-	// Trigger immediate chunk update
-	this.updateChunks();
+	// Reset all incremental update state when render distance changes
+	// This forces a fresh start and lets the normal updateChunks system handle it gradually
+	this._updateChunksState = null;
+	this._loadIndex = 0;
+	this._unloadIndex = 0;
+	this._updateChunksFrameCount = 0; // Reset frame counter to trigger immediate update
+	
+	// Force immediate chunk update check (will be processed incrementally by updateChunks)
+	// By resetting frame counter, next draw() call will trigger updateChunks
 };
 
 // loadChunk( chunkIndex )
@@ -934,6 +980,7 @@ Renderer.prototype.loadChunk = function( chunkIndexOrChunk )
 //
 // Updates the loaded state of chunks based on the player's current position.
 // Loads chunks that are in range and unloads those that are not.
+// Processed incrementally to prevent freezing.
 
 Renderer.prototype.updateChunks = function()
 {
@@ -955,62 +1002,168 @@ Renderer.prototype.updateChunks = function()
 	}
 	
 	// Calcular coordenadas de chunk del jugador (solo horizontales X y Z, NO altura Y)
-	// Ejes: X y Z = horizontal, Y = vertical (altura)
 	var playerChunkX = Math.floor( playerX / this.chunkSize );
 	var playerChunkZ = Math.floor( playerZ / this.chunkSize );
-	// NOTA: playerChunkY NO se calcula ni se usa porque renderDistance no procesa la altura Y
-	var targetKeys = new Set();
-
-	// IMPORTANTE: renderDistance solo se aplica a dimensiones horizontales (X, Z)
-	// NO iteramos sobre Y porque los chunks son 8x8x256 (un solo chunk vertical por columna que cubre toda la altura Y)
-	// La altura (Y) NO se procesa con renderDistance
-	for ( var dx = -this.renderDistance; dx <= this.renderDistance; dx++ ) {
-		for ( var dz = -this.renderDistance; dz <= this.renderDistance; dz++ ) {
-			var cx = playerChunkX + dx;
-			var cz = playerChunkZ + dz;
-			var cy = 0; // Siempre 0 porque solo hay un chunk vertical (cubre toda la altura Y)
-			
-			// Verificar límites del mundo (solo X y Z, Y se cubre completamente)
-			var chunkX = cx * this.chunkSize;
-			var chunkZ = cz * this.chunkSize;
-			if ( chunkX < 0 || chunkX >= this.world.sx || chunkZ < 0 || chunkZ >= this.world.sz ) continue;
-			
-			if ( !this.isChunkInRange( cx, cz, cy, playerX, playerZ, playerY ) ) continue;
-			var key = this.getChunkKey( cx, cz, cy );
-			targetKeys.add( key );
-			
-			var chunk = this.chunkLookup && this.chunkLookup[key];
-			if ( !chunk ) {
-				// Chunk no existe en lookup, crearlo
-				var y = 0; // Chunk empieza en Y=0 y cubre toda la altura
-				chunk = {
-					start: [ chunkX, y, chunkZ ],
-					end: [ Math.min( this.world.sx, chunkX + this.chunkSize ), Math.min( this.world.sy, y + this.chunkSizeY ), Math.min( this.world.sz, chunkZ + this.chunkSize ) ],
-					cx: cx,
-					cz: cz,
-					cy: cy,
-					dirty: true,
-					loaded: false
-				};
-				chunk.key = key;
-				this.chunkLookup[key] = chunk;
-				this.chunks.push( chunk );
-			}
-			
-			if ( chunk && !chunk.loaded ) {
-				this.loadChunk( chunk );
+	
+	// Initialize or reuse incremental state
+	var state = this._updateChunksState;
+	if ( !state || state.playerChunkX !== playerChunkX || state.playerChunkZ !== playerChunkZ || state.renderDistance !== this.renderDistance ) {
+		// Need to recalculate target chunks
+		state = {
+			playerChunkX: playerChunkX,
+			playerChunkZ: playerChunkZ,
+			playerX: playerX,
+			playerY: playerY,
+			playerZ: playerZ,
+			renderDistance: this.renderDistance,
+			chunkCoords: [], // Array of [dx, dz] pairs to process
+			currentIndex: 0,
+			targetKeys: new Set(),
+			chunksToLoad: []
+		};
+		
+		// Build list of chunk coordinates to process, ordered by distance from center (spiral outward)
+		// This ensures chunks closer to player load first, preventing gaps
+		var coordsWithDistance = [];
+		for ( var dx = -this.renderDistance; dx <= this.renderDistance; dx++ ) {
+			for ( var dz = -this.renderDistance; dz <= this.renderDistance; dz++ ) {
+				// Calculate distance from center (Chebyshev distance)
+				var distance = Math.max(Math.abs(dx), Math.abs(dz));
+				coordsWithDistance.push({ dx: dx, dz: dz, distance: distance });
 			}
 		}
+		// Sort by distance (closer chunks first)
+		coordsWithDistance.sort(function(a, b) {
+			if (a.distance !== b.distance) {
+				return a.distance - b.distance;
+			}
+			// If same distance, prefer chunks closer to center axis
+			var aAxisDist = Math.abs(a.dx) + Math.abs(a.dz);
+			var bAxisDist = Math.abs(b.dx) + Math.abs(b.dz);
+			return aAxisDist - bAxisDist;
+		});
+		// Convert back to simple array format
+		for ( var i = 0; i < coordsWithDistance.length; i++ ) {
+			state.chunkCoords.push( [coordsWithDistance[i].dx, coordsWithDistance[i].dz] );
+		}
+		
+		this._updateChunksState = state;
+	}
+	
+	// Process chunk coordinates incrementally (max 20 per frame to prevent freezing)
+	var maxProcessPerFrame = 20;
+	var processed = 0;
+	
+	while ( state.currentIndex < state.chunkCoords.length && processed < maxProcessPerFrame ) {
+		var coord = state.chunkCoords[state.currentIndex];
+		var dx = coord[0];
+		var dz = coord[1];
+		state.currentIndex++;
+		processed++;
+		
+		var cx = playerChunkX + dx;
+		var cz = playerChunkZ + dz;
+		var cy = 0;
+		
+		// Verificar límites del mundo
+		var chunkX = cx * this.chunkSize;
+		var chunkZ = cz * this.chunkSize;
+		if ( chunkX < 0 || chunkX >= this.world.sx || chunkZ < 0 || chunkZ >= this.world.sz ) continue;
+		
+		if ( !this.isChunkInRange( cx, cz, cy, playerX, playerZ, playerY ) ) continue;
+		
+		var key = this.getChunkKey( cx, cz, cy );
+		state.targetKeys.add( key );
+		
+		var chunk = this.chunkLookup && this.chunkLookup[key];
+		if ( !chunk ) {
+			// Chunk no existe en lookup, crearlo
+			var y = 0;
+			chunk = {
+				start: [ chunkX, y, chunkZ ],
+				end: [ Math.min( this.world.sx, chunkX + this.chunkSize ), Math.min( this.world.sy, y + this.chunkSizeY ), Math.min( this.world.sz, chunkZ + this.chunkSize ) ],
+				cx: cx,
+				cz: cz,
+				cy: cy,
+				dirty: true,
+				loaded: false
+			};
+			chunk.key = key;
+			this.chunkLookup[key] = chunk;
+			this.chunks.push( chunk );
+		}
+		
+		if ( chunk && !chunk.loaded ) {
+			// Calculate distance for prioritization (already sorted by chunkCoords, but keep for consistency)
+			var distX = Math.abs(chunk.cx - playerChunkX);
+			var distZ = Math.abs(chunk.cz - playerChunkZ);
+			var distance = Math.max(distX, distZ);
+			state.chunksToLoad.push({ chunk: chunk, distance: distance });
+		}
+	}
+	
+	// Sort chunks by distance to ensure closest chunks load first (center outward)
+	// This prevents gaps by loading chunks from the center first
+	if (state.chunksToLoad.length > 0) {
+		state.chunksToLoad.sort(function(a, b) {
+			if (a.distance !== b.distance) {
+				return a.distance - b.distance;
+			}
+			// If same distance, prefer chunks closer to center axis
+			var aDist = Math.abs(a.chunk.cx - playerChunkX) + Math.abs(a.chunk.cz - playerChunkZ);
+			var bDist = Math.abs(b.chunk.cx - playerChunkX) + Math.abs(b.chunk.cz - playerChunkZ);
+			return aDist - bDist;
+		});
+	}
+	
+	// Load chunks incrementally (max 2 per frame to load faster while preventing blocking)
+	// Load from center outward (chunks are now sorted by distance)
+	var maxLoadsPerFrame = 2;
+	var loadStartIndex = this._loadIndex || 0;
+	var loadEndIndex = Math.min(loadStartIndex + maxLoadsPerFrame, state.chunksToLoad.length);
+	
+	for ( var i = loadStartIndex; i < loadEndIndex; i++ ) {
+		// state.chunksToLoad ahora contiene objetos { chunk, distance }
+		var chunkData = state.chunksToLoad[i];
+		if ( chunkData && chunkData.chunk ) {
+			this.loadChunk( chunkData.chunk );
+		}
+	}
+	
+	if (loadEndIndex < state.chunksToLoad.length) {
+		this._loadIndex = loadEndIndex;
+	} else {
+		this._loadIndex = 0;
 	}
 
-	if ( this.loadedChunks && this.loadedChunks.size ) {
-		var unloadQueue = [];
-		this.loadedChunks.forEach( function( key ) {
-			if ( !targetKeys.has( key ) ) unloadQueue.push( key );
-		} );
-		for ( var i = 0; i < unloadQueue.length; i++ ) {
-			var chunk = this.chunkLookup[ unloadQueue[i] ];
-			if ( chunk ) this.unloadChunk( chunk );
+	// Unload chunks that are out of range (only after all processing is done)
+	if ( state.currentIndex >= state.chunkCoords.length ) {
+		if ( this.loadedChunks && this.loadedChunks.size ) {
+			var unloadQueue = [];
+			this.loadedChunks.forEach( function( key ) {
+				if ( !state.targetKeys.has( key ) ) unloadQueue.push( key );
+			} );
+			
+			// Process unloads incrementally (max 3 per frame to prevent freezing)
+			var maxUnloadsPerFrame = 3;
+			var startIndex = this._unloadIndex || 0;
+			var endIndex = Math.min(startIndex + maxUnloadsPerFrame, unloadQueue.length);
+			
+			for ( var i = startIndex; i < endIndex; i++ ) {
+				var chunk = this.chunkLookup[ unloadQueue[i] ];
+				if ( chunk ) this.unloadChunk( chunk );
+			}
+			
+			if (endIndex < unloadQueue.length) {
+				this._unloadIndex = endIndex;
+			} else {
+				this._unloadIndex = 0;
+				// All done, reset state for next update
+				this._updateChunksState = null;
+			}
+		} else {
+			this._unloadIndex = 0;
+			this._updateChunksState = null;
 		}
 	}
 };
@@ -1274,7 +1427,9 @@ Renderer.prototype.buildChunks = function( count )
 		// blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
 		// lightmap[x][z] donde z es la coordenada Z horizontal
 		// Y el valor almacenado es la altura Y
-		var maxLightCheckY = Math.min( world.sy - 1, chunk.end[1] + 32 );
+		// Optimization: Only check up to chunk height + small buffer (reduced from +32 to +16)
+		var maxLightCheckY = Math.min( world.sy - 1, chunk.end[1] + 16 );
+		var minLightCheckY = Math.max( 0, chunk.start[1] - 16 ); // Start from chunk start, not 0
 		var lightmap = {};
 		for ( var x = chunk.start[0] - 1; x < chunk.end[0] + 1; x++ )
 		{
@@ -1286,13 +1441,17 @@ Renderer.prototype.buildChunks = function( count )
 			{
 				if ( z < 0 || z >= world.sz ) continue;
 				// Buscar desde arriba hacia abajo en Y (altura del mundo)
-				for ( var y = maxLightCheckY; y >= 0; y-- )
+				// Optimization: Start from maxLightCheckY and stop at minLightCheckY
+				for ( var y = maxLightCheckY; y >= minLightCheckY; y-- )
 				{
 					if ( !world.blocks[x] || !world.blocks[x][y] || !world.blocks[x][y][z] ) continue;
-					// lightmap[x][z] donde z es la coordenada Z horizontal
-					// Almacenamos y (altura del mundo) como el valor Y altura
-					lightmap[x][z] = y;
-					if ( !world.getBlock( x, y, z ).transparent ) break;
+					var block = world.getBlock( x, y, z );
+					if ( block && block !== BLOCK.AIR && !block.transparent ) {
+						// lightmap[x][z] donde z es la coordenada Z horizontal
+						// Almacenamos y (altura del mundo) como el valor Y altura
+						lightmap[x][z] = y;
+						break; // Found solid block, stop searching
+					}
 				}
 			}
 		}
@@ -1310,19 +1469,26 @@ Renderer.prototype.buildChunks = function( count )
 				// Verificar límites
 				if ( z < 0 || z >= world.sz ) continue;
 				
+				// Optimization: Check if this column has any non-air blocks before iterating
+				var hasBlocks = false;
+				for ( var checkY = chunk.start[1]; checkY < chunk.end[1]; checkY++ ) {
+					if ( world.blocks[x] && world.blocks[x][checkY] && world.blocks[x][checkY][z] && world.blocks[x][checkY][z] !== BLOCK.AIR ) {
+						hasBlocks = true;
+						break;
+					}
+				}
+				if ( !hasBlocks ) continue; // Skip empty columns
+				
 				for ( var y = chunk.start[1]; y < chunk.end[1]; y++ ) { // Y es altura
 					// Verificar límites
 					if ( y < 0 || y >= world.sy ) continue;
-					if ( !world.blocks[x][y] ) continue;
+					if ( !world.blocks[x] || !world.blocks[x][y] ) continue;
 					
 					// Verificar que el bloque exista antes de acceder
 					var block = world.blocks[x][y][z];
-					if ( block === undefined ) {
-						// Si el bloque no está definido, saltarlo (no debería pasar si ensureChunkLoaded funciona)
+					if ( block === undefined || block == BLOCK.AIR ) {
 						continue;
 					}
-					
-					if ( block == BLOCK.AIR ) continue;
 					
 					// Consultar animaciones de caída si existe el sistema de física
 					var yOffset = 0;
