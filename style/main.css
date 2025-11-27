@@ -837,9 +837,135 @@ body.creative-mode .hunger-icons {
 }
 
 .button-small:disabled {
-    background: url( '../media/gui/button_disabled.png' );
-    background-repeat: no-repeat;
-    background-size: cover;
+	background: url( '../media/gui/button_disabled.png' );
+	background-repeat: no-repeat;
+	background-size: cover;
+}
+
+/* World Selection Menu */
+.world-selection-container {
+	background: rgba(0, 0, 0, 0.8);
+	border: 4px solid #555;
+	border-radius: 0;
+	padding: 30px;
+	min-width: 600px;
+	max-width: 800px;
+	box-sizing: border-box;
+	z-index: 21;
+	position: relative;
+}
+
+/* Hide game canvas when world selection is visible */
+body:has(#worldSelectionMenu[style*="flex"]) #renderSurface,
+body:has(#createWorldMenu[style*="flex"]) #renderSurface {
+	display: none;
+}
+
+.world-selection-header {
+	margin-bottom: 20px;
+	text-align: center;
+}
+
+.world-list-container {
+	max-height: 400px;
+	overflow-y: auto;
+	margin-bottom: 20px;
+	border: 2px solid #555;
+	background: rgba(0, 0, 0, 0.5);
+	padding: 10px;
+}
+
+.world-list {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+}
+
+.world-item {
+	background: rgba(255, 255, 255, 0.1);
+	border: 2px solid #555;
+	padding: 15px;
+	cursor: pointer;
+	transition: all 0.2s;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+
+.world-item:hover {
+	background: rgba(255, 255, 255, 0.2);
+	border-color: #aaa;
+}
+
+.world-item.selected {
+	background: rgba(100, 150, 255, 0.3);
+	border-color: #4a9eff;
+}
+
+.world-item-info {
+	flex: 1;
+}
+
+.world-item-name {
+	color: white;
+	font-family: minecraftia;
+	font-size: 16px;
+	font-weight: bold;
+	margin-bottom: 5px;
+	text-shadow: 2px 2px 0px rgba(0,0,0,0.8);
+}
+
+.world-item-details {
+	color: #aaa;
+	font-family: minecraftia;
+	font-size: 12px;
+	text-shadow: 1px 1px 0px rgba(0,0,0,0.8);
+}
+
+.world-item-actions {
+	display: flex;
+	gap: 5px;
+}
+
+.world-selection-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+}
+
+.world-form {
+	display: flex;
+	flex-direction: column;
+	gap: 15px;
+}
+
+.form-field {
+	display: flex;
+	flex-direction: column;
+}
+
+.world-input {
+	color: white;
+}
+
+.world-input::placeholder {
+	color: #888;
+}
+
+.world-form-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	margin-top: 10px;
+}
+
+.world-empty {
+	color: #aaa;
+	font-family: minecraftia;
+	font-size: 14px;
+	text-align: center;
+	padding: 20px;
+	text-shadow: 1px 1px 0px rgba(0,0,0,0.8);
 }
 
 .logo{

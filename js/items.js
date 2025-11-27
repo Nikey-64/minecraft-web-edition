@@ -311,15 +311,15 @@ if (typeof window !== 'undefined') {
 // ITEM_REGISTRY.register(ITEM.NOMBRE_DEL_ITEM);
 // ==========================================
 
-// Add Dirt item to ITEM global object
-ITEM.DIRT = new Item(2, "Dirt", ITEM_TYPE.BLOCK, {
+// Add Dirt item to ITEM global object (this is an example of item, DO NOT TRY TO ADD BLOCKS HERE)
+/* ITEM.DIRT = new Item(2, "Dirt", ITEM_TYPE.BLOCK, {
 	id: 2,
 	block: BLOCK.DIRT,
 	blockId: 2,
 	maxStack: 64,
 	icon: null
-});
-ITEM_REGISTRY.register(ITEM.DIRT);
+}); */
+// ITEM_REGISTRY.register(ITEM.DIRT);
 
 // Export for Node.js
 if (typeof exports !== 'undefined') {

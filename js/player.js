@@ -284,6 +284,16 @@ Player.prototype.openCreativeInventory = function()
 	
 	creativeInventory.style.display = "flex";
 	this.inventoryOpen = true;
+	
+	// Release pointer lock to allow mouse interaction with inventory
+	if (this.pointerLocked) {
+		document.exitPointerLock();
+	}
+	// Disable pointer events on canvas so clicks go to inventory
+	if (this.canvas) {
+		this.canvas.style.pointerEvents = "none";
+	}
+	
 	this.updateCreativeInventoryDisplay();
 }
 
@@ -300,6 +310,16 @@ Player.prototype.closeCreativeInventory = function()
 	this.inventoryOpen = false;
 	// Clear dragged slot when closing creative inventory
 	this.draggedSlot = null;
+	this.hideDraggedItemCursor();
+	
+	// Re-enable pointer events on canvas
+	if (this.canvas) {
+		this.canvas.style.pointerEvents = "auto";
+	}
+	// Re-enable pointer lock
+	if (this.canvas && !this.pointerLocked) {
+		this.canvas.requestPointerLock();
+	}
 }
 
 // updateCreativeInventoryDisplay()
@@ -2152,6 +2172,17 @@ Player.prototype.setGameMode = function(mode)
 	}
 	
 	this.gameMode = mode;
+	
+	// Update world's gameMode if world exists and has worldId
+	if (this.world && this.world.worldId && typeof worldManager !== "undefined" && worldManager) {
+		worldManager.updateWorldMetadata(this.world.worldId, { gameMode: mode }).catch(function(e) {
+			console.warn("Failed to save game mode to world:", e);
+		});
+		// Also update world object
+		if (this.world) {
+			this.world.gameMode = mode;
+		}
+	}
 	
 	// Clear inventory when changing game mode
 	this.clearInventory();

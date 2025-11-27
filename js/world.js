@@ -17,16 +17,11 @@
 
 function World( sx, sy, sz )
 {
-	// Initialise world array
-	this.blocks = new Array( sx );
-	for ( var x = 0; x < sx; x++ )
-	{
-		this.blocks[x] = new Array( sy );
-		for ( var y = 0; y < sy; y++ )
-		{
-			this.blocks[x][y] = new Array( sz );
-		}
-	}
+	// DO NOT initialize the entire world array in memory!
+	// Instead, use lazy initialization - only create arrays when needed
+	// This prevents loading entire worlds (e.g., 256x256x256) into RAM
+	this.blocks = new Array( sx ); // Only create the first dimension
+	// Don't initialize blocks[x][y][z] - they will be created on demand
 	this.sx = sx;
 	this.sy = sy;
 	this.sz = sz;
@@ -44,7 +39,18 @@ function World( sx, sy, sz )
 	this.chunkSize = 8; // Tamaño horizontal (X, Z)
 	this.chunkSizeY = 256; // Tamaño vertical (Y) - cubre toda la altura del mundo
 	this.chunkStates = {};
-	this.chunkStoragePrefix = "minecraft_chunk_";
+	
+	// World ID for IndexedDB storage
+	this.worldId = null; // Set when world is loaded/created
+	this.flatHeight = 4; // Default flat world height (can be set from world metadata)
+	
+	// Cache for chunks loaded from IndexedDB (since readChunkFromStorage is synchronous)
+	// Key: chunk key, Value: chunk data string or null (if checked and not found)
+	this.indexedDBCache = {};
+	
+	// Pending IndexedDB loads: chunks that are being loaded asynchronously
+	// Key: chunk key, Value: true (loading in progress)
+	this.pendingIndexedDBLoads = {};
 }
 
 // createFlatWorld()
@@ -59,10 +65,10 @@ World.prototype.createFlatWorld = function( height )
 	// blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
 	this.spawn = new Vector( this.sx / 2 + 0.5, height, this.sz / 2 + 0.5 );
 	
-	for ( var x = 0; x < this.sx; x++ )
-		for ( var z = 0; z < this.sz; z++ )
-			for ( var y = 0; y < this.sy; y++ )
-				this.blocks[x][y][z] = y < height ? BLOCK.DIRT : BLOCK.AIR;
+	// DO NOT generate the entire world here!
+	// Terrain will be generated on-demand when chunks are loaded via ensureChunkLoaded
+	// This prevents loading huge worlds (e.g., 256x256x256 = 16M blocks) into RAM
+	this.flatHeight = height;
 }
 
 // createFromString( str )
@@ -226,105 +232,299 @@ World.prototype.ensureChunkLoaded = function( chunk, chunkSize, chunkSizeY )
 	
 	// Intentar cargar desde storage
 	var data = this.readChunkFromStorage( key );
+	
+	// Si hay una carga pendiente de IndexedDB, esperar antes de generar
+	if ( !data && this.pendingIndexedDBLoads && this.pendingIndexedDBLoads[key] ) {
+		// Chunk está cargando de IndexedDB, verificar si ya terminó
+		// Si ya está en cache después de la carga, usarlo
+		if ( this.indexedDBCache[key] !== undefined ) {
+			data = this.indexedDBCache[key];
+		} else {
+			// Todavía cargando, no generar todavía - se reintentará cuando IndexedDB termine
+			// El callback de IndexedDB aplicará los datos o generará el chunk si no existe
+			return;
+		}
+	}
+	
 	if ( data )
 	{
 		this.applyChunkString( chunk.start, size, sizeY, data );
+		// Marcar chunk como "clean" ya que se cargó desde almacenamiento (no modificado)
+		chunk.dirty = false;
+		if ( chunk.needsSave !== undefined ) {
+			chunk.needsSave = false;
+		}
 	}
 		else
 		{
-			// Si no está en storage, generar terreno usando createFlatWorld para esta región
-			// O simplemente inicializar bloques como AIR (se generarán con terreno después)
-			var startX = chunk.start[0];
-			var startY = chunk.start[1]; // Y es vertical (altura)
-			var startZ = chunk.start[2];
-			var endX = Math.min( this.sx, startX + size );
-			var endY = Math.min( this.sy, startY + sizeY ); // Y es vertical (altura)
-			var endZ = Math.min( this.sz, startZ + size );
-			
-			// Inicializar bloques si no están inicializados
-			// IMPORTANTE: Asegurarse de que todos los bloques del chunk estén inicializados
-			// Ejes: X y Z = horizontal, Y = vertical (altura)
-			// blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
-			var flatHeight = 4; // Altura por defecto para terreno plano (en Y)
-			for ( var x = startX; x < endX; x++ )
-			{
-				// Asegurarse de que el array existe
-				if ( !this.blocks[x] ) {
-					if ( x >= 0 && x < this.sx ) {
-						this.blocks[x] = new Array( this.sy );
-					} else {
-						continue; // Fuera de límites
-					}
-				}
-				
-				for ( var z = startZ; z < endZ; z++ ) // Z es horizontal
-				{
-					for ( var y = startY; y < endY; y++ ) // Y es altura
-					{
-						// Asegurarse de que el array existe
-						if ( !this.blocks[x][y] ) {
-							if ( y >= 0 && y < this.sy ) {
-								this.blocks[x][y] = new Array( this.sz );
-							} else {
-								continue; // Fuera de límites
-							}
-						}
-						
-						// Solo inicializar si el bloque es undefined
-						if ( this.blocks[x][y][z] === undefined )
-						{
-							// Generar terreno plano: DIRT hasta flatHeight, AIR arriba
-							// Esto asegura que los chunks nuevos tengan terreno visible
-							// Y es altura
-							this.blocks[x][y][z] = y < flatHeight ? BLOCK.DIRT : BLOCK.AIR;
-						}
-					}
-				}
-			}
+			// IMPORTANTE: Los chunks base ya deberían estar guardados en IndexedDB
+			// Si no existe, es un error - no generar, solo esperar a que IndexedDB termine de cargar
+			// Si IndexedDB retorna null después de cargar, entonces el chunk realmente no existe
+			// (esto no debería pasar si el mundo fue creado correctamente)
+			console.warn("Chunk not found in storage:", key, "- waiting for IndexedDB to finish loading");
+			// No generar - el chunk debería existir en IndexedDB
+			// El callback de IndexedDB aplicará los datos cuando termine de cargar
+			// Si IndexedDB termina y retorna null, entonces hay un problema con la generación inicial
+			return; // No generar, esperar a que IndexedDB termine
 		}
 	
 	if ( !this.chunkStates ) this.chunkStates = {};
 	this.chunkStates[key] = "loaded";
+	// Marcar chunk como "clean" ya que se generó nuevo (no modificado aún)
+	chunk.dirty = false;
+	if ( chunk.needsSave !== undefined ) {
+		chunk.needsSave = false;
+	}
 }
 
-World.prototype.persistChunk = function( chunk, chunkSize, chunkSizeY )
+// generateAndSaveAllChunks()
+//
+// Genera todos los chunks base (flatworld) y los guarda en IndexedDB.
+// Esto se hace una sola vez al crear el mundo.
+// Los chunks modificados sobrescribirán estos chunks base más tarde.
+
+World.prototype.generateAndSaveAllChunks = function()
+{
+	if ( !this.worldId || typeof worldManager === "undefined" || !worldManager ) {
+		console.warn("Cannot generate chunks: worldId or worldManager not available");
+		return Promise.resolve();
+	}
+	
+	var self = this;
+	var chunkSize = this.chunkSize || 8;
+	var chunkSizeY = this.chunkSizeY || 256;
+	var flatHeight = this.flatHeight || 4;
+	
+	console.log("Generating all base chunks for world:", this.worldId, "size:", this.sx, "x", this.sy, "x", this.sz);
+	
+	// Calcular número total de chunks
+	var numChunksX = Math.ceil( this.sx / chunkSize );
+	var numChunksZ = Math.ceil( this.sz / chunkSize );
+	var totalChunks = numChunksX * numChunksZ;
+	var savedChunks = 0;
+	
+	// Función para generar y guardar un chunk
+	function generateAndSaveChunk( cx, cz ) {
+		var startX = cx * chunkSize;
+		var startZ = cz * chunkSize;
+		var startY = 0; // Y siempre empieza en 0 (altura)
+		var endX = Math.min( self.sx, startX + chunkSize );
+		var endZ = Math.min( self.sz, startZ + chunkSize );
+		var endY = Math.min( self.sy, startY + chunkSizeY );
+		
+		// Generar bloques del chunk
+		// IMPORTANTE: blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
+		for ( var x = startX; x < endX; x++ ) {
+			if ( !self.blocks[x] ) {
+				self.blocks[x] = new Array( self.sy );
+			}
+			for ( var z = startZ; z < endZ; z++ ) {
+				for ( var y = startY; y < endY; y++ ) {
+					if ( !self.blocks[x][y] ) {
+						self.blocks[x][y] = new Array( self.sz );
+					}
+					// Generar terreno plano
+					if ( y >= flatHeight ) {
+						self.blocks[x][y][z] = BLOCK.AIR;
+					} else if ( y === flatHeight - 1 ) {
+						self.blocks[x][y][z] = BLOCK.GRASS;
+					} else {
+						self.blocks[x][y][z] = BLOCK.DIRT;
+					}
+				}
+			}
+		}
+		
+		// Serializar chunk
+		var cy = 0; // Siempre 0
+		var key = cx + "|" + cz + "|" + cy;
+		var serialized = self.toChunkString( cx, cz, cy, chunkSize, chunkSizeY );
+		
+		// Guardar en IndexedDB
+		return worldManager.saveChunk( self.worldId, key, serialized ).then(function() {
+			savedChunks++;
+			if ( savedChunks % 10 === 0 || savedChunks === totalChunks ) {
+				console.log("Saved", savedChunks, "of", totalChunks, "chunks");
+			}
+		}).catch(function(e) {
+			console.error("Failed to save chunk", key, ":", e);
+		});
+	}
+	
+	// Generar y guardar todos los chunks (en lotes para no bloquear)
+	var promises = [];
+	for ( var cx = 0; cx < numChunksX; cx++ ) {
+		for ( var cz = 0; cz < numChunksZ; cz++ ) {
+			promises.push( generateAndSaveChunk( cx, cz ) );
+		}
+	}
+	
+	console.log("Generating and saving", totalChunks, "chunks...");
+	return Promise.all( promises ).then(function() {
+		console.log("All base chunks generated and saved!");
+		// Limpiar bloques de memoria después de guardar
+		self.blocks = new Array( self.sx );
+	}).catch(function(e) {
+		console.error("Error generating chunks:", e);
+	});
+}
+
+World.prototype.persistChunk = function( chunk, chunkSize, chunkSizeY, forceSave )
 {
 	// Ejes: X y Z = horizontal, Y = vertical (altura)
 	if ( !chunk ) return;
 	var size = chunkSize || this.chunkSize;
 	var sizeY = chunkSizeY || this.chunkSizeY;
 	var key = this.getChunkKeyFromChunk( chunk );
+	
+	// Asegurarse de que needsSave esté inicializado (para chunks creados antes de esta propiedad)
+	if ( chunk.needsSave === undefined ) {
+		chunk.needsSave = false;
+	}
+	
+	// OPTIMIZACIÓN: Solo guardar chunks que han sido modificados (needsSave)
+	// Esto evita guardar chunks que no han cambiado, mejorando el rendimiento
+	// y reduciendo el uso de almacenamiento
+	// forceSave permite forzar el guardado incluso si no necesita guardarse (útil al salir del mundo)
+	// IMPORTANTE: Si needsSave es false y forceSave es false, NO guardar (sin importar chunkStates)
+	if ( !forceSave && !chunk.needsSave ) {
+		// Chunk no ha sido modificado, NO guardar
+		return;
+	}
+	
 	// chunk.start = [x, y, z] donde y es altura
 	var cx = Math.floor( chunk.start[0] / size );
 	var cz = Math.floor( chunk.start[2] / size );
 	var cy = 0; // Siempre 0
 	var serialized = this.toChunkString( cx, cz, cy, size, sizeY );
+	console.log("Persisting chunk:", key, "needsSave:", chunk.needsSave, "forceSave:", forceSave, "worldId:", this.worldId);
+	
+	// Guardar en IndexedDB (asíncrono)
 	var stored = this.writeChunkToStorage( key, serialized );
 	if ( stored )
 	{
-		this.clearChunkInMemory( chunk.start, size, sizeY );
+		// Solo limpiar de memoria si no es forceSave (para evitar perder datos al salir)
+		if ( !forceSave ) {
+			this.clearChunkInMemory( chunk.start, size, sizeY );
+		}
 		if ( !this.chunkStates ) this.chunkStates = {};
 		this.chunkStates[key] = "stored";
+		// Marcar chunk como guardado (ya no necesita guardarse)
+		// IMPORTANTE: Solo marcar como guardado si realmente se guardó
+		// El guardado asíncrono se maneja en writeChunkToStorage
+		if ( chunk.needsSave !== undefined ) {
+			chunk.needsSave = false;
+		}
+		console.log("Chunk marked as saved:", key);
+	} else {
+		console.warn("Failed to save chunk:", key, "worldId:", this.worldId, "worldManager:", typeof worldManager);
 	}
+}
+
+// saveAllLoadedChunks()
+//
+// Guarda todos los chunks cargados y modificados antes de salir del mundo.
+// Útil para asegurar que no se pierdan cambios al cerrar el juego.
+
+World.prototype.saveAllLoadedChunks = function()
+{
+	if ( !this.renderer || !this.renderer.chunks ) {
+		console.warn("Cannot save chunks: renderer or chunks not available");
+		return 0;
+	}
+	
+	var savedCount = 0;
+	var chunks = this.renderer.chunks;
+	var chunksToSave = [];
+	
+	// Primero, identificar todos los chunks que necesitan guardarse
+	for ( var i = 0; i < chunks.length; i++ ) {
+		var chunk = chunks[i];
+		// Solo guardar chunks que están cargados Y necesitan ser guardados (needsSave)
+		// Esto es más eficiente y solo guarda lo que realmente cambió
+		if ( chunk && chunk.loaded ) {
+			// Asegurarse de que needsSave esté inicializado (para chunks creados antes de esta propiedad)
+			if ( chunk.needsSave === undefined ) {
+				chunk.needsSave = false;
+				console.log("Chunk", chunk.key, "had undefined needsSave, initialized to false");
+			}
+			// Debug: verificar estado del chunk
+			console.log("Checking chunk:", chunk.key, "loaded:", chunk.loaded, "needsSave:", chunk.needsSave, "dirty:", chunk.dirty);
+			if ( chunk.needsSave ) {
+				console.log("Chunk needs saving:", chunk.key, "dirty:", chunk.dirty, "needsSave:", chunk.needsSave);
+				chunksToSave.push(chunk);
+			}
+		}
+	}
+	
+	console.log("Found " + chunksToSave.length + " chunks that need saving");
+	
+	// Guardar cada chunk
+	for ( var i = 0; i < chunksToSave.length; i++ ) {
+		var chunk = chunksToSave[i];
+		this.persistChunk( chunk, this.renderer.chunkSize, this.renderer.chunkSizeY, false );
+		savedCount++;
+	}
+	
+	console.log("Saved " + savedCount + " modified chunks before exiting world");
+	return savedCount;
 }
 
 World.prototype.clearChunkInMemory = function( start, chunkSize, chunkSizeY )
 {
 	// Ejes: X y Z = horizontal, Y = vertical (altura)
 	// start = [x, y, z] donde y es altura
+	// IMPORTANTE: Eliminar completamente los arrays para liberar memoria
+	// Solo limpiamos bloques que fueron modificados (no AIR por defecto)
 	var sizeX = chunkSize || this.chunkSize;
 	var sizeZ = chunkSize || this.chunkSize;
 	var sizeY = chunkSizeY || this.chunkSizeY;
-	for ( var x = start[0]; x < start[0] + sizeX; x++ )
+	
+	for ( var x = start[0]; x < start[0] + sizeX && x < this.sx; x++ )
 	{
-		for ( var z = start[2]; z < start[2] + sizeZ; z++ )
+		if ( !this.blocks[x] ) continue;
+		
+		for ( var z = start[2]; z < start[2] + sizeZ && z < this.sz; z++ )
 		{
-			for ( var y = start[1]; y < start[1] + sizeY; y++ )
+			for ( var y = start[1]; y < start[1] + sizeY && y < this.sy; y++ )
 			{
 				if ( this.blocks[x] && this.blocks[x][y] && this.blocks[x][y][z] !== undefined )
 				{
-					this.blocks[x][y][z] = BLOCK.AIR;
+					// Delete the block to free memory
+					delete this.blocks[x][y][z];
 				}
+			}
+			
+			// Check if the Z column (all Y values for this X,Z) is empty
+			if ( this.blocks[x] ) {
+				var zColumnEmpty = true;
+				for ( var y = start[1]; y < start[1] + sizeY && y < this.sy; y++ ) {
+					if ( this.blocks[x][y] && this.blocks[x][y][z] !== undefined ) {
+						zColumnEmpty = false;
+						break;
+					}
+				}
+				// If Z column is empty, we can delete the Y array for this Z
+				// But we need to check if other Z values in this X column have data
+			}
+		}
+		
+		// Check if the entire X column is empty
+		if ( this.blocks[x] ) {
+			var xColumnEmpty = true;
+			for ( var y = 0; y < this.sy; y++ ) {
+				if ( !this.blocks[x][y] ) continue;
+				for ( var z = 0; z < this.sz; z++ ) {
+					if ( this.blocks[x][y][z] !== undefined ) {
+						xColumnEmpty = false;
+						break;
+					}
+				}
+				if ( !xColumnEmpty ) break;
+			}
+			if ( xColumnEmpty ) {
+				// Delete the entire X column
+				delete this.blocks[x];
 			}
 		}
 	}
@@ -391,23 +591,92 @@ World.prototype.applyChunkString = function( start, chunkSize, chunkSizeY, data 
 
 World.prototype.readChunkFromStorage = function( key )
 {
-	if ( typeof localStorage === "undefined" ) return null;
-	return localStorage.getItem( this.chunkStoragePrefix + key );
+	// PRIORIDAD: Intentar leer de IndexedDB cache primero (chunks cargados previamente)
+	if ( this.indexedDBCache[key] ) {
+		return this.indexedDBCache[key];
+	}
+	
+	// Si no está en cache, intentar cargar de IndexedDB de forma asíncrona
+	// IMPORTANTE: Retornar null por ahora, pero iniciar la carga asíncrona
+	// El chunk se generará si no existe, o se aplicará cuando IndexedDB termine de cargar
+	if ( this.worldId && typeof worldManager !== "undefined" && worldManager && !this.pendingIndexedDBLoads[key] ) {
+		// Marcar como cargando para evitar múltiples solicitudes
+		this.pendingIndexedDBLoads[key] = true;
+		
+		// Cargar de IndexedDB de forma asíncrona y cachear el resultado
+		var self = this;
+		worldManager.loadChunk(this.worldId, key).then(function(data) {
+			delete self.pendingIndexedDBLoads[key];
+			// Cachear el resultado (puede ser null si no existe)
+			self.indexedDBCache[key] = data || null;
+			
+			// Si hay un renderer, aplicar los datos cuando IndexedDB termine de cargar
+			if ( self.renderer && data ) {
+				var chunk = self.renderer.chunkLookup[key];
+				if ( chunk ) {
+					// Aplicar los datos del chunk cargado desde IndexedDB
+					// Esto sobrescribe cualquier generación previa
+					var size = self.chunkSize || 8;
+					var sizeY = self.chunkSizeY || 256;
+					self.applyChunkString( chunk.start, size, sizeY, data );
+					chunk.dirty = true; // Marcar para reconstruir
+					if ( chunk.needsSave !== undefined ) {
+						chunk.needsSave = false; // Chunk cargado desde storage, no modificado
+					}
+					console.log("Chunk loaded from IndexedDB and applied:", key);
+					
+					// Si el chunk no estaba cargado, cargarlo ahora
+					if ( !chunk.loaded && self.renderer.loadChunk ) {
+						self.renderer.loadChunk( chunk );
+					}
+				}
+			} else if ( self.renderer && !data ) {
+				// Chunk no existe en IndexedDB - esto no debería pasar si el mundo fue generado correctamente
+				console.error("Chunk not found in IndexedDB:", key, "- world may not have been generated correctly");
+				var chunk = self.renderer.chunkLookup[key];
+				if ( chunk ) {
+					// Marcar chunk como error - no se puede cargar
+					chunk.dirty = false;
+					if ( chunk.needsSave !== undefined ) {
+						chunk.needsSave = false;
+					}
+				}
+			}
+		}).catch(function(e) {
+			delete self.pendingIndexedDBLoads[key];
+			// Marcar como no encontrado en cache
+			self.indexedDBCache[key] = null;
+			console.warn("Failed to load chunk from IndexedDB:", key, e);
+		});
+	}
+	
+	return null; // Chunk no encontrado en cache, se generará nuevo o se cargará desde IndexedDB
 }
 
 World.prototype.writeChunkToStorage = function( key, data )
 {
-	if ( typeof localStorage === "undefined" ) return false;
-	try
-	{
-		localStorage.setItem( this.chunkStoragePrefix + key, data );
-		return true;
-	}
-	catch ( e )
-	{
-		console.warn( "Failed to store chunk", key, e );
+	// Usar IndexedDB como único almacenamiento para chunks
+	if ( !this.worldId || typeof worldManager === "undefined" || !worldManager ) {
+		console.warn("Cannot save chunk: worldId or worldManager not available", key);
 		return false;
 	}
+	
+	// Actualizar cache cuando se guarda
+	this.indexedDBCache[key] = data;
+	
+	// Guardar en IndexedDB (async, fire and forget)
+	var self = this;
+	console.log("Saving chunk to IndexedDB:", key, "worldId:", this.worldId, "data length:", data ? data.length : 0);
+	worldManager.saveChunk(this.worldId, key, data).then(function() {
+		// Chunk guardado exitosamente en IndexedDB
+		console.log("Chunk saved successfully to IndexedDB:", key);
+	}).catch(function(e) {
+		console.error("Failed to save chunk to IndexedDB:", key, e);
+		// Si falla IndexedDB, no hay fallback - el chunk se perderá
+		// Esto es intencional para forzar el uso de IndexedDB
+	});
+	
+	return true; // Consideramos que se guardó exitosamente en IndexedDB
 }
 
 // toNetworkString()

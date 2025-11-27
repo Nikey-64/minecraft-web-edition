@@ -62,57 +62,66 @@ Physics.prototype.simulate = function()
 		}
 		
 		// Iterar de arriba hacia abajo para evitar que los bloques se salten
+		// IMPORTANTE: Solo procesar bloques en chunks cargados para evitar accesos a memoria no inicializada
 		for ( var x = 0; x < world.sx; x++ ) {
+			// Verificar que el chunk X está cargado
+			if ( !blocks[x] ) continue;
+			
 			for ( var z = 0; z < world.sz; z++ ) { // Z es horizontal
 				for ( var y = world.sy - 1; y > 0; y-- ) { // Y es altura, iterar de arriba hacia abajo
-					var block = blocks[x][y][z];
-					if ( block && block.gravity && blocks[x][y-1][z] == BLOCK.AIR )
-					{
-						// Verificar si este bloque ya está en animación
-						var animKey = x + "," + y + "," + z;
-						if ( this.fallingBlocks[animKey] ) {
-							continue; // Ya está cayendo, no hacer nada
-						}
-						
-						// Calcular la distancia de caída
-						var fallDistance = 1; // Empezar con 1 bloque
-						for ( var checkY = y - 1; checkY >= 0; checkY-- ) {
-							if ( blocks[x][checkY][z] == BLOCK.AIR ) {
-								fallDistance = y - checkY;
-							} else {
-								break; // Encontramos un bloque sólido
-							}
-						}
-						
-						// Crear animación suave
-						// Duración basada en la distancia: más distancia = más tiempo, pero con límite
-						// Usar una función cuadrática para que caiga más rápido cuanto más distancia
-						var baseDuration = 150; // 150ms por bloque base (más rápido para realismo)
-						var duration = baseDuration * fallDistance;
-						// Limitar duración máxima a 1 segundo para caídas muy largas (más rápido)
-						if ( duration > 1000 ) duration = 1000;
-						
-						// Crear un bloque animado con las propiedades del bloque original
-						// Este bloque animado mantendrá las propiedades del original para recuperarlas después
-						var animatedBlock = BLOCK.createAnimatedBlock( block );
-						
-						// Reemplazar temporalmente el bloque original por el bloque animado en el array del mundo
-						// Esto permite que el bloque animado "tome el lugar" del bloque original durante la animación
-						world.setBlock( x, y, z, animatedBlock );
-						
-						// Crear la animación
-						this.fallingBlocks[animKey] = {
-							x: x,
-							y: y, // Posición actual (se actualizará visualmente)
-							z: z,
-							startY: y,
-							targetY: y - fallDistance,
-							startTime: currentTime,
-							duration: duration,
-							block: block, // Bloque original (para recuperar propiedades después)
-							animatedBlock: animatedBlock // Bloque animado (ya está en el array del mundo)
-						};
+					// Usar getBlock para acceso seguro (maneja chunks no cargados)
+					var block = world.getBlock( x, y, z );
+					if ( !block || !block.gravity ) continue;
+					
+					// Verificar que el bloque de abajo es AIR
+					var blockBelow = world.getBlock( x, y - 1, z );
+					if ( blockBelow != BLOCK.AIR ) continue;
+					
+					// Verificar si este bloque ya está en animación
+					var animKey = x + "," + y + "," + z;
+					if ( this.fallingBlocks[animKey] ) {
+						continue; // Ya está cayendo, no hacer nada
 					}
+					
+					// Calcular la distancia de caída
+					var fallDistance = 1; // Empezar con 1 bloque
+					for ( var checkY = y - 1; checkY >= 0; checkY-- ) {
+						var checkBlock = world.getBlock( x, checkY, z );
+						if ( checkBlock == BLOCK.AIR ) {
+							fallDistance = y - checkY;
+						} else {
+							break; // Encontramos un bloque sólido
+						}
+					}
+					
+					// Crear animación suave
+					// Duración basada en la distancia: más distancia = más tiempo, pero con límite
+					// Usar una función cuadrática para que caiga más rápido cuanto más distancia
+					var baseDuration = 150; // 150ms por bloque base (más rápido para realismo)
+					var duration = baseDuration * fallDistance;
+					// Limitar duración máxima a 1 segundo para caídas muy largas (más rápido)
+					if ( duration > 1000 ) duration = 1000;
+					
+					// Crear un bloque animado con las propiedades del bloque original
+					// Este bloque animado mantendrá las propiedades del original para recuperarlas después
+					var animatedBlock = BLOCK.createAnimatedBlock( block );
+					
+					// Reemplazar temporalmente el bloque original por el bloque animado en el array del mundo
+					// Esto permite que el bloque animado "tome el lugar" del bloque original durante la animación
+					world.setBlock( x, y, z, animatedBlock );
+					
+					// Crear la animación
+					this.fallingBlocks[animKey] = {
+						x: x,
+						y: y, // Posición actual (se actualizará visualmente)
+						z: z,
+						startY: y,
+						targetY: y - fallDistance,
+						startTime: currentTime,
+						duration: duration,
+						block: block, // Bloque original (para recuperar propiedades después)
+						animatedBlock: animatedBlock // Bloque animado (ya está en el array del mundo)
+					};
 				}
 			}
 		}
@@ -129,42 +138,57 @@ Physics.prototype.simulate = function()
 		var newFluidBlocks = {};
 		
 		// Iterar de arriba hacia abajo para que los fluidos caigan correctamente
+		// IMPORTANTE: Usar world.getBlock() para acceso seguro a chunks no cargados
 		for ( var x = 0; x < world.sx; x++ ) {
 			for ( var z = 0; z < world.sz; z++ ) { // Z es horizontal
 				for ( var y = world.sy - 1; y >= 0; y-- ) { // Y es altura, iterar de arriba hacia abajo
-					var material = blocks[x][y][z];
-					if ( material && material.fluid && newFluidBlocks[x+","+y+","+z] == null )
-					{
-						// Primero, caer hacia abajo (Y-1)
-						if ( y > 0 && blocks[x][y-1][z] == BLOCK.AIR ) {
+					var material = world.getBlock( x, y, z );
+					if ( !material || !material.fluid || newFluidBlocks[x+","+y+","+z] != null ) continue;
+					
+					// Primero, caer hacia abajo (Y-1)
+					if ( y > 0 ) {
+						var blockBelow = world.getBlock( x, y - 1, z );
+						if ( blockBelow == BLOCK.AIR ) {
 							world.setBlock( x, y - 1, z, material );
 							newFluidBlocks[x+","+(y-1)+","+z] = true;
+							continue; // Ya se movió hacia abajo, no extender horizontalmente
 						}
-						// Luego, extenderse horizontalmente (X±1, Z±1)
-						else {
-							if ( x > 0 && blocks[x-1][y][z] == BLOCK.AIR ) {
-								world.setBlock( x - 1, y, z, material );
-								newFluidBlocks[(x-1)+","+y+","+z] = true;
-							}
-							if ( x < world.sx - 1 && blocks[x+1][y][z] == BLOCK.AIR ) {
-								world.setBlock( x + 1, y, z, material );
-								newFluidBlocks[(x+1)+","+y+","+z] = true;
-							}
-							if ( z > 0 && blocks[x][y][z-1] == BLOCK.AIR ) {
-								world.setBlock( x, y, z - 1, material );
-								newFluidBlocks[x+","+y+","+(z-1)] = true;
-							}
-							if ( z < world.sz - 1 && blocks[x][y][z+1] == BLOCK.AIR ) {
-								world.setBlock( x, y, z + 1, material );
-								newFluidBlocks[x+","+y+","+(z+1)] = true;
-							}
+					}
+					
+					// Luego, extenderse horizontalmente (X±1, Z±1)
+					if ( x > 0 ) {
+						var blockLeft = world.getBlock( x - 1, y, z );
+						if ( blockLeft == BLOCK.AIR ) {
+							world.setBlock( x - 1, y, z, material );
+							newFluidBlocks[(x-1)+","+y+","+z] = true;
+						}
+					}
+					if ( x < world.sx - 1 ) {
+						var blockRight = world.getBlock( x + 1, y, z );
+						if ( blockRight == BLOCK.AIR ) {
+							world.setBlock( x + 1, y, z, material );
+							newFluidBlocks[(x+1)+","+y+","+z] = true;
+						}
+					}
+					if ( z > 0 ) {
+						var blockBack = world.getBlock( x, y, z - 1 );
+						if ( blockBack == BLOCK.AIR ) {
+							world.setBlock( x, y, z - 1, material );
+							newFluidBlocks[x+","+y+","+(z-1)] = true;
+						}
+					}
+					if ( z < world.sz - 1 ) {
+						var blockFront = world.getBlock( x, y, z + 1 );
+						if ( blockFront == BLOCK.AIR ) {
+							world.setBlock( x, y, z + 1, material );
+							newFluidBlocks[x+","+y+","+(z+1)] = true;
 						}
 					}
 				}
 			}
 		}
 	}
-}
+};
 
 // updateAnimations()
 //

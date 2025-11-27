@@ -750,7 +750,8 @@ Renderer.prototype.setWorld = function( world, chunkSize, chunkSizeY )
 				cx: x / this.chunkSize,
 				cz: z / this.chunkSize,
 				cy: 0, // Siempre 0 porque solo hay un chunk vertical (cubre toda la altura Y)
-				dirty: true,
+				dirty: true, // Necesita ser reconstruido (renderizado)
+				needsSave: false, // Necesita ser guardado (modificado)
 				loaded: false
 			};
 			chunk.key = this.getChunkKey( chunk.cx, chunk.cz, chunk.cy );
@@ -816,8 +817,24 @@ Renderer.prototype.unloadChunk = function( chunkIndexOrChunk )
 {
 	var chunk = typeof chunkIndexOrChunk === "number" ? this.chunks[chunkIndexOrChunk] : chunkIndexOrChunk;
 	if ( !chunk ) return;
-	if ( this.world && this.world.persistChunk )
-		this.world.persistChunk( chunk, this.chunkSize, this.chunkSizeY );
+	
+	// Solo guardar chunk si ha sido modificado (needsSave = true)
+	// Esto evita guardar chunks no modificados, mejorando el rendimiento
+	if ( this.world && this.world.persistChunk ) {
+		// Asegurarse de que needsSave esté inicializado
+		if ( chunk.needsSave === undefined ) {
+			chunk.needsSave = false;
+		}
+		// Solo guardar si necesita guardarse
+		if ( chunk.needsSave ) {
+			this.world.persistChunk( chunk, this.chunkSize, this.chunkSizeY, false );
+		}
+	}
+	
+	// Clear chunk from memory to free RAM
+	if ( this.world && this.world.clearChunkInMemory )
+		this.world.clearChunkInMemory( chunk.start, this.chunkSize, this.chunkSizeY );
+	
 	chunk.loaded = false;
 	if ( chunk.buffer != null )
 	{
@@ -849,11 +866,14 @@ Renderer.prototype.loadChunk = function( chunkIndexOrChunk )
 {
 	var chunk = typeof chunkIndexOrChunk === "number" ? this.chunks[chunkIndexOrChunk] : chunkIndexOrChunk;
 	if ( !chunk ) return;
+	
+	// Marcar como cargado ANTES de ensureChunkLoaded para que el callback de IndexedDB pueda aplicarlo
+	var wasLoaded = chunk.loaded;
+	chunk.loaded = true;
+	
 	if ( this.world && this.world.ensureChunkLoaded )
 		this.world.ensureChunkLoaded( chunk, this.chunkSize, this.chunkSizeY );
 	
-	var wasLoaded = chunk.loaded;
-	chunk.loaded = true;
 	chunk.dirty = true;
 	if ( this.loadedChunks ) this.loadedChunks.add( chunk.key );
 	// Add to dirty queue if not already there
@@ -1153,7 +1173,13 @@ Renderer.prototype.onBlockChanged = function( x, y, z )
 		     y >= chunk.start[1] && y < chunk.end[1] && 
 		     z >= chunk.start[2] && z < chunk.end[2] )
 		{
-			chunk.dirty = true;
+			chunk.dirty = true; // Necesita ser reconstruido
+			// Asegurarse de que needsSave esté inicializado antes de establecerlo
+			if ( chunk.needsSave === undefined ) {
+				chunk.needsSave = false;
+			}
+			chunk.needsSave = true; // Necesita ser guardado (modificado)
+			console.log("Block changed in chunk:", chunk.key || "unknown", "needsSave set to true");
 		}
 		// También marcar chunks vecinos si el bloque está en un borde (para actualizar caras adyacentes)
 		// Borde Z (horizontal)
@@ -1161,21 +1187,21 @@ Renderer.prototype.onBlockChanged = function( x, y, z )
 		          y >= chunk.start[1] && y < chunk.end[1] && 
 		          ( z == chunk.end[2] || z == chunk.start[2] - 1 ) )
 		{
-			chunk.dirty = true;
+			chunk.dirty = true; // Necesita ser reconstruido (para actualizar caras adyacentes)
 		}
 		// Borde Y (altura)
 		else if ( x >= chunk.start[0] && x < chunk.end[0] && 
 		          z >= chunk.start[2] && z < chunk.end[2] && 
 		          ( y == chunk.end[1] || y == chunk.start[1] - 1 ) )
 		{
-			chunk.dirty = true;
+			chunk.dirty = true; // Necesita ser reconstruido (para actualizar caras adyacentes)
 		}
 		// Borde X
 		else if ( y >= chunk.start[1] && y < chunk.end[1] && 
 		          z >= chunk.start[2] && z < chunk.end[2] && 
 		          ( x == chunk.end[0] || x == chunk.start[0] - 1 ) )
 		{
-			chunk.dirty = true;
+			chunk.dirty = true; // Necesita ser reconstruido (para actualizar caras adyacentes)
 		}
 		
 		// If chunk became dirty and is loaded, add to dirty queue
