@@ -340,36 +340,73 @@ function ItemEntity(id, itemStack, world) {
 	this.gravity = true;
 	this.pickupDelay = 40; // Ticks before item can be picked up
 	this.age = 0;
+	this.floatOffset = 0.25; // Height offset above ground (item floats slightly)
+	this.spawnTime = Date.now(); // Use absolute time for animations
+	this.baseGroundY = null; // Store ground Y when landing
 }
 
 ItemEntity.prototype = Object.create(Entity.prototype);
 ItemEntity.prototype.constructor = ItemEntity;
 
+// Override collision check for items to float above ground
+ItemEntity.prototype.checkWorldCollisions = function() {
+	if (!this.world) return;
+	
+	// Check ground collision - item should rest on top of blocks
+	var checkY = Math.floor(this.pos.y - 0.1);
+	var blockBelow = this.world.getBlock(
+		Math.floor(this.pos.x),
+		checkY,
+		Math.floor(this.pos.z)
+	);
+	
+	if (blockBelow && blockBelow.id !== 0 && !blockBelow.transparent) {
+		// Land on top of the block
+		var groundLevel = checkY + 1 + this.floatOffset;
+		if (this.pos.y < groundLevel) {
+			this.pos.y = groundLevel;
+			this.velocity.y = 0;
+			this.onGround = true;
+			// Store base ground Y for bobbing animation
+			if (this.baseGroundY === null) {
+				this.baseGroundY = groundLevel;
+			}
+		}
+	} else {
+		this.onGround = false;
+		this.baseGroundY = null;
+	}
+};
+
 ItemEntity.prototype.onUpdate = function(deltaTime) {
 	this.age += deltaTime * 20; // Convert to ticks
 	
-	// Rotate item (visual effect)
-	this.angles[1] += deltaTime * 2; // Rotate around Y axis
+	// Use absolute time for rotation (prevents acceleration issues)
+	var timeSinceSpawn = (Date.now() - this.spawnTime) / 1000;
+	this.angles[1] = timeSinceSpawn * 2; // Rotate around Y axis
 	
-		// Check if player is nearby and can pick up
-		if (this.age >= this.pickupDelay && this.world && this.world.localPlayer) {
-			var player = this.world.localPlayer;
-			var dist = this.distanceTo(player);
-			if (dist < 1.5) {
-				// Try to add to player inventory
-				if (player.addItemStack && typeof player.addItemStack === 'function' && this.itemStack) {
-					// Clone the ItemStack to avoid modifying the original
-					var stackToAdd = this.itemStack.clone();
-					var added = player.addItemStack(stackToAdd);
-					if (added) {
-						// Item picked up, remove entity
-						if (this.world.removeEntity) {
-							this.world.removeEntity(this.id);
-						}
+	// No bobbing animation - item stays still on ground
+	// (bobbing was causing jumping behavior)
+	
+	// Check if player is nearby and can pick up
+	if (this.age >= this.pickupDelay && this.world && this.world.localPlayer) {
+		var player = this.world.localPlayer;
+		var dist = this.distanceTo(player);
+		if (dist < 1.5) {
+			// Try to add to player inventory
+			if (player.addItemStack && typeof player.addItemStack === 'function' && this.itemStack) {
+				// Clone the ItemStack to avoid modifying the original
+				var stackToAdd = this.itemStack.clone();
+				var added = player.addItemStack(stackToAdd);
+				if (added) {
+					// Item picked up, remove entity
+					if (this.world.removeEntity) {
+						this.world.removeEntity(this.id);
 					}
 				}
 			}
 		}
+	}
 };
 
 // Export for Node.js

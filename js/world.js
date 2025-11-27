@@ -372,24 +372,20 @@ World.prototype.generateAndSaveAllChunks = function()
 World.prototype.persistChunk = function( chunk, chunkSize, chunkSizeY, forceSave )
 {
 	// Ejes: X y Z = horizontal, Y = vertical (altura)
-	if ( !chunk ) return;
+	if ( !chunk ) return Promise.resolve();
 	var size = chunkSize || this.chunkSize;
 	var sizeY = chunkSizeY || this.chunkSizeY;
 	var key = this.getChunkKeyFromChunk( chunk );
 	
-	// Asegurarse de que needsSave esté inicializado (para chunks creados antes de esta propiedad)
+	// Asegurarse de que needsSave esté inicializado
 	if ( chunk.needsSave === undefined ) {
 		chunk.needsSave = false;
 	}
 	
-	// OPTIMIZACIÓN: Solo guardar chunks que han sido modificados (needsSave)
-	// Esto evita guardar chunks que no han cambiado, mejorando el rendimiento
-	// y reduciendo el uso de almacenamiento
-	// forceSave permite forzar el guardado incluso si no necesita guardarse (útil al salir del mundo)
-	// IMPORTANTE: Si needsSave es false y forceSave es false, NO guardar (sin importar chunkStates)
+	// Solo guardar chunks que han sido modificados (needsSave = true)
+	// forceSave solo se usa al salir del mundo
 	if ( !forceSave && !chunk.needsSave ) {
-		// Chunk no ha sido modificado, NO guardar
-		return;
+		return Promise.resolve();
 	}
 	
 	// chunk.start = [x, y, z] donde y es altura
@@ -397,77 +393,81 @@ World.prototype.persistChunk = function( chunk, chunkSize, chunkSizeY, forceSave
 	var cz = Math.floor( chunk.start[2] / size );
 	var cy = 0; // Siempre 0
 	var serialized = this.toChunkString( cx, cz, cy, size, sizeY );
-	console.log("Persisting chunk:", key, "needsSave:", chunk.needsSave, "forceSave:", forceSave, "worldId:", this.worldId);
 	
-	// Guardar en IndexedDB (asíncrono)
-	var stored = this.writeChunkToStorage( key, serialized );
-	if ( stored )
-	{
-		// Solo limpiar de memoria si no es forceSave (para evitar perder datos al salir)
-		if ( !forceSave ) {
-			this.clearChunkInMemory( chunk.start, size, sizeY );
-		}
-		if ( !this.chunkStates ) this.chunkStates = {};
-		this.chunkStates[key] = "stored";
-		// Marcar chunk como guardado (ya no necesita guardarse)
-		// IMPORTANTE: Solo marcar como guardado si realmente se guardó
-		// El guardado asíncrono se maneja en writeChunkToStorage
-		if ( chunk.needsSave !== undefined ) {
-			chunk.needsSave = false;
-		}
-		console.log("Chunk marked as saved:", key);
-	} else {
-		console.warn("Failed to save chunk:", key, "worldId:", this.worldId, "worldManager:", typeof worldManager);
+	// Verificar que haya worldId y worldManager
+	if ( !this.worldId || typeof worldManager === "undefined" || !worldManager ) {
+		console.warn("Cannot save chunk: worldId or worldManager not available", key);
+		return Promise.resolve();
 	}
+	
+	// Actualizar cache
+	this.indexedDBCache[key] = serialized;
+	
+	var self = this;
+	
+	// Retornar la promesa de guardado
+	return worldManager.saveChunk(this.worldId, key, serialized).then(function() {
+		if ( !self.chunkStates ) self.chunkStates = {};
+		self.chunkStates[key] = "stored";
+		chunk.needsSave = false;
+		console.log("Chunk saved:", key);
+	}).catch(function(e) {
+		console.error("Failed to save chunk:", key, e);
+	});
 }
 
 // saveAllLoadedChunks()
 //
-// Guarda todos los chunks cargados y modificados antes de salir del mundo.
-// Útil para asegurar que no se pierdan cambios al cerrar el juego.
+// Guarda todos los chunks modificados antes de salir del mundo.
+// Retorna una promesa que se resuelve cuando todos los chunks se hayan guardado.
+// IMPORTANTE: Este es el ÚNICO momento en que se guardan los chunks.
 
 World.prototype.saveAllLoadedChunks = function()
 {
 	if ( !this.renderer || !this.renderer.chunks ) {
 		console.warn("Cannot save chunks: renderer or chunks not available");
-		return 0;
+		return Promise.resolve(0);
 	}
 	
-	var savedCount = 0;
 	var chunks = this.renderer.chunks;
 	var chunksToSave = [];
 	
-	// Primero, identificar todos los chunks que necesitan guardarse
+	// Identificar TODOS los chunks que necesitan guardarse (cargados o no)
+	// Un chunk puede estar descargado visualmente pero tener datos modificados en RAM
 	for ( var i = 0; i < chunks.length; i++ ) {
 		var chunk = chunks[i];
-		// Solo guardar chunks que están cargados Y necesitan ser guardados (needsSave)
-		// Esto es más eficiente y solo guarda lo que realmente cambió
-		if ( chunk && chunk.loaded ) {
-			// Asegurarse de que needsSave esté inicializado (para chunks creados antes de esta propiedad)
-			if ( chunk.needsSave === undefined ) {
-				chunk.needsSave = false;
-				console.log("Chunk", chunk.key, "had undefined needsSave, initialized to false");
-			}
-			// Debug: verificar estado del chunk
-			console.log("Checking chunk:", chunk.key, "loaded:", chunk.loaded, "needsSave:", chunk.needsSave, "dirty:", chunk.dirty);
-			if ( chunk.needsSave ) {
-				console.log("Chunk needs saving:", chunk.key, "dirty:", chunk.dirty, "needsSave:", chunk.needsSave);
-				chunksToSave.push(chunk);
-			}
+		if ( !chunk ) continue;
+		
+		// Inicializar needsSave si no existe
+		if ( chunk.needsSave === undefined ) {
+			chunk.needsSave = false;
+		}
+		
+		// Guardar cualquier chunk que haya sido modificado
+		if ( chunk.needsSave ) {
+			chunksToSave.push(chunk);
 		}
 	}
 	
-	console.log("Found " + chunksToSave.length + " chunks that need saving");
+	console.log("Found " + chunksToSave.length + " modified chunks to save");
 	
-	// Guardar cada chunk
-	for ( var i = 0; i < chunksToSave.length; i++ ) {
-		var chunk = chunksToSave[i];
-		this.persistChunk( chunk, this.renderer.chunkSize, this.renderer.chunkSizeY, false );
-		savedCount++;
+	if ( chunksToSave.length === 0 ) {
+		return Promise.resolve(0);
 	}
 	
-	console.log("Saved " + savedCount + " modified chunks before exiting world");
-	return savedCount;
+	// Guardar todos los chunks en paralelo
+	var self = this;
+	var savePromises = chunksToSave.map(function(chunk) {
+		return self.persistChunk( chunk, self.renderer.chunkSize, self.renderer.chunkSizeY, true );
+	});
+	
+	return Promise.all(savePromises).then(function() {
+		console.log("Saved " + chunksToSave.length + " modified chunks");
+		return chunksToSave.length;
+	}).catch(function(e) {
+		console.error("Error saving chunks:", e);
+		return 0;
+	});
 }
 
 World.prototype.clearChunkInMemory = function( start, chunkSize, chunkSizeY )
@@ -782,12 +782,17 @@ World.prototype.getEntitiesInRange = function(pos, radius) {
 // Starts the entity update loop (called every frame).
 
 World.prototype.startEntityUpdateLoop = function() {
-	if (this.entityUpdateInterval) return; // Already running
+	// Check if already running using a proper flag
+	if (this._entityLoopRunning) return;
+	this._entityLoopRunning = true;
 	
 	var world = this;
 	var lastTime = Date.now();
 	
 	function updateEntities() {
+		// Check if loop was stopped
+		if (!world._entityLoopRunning) return;
+		
 		var currentTime = Date.now();
 		var deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
 		lastTime = currentTime;
@@ -812,11 +817,11 @@ World.prototype.startEntityUpdateLoop = function() {
 			}
 		}
 		
-		// Continue loop if there are entities
-		if (Object.keys(world.entities).length > 0) {
+		// Continue loop if there are entities and loop is still running
+		if (world._entityLoopRunning && Object.keys(world.entities).length > 0) {
 			requestAnimationFrame(updateEntities);
 		} else {
-			world.entityUpdateInterval = null;
+			world._entityLoopRunning = false;
 		}
 	}
 	
@@ -829,9 +834,7 @@ World.prototype.startEntityUpdateLoop = function() {
 // Stops the entity update loop.
 
 World.prototype.stopEntityUpdateLoop = function() {
-	// The loop will stop automatically when there are no entities
-	// But we can clear the interval reference
-	this.entityUpdateInterval = null;
+	this._entityLoopRunning = false;
 };
 
 // spawnMob( mobType, x, y, z )

@@ -89,6 +89,7 @@ BLOCK.GRASS = {
 	id: 23,
 	spawnable: true,
 	transparent: false,
+	itemdrop: 2,
 	useGrassColor: true,
 	texture: function( world, lightmap, lit, x, y, z, dir )
 	 { if ( dir == DIRECTION.UP && lit )
@@ -448,6 +449,39 @@ BLOCK.WATER = {
 	solid: false,
 	breakable: false,
 	texture: function( world, lightmap, lit, x, y, z, dir ) { return [ 0/16, 1/16, 1/16, 2/16 ]; }
+};
+
+// Crafting Table
+BLOCK.CRAFTING_TABLE = {
+	id: 27,
+	spawnable: true,
+	transparent: false,
+	selflit: false,
+	gravity: false,
+	fluid: false,
+	solid: true,
+	interactive: true, // Can be right-clicked to open GUI
+	interaction: "crafting_table", // Interaction type (crafting table, chest, etc.)
+	interactionData: {
+		type: "crafting_table",
+		slots: 9,
+		rows: 3,
+		columns: 3,
+		outputSlots: 1, // 1 slot for crafting output 
+		showInventory: true, // shows the inventory integration under the crafting table gui
+	},
+	breakable: true,
+	requiredtool: "axe",
+	tooltime: 3000,
+	breaktime: 7500,
+	texture: function( world, lightmap, lit, x, y, z, dir ) {
+		// Crafting table texture - top/bottom use planks, sides use crafting table texture
+		if ( dir == DIRECTION.UP || dir == DIRECTION.DOWN ) {
+			return [ 11/16, 4/16, 12/16, 5/16 ]; // Top/bottom texture
+		} else {
+			return [ 12/16, 4/16, 13/16, 5/16 ]; // Side texture
+		}
+	}
 };
 
 // ANIMATED_BLOCKS posibilities (not allways animated) this is a list of wich blocks can be animated

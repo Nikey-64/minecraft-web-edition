@@ -297,6 +297,9 @@ Renderer.prototype.draw = function()
 		}
 	}
 
+	// Draw item entities (dropped items)
+	this.drawItemEntities();
+
 	// Draw players
 	var players = this.world.players;
 	var localPlayer = this.world.localPlayer;
@@ -827,28 +830,29 @@ Renderer.prototype.isChunkInRange = function( chunkX, chunkZ, chunkY, playerX, p
 // unloadChunk( chunkIndex )
 //
 // Unloads the chunk at the specified index by setting loaded to false and deleting the buffer.
+// IMPORTANTE: NO guarda automáticamente. Los cambios se mantienen en RAM hasta salir del mundo.
 
 Renderer.prototype.unloadChunk = function( chunkIndexOrChunk )
 {
 	var chunk = typeof chunkIndexOrChunk === "number" ? this.chunks[chunkIndexOrChunk] : chunkIndexOrChunk;
 	if ( !chunk ) return;
 	
-	// Solo guardar chunk si ha sido modificado (needsSave = true)
-	// Esto evita guardar chunks no modificados, mejorando el rendimiento
-	if ( this.world && this.world.persistChunk ) {
-		// Asegurarse de que needsSave esté inicializado
-		if ( chunk.needsSave === undefined ) {
-			chunk.needsSave = false;
-		}
-		// Solo guardar si necesita guardarse
-		if ( chunk.needsSave ) {
-			this.world.persistChunk( chunk, this.chunkSize, this.chunkSizeY, false );
-		}
+	// NO guardar automáticamente durante el juego
+	// Los cambios se mantienen en RAM y solo se guardan al salir del mundo
+	// Esto evita guardados excesivos y mejora el rendimiento
+	
+	// Solo limpiar de RAM si el chunk NO ha sido modificado
+	// Si fue modificado, mantener los datos en RAM hasta que se guarde al salir
+	if ( chunk.needsSave === undefined ) {
+		chunk.needsSave = false;
 	}
 	
-	// Clear chunk from memory to free RAM
-	if ( this.world && this.world.clearChunkInMemory )
-		this.world.clearChunkInMemory( chunk.start, this.chunkSize, this.chunkSizeY );
+	if ( !chunk.needsSave ) {
+		// Chunk no modificado - se puede limpiar de RAM (se recargará de IndexedDB si es necesario)
+		if ( this.world && this.world.clearChunkInMemory )
+			this.world.clearChunkInMemory( chunk.start, this.chunkSize, this.chunkSizeY );
+	}
+	// Si chunk.needsSave = true, NO limpiar de RAM - los datos deben permanecer hasta que se guarden al salir
 	
 	chunk.loaded = false;
 	if ( chunk.buffer != null )
@@ -2069,4 +2073,144 @@ Renderer.prototype.drawBreakingOverlay = function( x, y, z, progress )
 	// Cleanup
 	gl.deleteBuffer( buffer );
 	gl.disable( gl.BLEND );
+}
+
+// drawItemEntities()
+//
+// Renders all dropped item entities in the world as small rotating blocks.
+
+Renderer.prototype.drawItemEntities = function()
+{
+	if ( !this.world || !this.world.entities ) return;
+	
+	var gl = this.gl;
+	var entities = this.world.entities;
+	
+	// Enable blending for item entities
+	gl.enable( gl.BLEND );
+	gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+	gl.bindTexture( gl.TEXTURE_2D, this.texTerrain );
+	
+	for ( var id in entities ) {
+		if ( !entities.hasOwnProperty(id) ) continue;
+		
+		var entity = entities[id];
+		
+		// Only render ItemEntity types
+		if ( entity.type !== ENTITY_TYPE.ITEM_ENTITY ) continue;
+		if ( !entity.itemStack || !entity.itemStack.item ) continue;
+		
+		// Get the block texture for this item
+		var item = entity.itemStack.item;
+		var block = item.data && item.data.block ? item.data.block : null;
+		
+		// If no block data, try to find block by ID
+		if ( !block && item.blockId !== undefined ) {
+			block = BLOCK.fromId(item.blockId);
+		}
+		
+		// Skip if no valid block
+		if ( !block || block === BLOCK.AIR ) continue;
+		
+		// Create a small cube for the item
+		var buffer = this.createItemEntityBuffer(block);
+		if ( !buffer ) continue;
+		
+		// Position and rotate the item
+		// Ejes: X y Z = horizontal, Y = vertical (altura)
+		// Shader expects: X y Y = horizontal, Z = vertical
+		mat4.identity( this.modelMatrix );
+		mat4.translate( this.modelMatrix, [ entity.pos.x, entity.pos.z, entity.pos.y ] );
+		
+		// Rotation animation
+		var rotation = entity.angles ? entity.angles[1] : (Date.now() / 1000);
+		mat4.rotateZ( this.modelMatrix, rotation );
+		
+		// Scale down to 0.25 (quarter size)
+		mat4.scale( this.modelMatrix, [ 0.25, 0.25, 0.25 ] );
+		
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		
+		// Draw the item
+		this.drawBuffer( buffer );
+		
+		// Cleanup buffer
+		gl.deleteBuffer( buffer );
+	}
+	
+	// Reset model matrix
+	mat4.identity( this.modelMatrix );
+	gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+	
+	gl.disable( gl.BLEND );
+}
+
+// createItemEntityBuffer( block )
+//
+// Creates a WebGL buffer for a small block cube representing a dropped item.
+// Buffer format must match drawBuffer expectations: 9 floats per vertex
+// (3 position, 2 texcoord, 4 color)
+
+Renderer.prototype.createItemEntityBuffer = function(block)
+{
+	if ( !block ) return null;
+	
+	var gl = this.gl;
+	var world = this.world;
+	
+	// Use a dummy lightmap since items are always fully lit
+	var lightmap = { getBlockLight: function() { return 1.0; } };
+	
+	var vertices = [];
+	
+	// Helper to add a vertex (9 floats: x, y, z, u, v, r, g, b, a)
+	var addVertex = function(x, y, z, u, v) {
+		vertices.push(x, y, z, u, v, 1.0, 1.0, 1.0, 1.0); // Full brightness white
+	};
+	
+	// Helper to add a face (2 triangles = 6 vertices)
+	var addFace = function(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4, dir) {
+		var tex = block.texture( world, lightmap, true, 0, 0, 0, dir );
+		var u1 = tex[0], v1 = tex[1], u2 = tex[2], v2 = tex[3];
+		
+		// Triangle 1
+		addVertex(x1, y1, z1, u1, v1);
+		addVertex(x2, y2, z2, u2, v1);
+		addVertex(x3, y3, z3, u2, v2);
+		
+		// Triangle 2
+		addVertex(x1, y1, z1, u1, v1);
+		addVertex(x3, y3, z3, u2, v2);
+		addVertex(x4, y4, z4, u1, v2);
+	};
+	
+	// Create a 1x1x1 cube centered at origin
+	// Coordinates are in shader space: X, Y horizontal, Z vertical
+	var s = 0.5; // Half size
+	
+	// Top face (Z+)
+	addFace(-s, -s, s, s, -s, s, s, s, s, -s, s, s, DIRECTION.UP);
+	
+	// Bottom face (Z-)
+	addFace(-s, s, -s, s, s, -s, s, -s, -s, -s, -s, -s, DIRECTION.DOWN);
+	
+	// Front face (Y-)
+	addFace(-s, -s, -s, s, -s, -s, s, -s, s, -s, -s, s, DIRECTION.FORWARD);
+	
+	// Back face (Y+)
+	addFace(s, s, -s, -s, s, -s, -s, s, s, s, s, s, DIRECTION.BACK);
+	
+	// Left face (X-)
+	addFace(-s, s, -s, -s, -s, -s, -s, -s, s, -s, s, s, DIRECTION.LEFT);
+	
+	// Right face (X+)
+	addFace(s, -s, -s, s, s, -s, s, s, s, s, -s, s, DIRECTION.RIGHT);
+	
+	// Create buffer (9 floats per vertex)
+	var buffer = gl.createBuffer();
+	buffer.vertices = vertices.length / 9;
+	gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
+	gl.bufferData( gl.ARRAY_BUFFER, new Float32Array(vertices), gl.DYNAMIC_DRAW );
+	
+	return buffer;
 }

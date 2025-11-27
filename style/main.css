@@ -523,29 +523,7 @@ body.creative-mode .hunger-icons {
 	box-sizing: border-box;
 }
 
-.inventory-crafting {
-	position: absolute;
-	top: 8px;
-	left: 138px;
-	display: flex;
-	align-items: center;
-	cursor: default;
-	gap: 0;
-}
-
-.crafting-grid {
-	display: grid;
-	cursor: default;
-	grid-template-columns: repeat(2, 18px);
-	grid-template-rows: repeat(2, 18px);
-	gap: 0;
-}
-
-.crafting-output {
-	cursor: default;
-	width: 18px;
-	height: 18px;
-}
+/* Crafting 2x2 removed - now using crafting table GUI with 3x3 grid */
 
 .inventory-grid {
 	cursor: default;
@@ -994,4 +972,168 @@ body:has(#createWorldMenu[style*="flex"]) #renderSurface {
     padding: 5px;
     text-shadow: #3f3f3f 2px 2px 0px;
 	
+}
+
+/* ==========================================
+   Crafting Table GUI
+   ========================================== */
+
+.crafting-table {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	z-index: 30;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: auto;
+}
+
+.crafting-table-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	background: rgba(0, 0, 0, 0.5);
+	z-index: 29;
+}
+
+.crafting-table-container {
+	position: relative;
+	width: 176px;
+	height: 166px;
+	transform: scale(var(--gui-scale));
+	transform-origin: center center;
+	background: url('../media/gui/crafting.png');
+	background-size: 176px 166px;
+	background-position: 0 0;
+	background-repeat: no-repeat;
+	image-rendering: pixelated;
+	z-index: 31;
+	padding: 0;
+	box-sizing: border-box;
+	pointer-events: auto;
+	min-width: 176px;
+	max-width: 176px;
+	min-height: 166px;
+	max-height: 166px;
+}
+
+.crafting-table-container:hover {
+	background-position: 0 0;
+}
+
+/* Crafting grid 3x3 (top-left area) */
+.crafting-table-grid {
+	position: absolute;
+	top: 8px;
+	left: 8px;
+	display: grid;
+	grid-template-columns: repeat(3, 18px);
+	grid-template-rows: repeat(3, 18px);
+	gap: 0;
+	width: 54px;
+	height: 54px;
+}
+
+.crafting-table-slot {
+	width: 18px;
+	height: 18px;
+	background: none !important;
+	border: none !important;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	margin: 0;
+	box-sizing: border-box;
+	cursor: default;
+	position: relative;
+}
+
+/* Crafting arrow (between grid and output) */
+.crafting-table-arrow {
+	position: absolute;
+	top: 30px;
+	left: 70px;
+	width: 22px;
+	height: 15px;
+	background-image: url('../media/gui/crafting.png');
+	background-position: -176px -14px;
+	background-size: 176px 166px;
+	image-rendering: pixelated;
+}
+
+/* Crafting output slot (right of arrow) */
+.crafting-table-output {
+	position: absolute;
+	top: 22px;
+	left: 96px;
+	width: 26px;
+	height: 26px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background-image: url('../media/gui/crafting.png');
+	background-position: -174px 0px;
+	background-size: 176px 166px;
+	image-rendering: pixelated;
+}
+
+.crafting-table-result {
+	width: 18px;
+	height: 18px;
+	background: none !important;
+	border: none !important;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	margin: 0;
+	box-sizing: border-box;
+}
+
+/* Inventory grid (below crafting area) */
+.crafting-table-inventory-grid {
+	position: absolute;
+	top: 84px;
+	left: 8px;
+	display: grid;
+	grid-template-columns: repeat(9, 18px);
+	grid-template-rows: repeat(3, 18px);
+	gap: 0;
+	width: 162px;
+}
+
+/* Hotbar (bottom) */
+.crafting-table-hotbar {
+	position: absolute;
+	top: 142px;
+	left: 8px;
+	display: flex;
+	gap: 0;
+	width: 162px;
+}
+
+.crafting-table-slot .block-thumbnail {
+	width: 16px;
+	height: 16px;
+	image-rendering: pixelated;
+}
+
+.crafting-table-slot .item-count {
+	position: absolute;
+	top: 0;
+	right: 0;
+	font-size: 9px;
+	color: white;
+	text-shadow: 1px 1px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000;
+	font-family: minecraftia;
+	line-height: 1;
+	padding: 0 1px;
+	pointer-events: none;
+	z-index: 2;
 }

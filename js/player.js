@@ -55,8 +55,17 @@ Player.prototype.setWorld = function( world )
 	this.selectedHotbarSlot = 0; // Slot seleccionado (0-8)
 	this.inventoryOpen = false;
 	
+	// Crafting table system (3x3 grid - separate GUI)
+	this.craftingTableGrid = [null, null, null, null, null, null, null, null, null]; // 9 slots for 3x3 crafting
+	this.craftingTableResult = null; // Result of current crafting recipe
+	this.craftingTableOpen = false; // Whether crafting table GUI is open
+	// Crafting inventory system
+	this.craftingInventory = new Array(4).fill(null); // 4 slots for crafting inventory ( 2 rows x 2 columns) 
+	this.craftingSelectedSlot = 0; // Slot seleccionado (0-8)
+	this.craftingInventoryOpen = false; // Whether crafting inventory GUI is open
+
 	// Inventory management - for manual organization
-	this.draggedSlot = null; // {type: 'hotbar'|'inventory', index: number} - slot being dragged
+	this.draggedSlot = null; // {type: 'hotbar'|'inventory'|'crafting', index: number} - slot being dragged
 	
 	// Item system support - now enabled by default
 	this.useItemSystem = true; // Use ItemStack instead of Block for better item management
@@ -98,6 +107,34 @@ Player.prototype.setWorld = function( world )
 		snow: []
 	};
 	this.preloadStepSounds();
+	
+	// Fall damage system
+	this.fallStartY = null; // Y position when fall started
+	this.wasFalling = false; // Whether player was falling in previous frame
+	this.fallDamageThreshold = 3; // Blocks before taking damage (like Minecraft)
+	this.lastDamageTime = 0; // Time when last damage was taken (for invincibility frames)
+	this.invincibilityDuration = 500; // Invincibility duration in ms after taking damage
+	
+	// Health regeneration system (like Minecraft vanilla)
+	// Regeneration occurs when hunger is >= 18 (9 drumsticks)
+	// Each regen tick heals 1 health point and costs some hunger
+	// In vanilla: ~4 seconds per half heart with saturation, slower without
+	this.lastRegenTime = 0; // Time when last regeneration occurred
+	this.regenInterval = 8000; // 8 seconds between regen ticks (slow like vanilla natural regen)
+	this.regenHungerThreshold = 18; // Minimum hunger to regenerate (18/20 = 9 drumsticks)
+	this.regenHungerCost = 0.5; // Hunger cost per health point regenerated (lower cost for slower regen)
+	
+	// Starvation damage system (when hunger = 0)
+	this.lastStarvationTime = 0; // Time when last starvation damage occurred
+	this.starvationInterval = 4000; // 4 seconds between starvation damage (faster than regen)
+	this.starvationDamage = 1; // Damage per starvation tick
+	
+	// Preload damage sounds
+	this.damageSounds = {
+		fall: [],
+		hurt: []
+	};
+	this.preloadDamageSounds();
 	
 	// Initialize game mode UI
 	// Use setTimeout to ensure DOM is ready
@@ -154,6 +191,296 @@ Player.prototype.preloadStepSounds = function()
 			this.stepSounds[material].push(audio);
 		}
 	}
+}
+
+// preloadDamageSounds()
+//
+// Preloads all damage sounds (fall damage and hurt sounds).
+
+Player.prototype.preloadDamageSounds = function()
+{
+	// Fall damage sounds
+	var fallSounds = ['fallbig.ogg', 'fallsmall.ogg'];
+	for (var i = 0; i < fallSounds.length; i++) {
+		var audio = new Audio('sounds/game/sound3/damage/' + fallSounds[i]);
+		audio.preload = 'auto';
+		audio.volume = 0.6;
+		this.damageSounds.fall.push(audio);
+	}
+	
+	// Hurt sounds
+	for (var i = 1; i <= 3; i++) {
+		var audio = new Audio('sounds/game/sound3/damage/hit' + i + '.ogg');
+		audio.preload = 'auto';
+		audio.volume = 0.5;
+		this.damageSounds.hurt.push(audio);
+	}
+}
+
+// takeDamage( amount, source )
+//
+// Applies damage to the player.
+// amount: damage points (1 heart = 2 points)
+// source: 'fall', 'attack', etc.
+
+Player.prototype.takeDamage = function(amount, source)
+{
+	// Only take damage in survival mode
+	if (this.gameMode !== GAME_MODE.SURVIVAL) return;
+	
+	// Check invincibility frames
+	var now = Date.now();
+	if (now - this.lastDamageTime < this.invincibilityDuration) return;
+	
+	// Apply damage
+	this.health = Math.max(0, this.health - amount);
+	this.lastDamageTime = now;
+	
+	// Play appropriate sound
+	if (source === 'fall') {
+		this.playFallDamageSound(amount);
+	} else {
+		this.playHurtSound();
+	}
+	
+	// Update health display
+	this.updateHealthHungerIcons();
+	
+	// Check for death
+	if (this.health <= 0) {
+		this.onDeath();
+	}
+	
+	console.log("Player took " + amount + " damage from " + source + ". Health: " + this.health);
+}
+
+// playFallDamageSound( damage )
+//
+// Plays a fall damage sound based on damage amount.
+
+Player.prototype.playFallDamageSound = function(damage)
+{
+	var sounds = this.damageSounds.fall;
+	if (sounds && sounds.length > 0) {
+		// Use fallbig for high damage, fallsmall for low damage
+		var soundIndex = damage >= 6 ? 0 : 1; // fallbig.ogg for 3+ hearts, fallsmall.ogg otherwise
+		if (soundIndex >= sounds.length) soundIndex = sounds.length - 1;
+		
+		var sound = sounds[soundIndex];
+		var soundClone = sound.cloneNode();
+		soundClone.volume = Math.min(0.8, 0.4 + damage * 0.05);
+		soundClone.play().catch(function(e) {});
+	}
+	
+	// Also play hurt sound
+	this.playHurtSound();
+}
+
+// playHurtSound()
+//
+// Plays a random hurt sound.
+
+Player.prototype.playHurtSound = function()
+{
+	var sounds = this.damageSounds.hurt;
+	if (sounds && sounds.length > 0) {
+		var randomIndex = Math.floor(Math.random() * sounds.length);
+		var sound = sounds[randomIndex];
+		var soundClone = sound.cloneNode();
+		soundClone.volume = 0.5;
+		soundClone.play().catch(function(e) {});
+	}
+}
+
+// updateFallDamage()
+//
+// Checks if player has landed and applies fall damage if necessary.
+// Called every frame from update().
+
+Player.prototype.updateFallDamage = function()
+{
+	// Only apply fall damage in survival mode
+	if (this.gameMode !== GAME_MODE.SURVIVAL) {
+		this.fallStartY = null;
+		this.wasFalling = false;
+		return;
+	}
+	
+	// Spectator mode doesn't take fall damage
+	if (this.spectatorMode) {
+		this.fallStartY = null;
+		this.wasFalling = false;
+		return;
+	}
+	
+	var currentlyFalling = this.falling;
+	
+	// Started falling
+	if (currentlyFalling && !this.wasFalling) {
+		this.fallStartY = this.pos.y;
+	}
+	
+	// Track highest point during fall (in case of upward momentum at start)
+	if (currentlyFalling && this.fallStartY !== null) {
+		if (this.pos.y > this.fallStartY) {
+			this.fallStartY = this.pos.y;
+		}
+	}
+	
+	// Landed (was falling, now not falling)
+	if (!currentlyFalling && this.wasFalling && this.fallStartY !== null) {
+		var fallDistance = this.fallStartY - this.pos.y;
+		
+		// Apply damage if fell more than threshold
+		if (fallDistance > this.fallDamageThreshold) {
+			// Minecraft formula: damage = (fall_distance - 3) health points
+			// Each block above 3 = 1 health point (half a heart)
+			var damage = Math.floor(fallDistance - this.fallDamageThreshold);
+			
+			if (damage > 0) {
+				this.takeDamage(damage, 'fall');
+			}
+		}
+		
+		// Reset fall tracking
+		this.fallStartY = null;
+	}
+	
+	this.wasFalling = currentlyFalling;
+}
+
+// onDeath()
+//
+// Called when player health reaches 0.
+
+Player.prototype.onDeath = function()
+{
+	console.log("Player died!");
+	
+	// Reset health and hunger
+	this.health = this.maxHealth;
+	this.hunger = this.maxHunger;
+	
+	// Respawn at world spawn
+	if (this.world && this.world.spawn) {
+		this.pos = new Vector(this.world.spawn.x, this.world.spawn.y, this.world.spawn.z);
+	}
+	
+	// Reset velocity
+	this.velocity = new Vector(0, 0, 0);
+	this.falling = false;
+	this.fallStartY = null;
+	this.wasFalling = false;
+	
+	// Clear inventory on death (like Minecraft survival)
+	// Items would drop in the world, but for now just clear
+	this.clearInventory();
+	
+	// Update UI
+	this.updateHealthHungerIcons();
+	this.updateHotbarDisplay();
+}
+
+// updateHealthRegeneration()
+//
+// Handles health regeneration when player has enough hunger.
+// Like Minecraft vanilla:
+// - Hunger >= 18 (9 drumsticks): regenerate 1 health every 4 seconds
+// - Hunger = 0: take starvation damage every 4 seconds
+// Called every frame from update().
+
+Player.prototype.updateHealthRegeneration = function()
+{
+	// Only in survival mode
+	if (this.gameMode !== GAME_MODE.SURVIVAL) return;
+	
+	var now = Date.now();
+	
+	// Check for health regeneration (hunger >= 18)
+	if (this.hunger >= this.regenHungerThreshold && this.health < this.maxHealth) {
+		// Check if enough time has passed since last regen
+		if (now - this.lastRegenTime >= this.regenInterval) {
+			// Regenerate health
+			var healAmount = 1;
+			var hungerCost = this.regenHungerCost;
+			
+			// Fast regeneration when hunger is full (20)
+			if (this.hunger >= this.maxHunger) {
+				healAmount = 1; // Still 1 health point
+				// Slightly less hunger cost when full
+			}
+			
+			// Check if we have enough hunger to pay the cost
+			if (this.hunger >= hungerCost) {
+				// Apply healing
+				this.health = Math.min(this.maxHealth, this.health + healAmount);
+				
+				// Consume hunger
+				this.hunger = Math.max(0, this.hunger - hungerCost);
+				
+				// Update UI
+				this.updateHealthHungerIcons();
+				
+				this.lastRegenTime = now;
+			}
+		}
+	}
+	
+	// Check for starvation damage (hunger = 0)
+	if (this.hunger <= 0) {
+		// Check if enough time has passed since last starvation damage
+		if (now - this.lastStarvationTime >= this.starvationInterval) {
+			// In Minecraft, starvation can only kill on Hard difficulty
+			// On Normal, it leaves you at 1 health. On Easy, at 10 health.
+			// For simplicity, we'll use Normal rules (can't kill, min 1 health)
+			if (this.health > 1) {
+				this.takeDamage(this.starvationDamage, 'starvation');
+				
+				// Prevent death from starvation (like Normal difficulty)
+				if (this.health < 1) {
+					this.health = 1;
+					this.updateHealthHungerIcons();
+				}
+			}
+			
+			this.lastStarvationTime = now;
+		}
+	}
+}
+
+// consumeHunger( amount )
+//
+// Reduces player's hunger by the specified amount.
+// Used for actions like sprinting, jumping, etc.
+
+Player.prototype.consumeHunger = function(amount)
+{
+	if (this.gameMode !== GAME_MODE.SURVIVAL) return;
+	
+	this.hunger = Math.max(0, this.hunger - amount);
+	this.updateHealthHungerIcons();
+}
+
+// restoreHunger( amount )
+//
+// Increases player's hunger by the specified amount.
+// Used when eating food.
+
+Player.prototype.restoreHunger = function(amount)
+{
+	this.hunger = Math.min(this.maxHunger, this.hunger + amount);
+	this.updateHealthHungerIcons();
+}
+
+// restoreHealth( amount )
+//
+// Increases player's health by the specified amount.
+// Used for healing items like golden apples.
+
+Player.prototype.restoreHealth = function(amount)
+{
+	this.health = Math.min(this.maxHealth, this.health + amount);
+	this.updateHealthHungerIcons();
 }
 
 // getBlockDigSound( block )
@@ -635,6 +962,9 @@ Player.prototype.initInventory = function()
 		};
 	}
 	
+	// Setup crafting table slots
+	this.setupCraftingTableSlots();
+	
 	// Don't initialize with any blocks by default
 	// Inventory will be populated based on game mode
 	this.clearInventory();
@@ -648,6 +978,363 @@ Player.prototype.initInventory = function()
 	
 	// Note: The inventory player model renderer and 1x1x3 environment
 	// will be initialized in startGameLoop() to ensure everything is ready
+}
+
+// setupCraftingTableSlots()
+//
+// Sets up click handlers for crafting table slots (3x3 grid).
+
+Player.prototype.setupCraftingTableSlots = function()
+{
+	var pl = this;
+	
+	// Setup crafting table grid slots (3x3) - will be set up when GUI opens
+	// This is handled in openCraftingTable()
+}
+
+// openCraftingTable()
+//
+// Opens the crafting table GUI.
+
+Player.prototype.openCraftingTable = function()
+{
+	var craftingTable = document.getElementById("craftingTable");
+	if (!craftingTable) return;
+	
+	var pl = this;
+	
+	// Close inventory if open
+	if (this.inventoryOpen) {
+		this.toggleInventory();
+	}
+	
+	craftingTable.style.display = "flex";
+	this.craftingTableOpen = true;
+	
+	// Release pointer lock
+	if (this.pointerLocked) {
+		document.exitPointerLock();
+	}
+	
+	// Disable pointer events on canvas
+	if (this.canvas) {
+		this.canvas.style.pointerEvents = "none";
+	}
+	
+	// Setup click handlers for crafting table slots
+	this.setupCraftingTableClickHandlers();
+	
+	// Close crafting table when clicking overlay
+	var overlay = document.getElementById("craftingTableOverlay");
+	if (overlay) {
+		overlay.onclick = function(e) {
+			if (e.target === overlay) {
+				pl.closeCraftingTable();
+			}
+		};
+	}
+	
+	// Update displays
+	this.updateCraftingTableDisplay();
+	this.updateInventoryDisplay();
+	this.updateHotbarDisplay();
+}
+
+// closeCraftingTable()
+//
+// Closes the crafting table GUI.
+
+Player.prototype.closeCraftingTable = function()
+{
+	var craftingTable = document.getElementById("craftingTable");
+	if (craftingTable) {
+		craftingTable.style.display = "none";
+	}
+	
+	this.craftingTableOpen = false;
+	this.draggedSlot = null;
+	this.hideDraggedItemCursor();
+	
+	// Return items from crafting grid to inventory
+	this.clearCraftingTableGrid();
+	
+	// Re-enable pointer events on canvas
+	if (this.canvas) {
+		this.canvas.style.pointerEvents = "auto";
+	}
+	
+	// Request pointer lock
+	if (this.canvas && !this.pointerLocked) {
+		this.canvas.requestPointerLock();
+	}
+}
+
+// setupCraftingTableClickHandlers()
+//
+// Sets up click handlers for all crafting table slots.
+
+Player.prototype.setupCraftingTableClickHandlers = function()
+{
+	var pl = this;
+	
+	// Setup crafting grid slots (3x3)
+	var craftingSlots = document.querySelectorAll('.crafting-table-grid .crafting-table-slot');
+	craftingSlots.forEach(function(slot) {
+		slot.onclick = function(e) {
+			var craftIndex = parseInt(this.getAttribute('data-craft-table'));
+			pl.handleCraftingTableSlotClick(craftIndex, e);
+		};
+	});
+	
+	// Setup result slot
+	var craftingResult = document.querySelector('.crafting-table-result');
+	if (craftingResult) {
+		craftingResult.onclick = function(e) {
+			pl.handleCraftingTableResultClick(e);
+		};
+	}
+	
+	// Setup inventory slots in crafting table GUI
+	var inventorySlots = document.querySelectorAll('.crafting-table-inventory-grid .crafting-table-slot');
+	inventorySlots.forEach(function(slot) {
+		slot.onclick = function(e) {
+			var invIndex = parseInt(this.getAttribute('data-inv-slot'));
+			pl.handleSlotClick('inventory', invIndex, e);
+		};
+	});
+	
+	// Setup hotbar slots in crafting table GUI
+	var hotbarSlots = document.querySelectorAll('.crafting-table-hotbar .crafting-table-slot');
+	hotbarSlots.forEach(function(slot) {
+		slot.onclick = function(e) {
+			var hotbarIndex = parseInt(this.getAttribute('data-inv-slot'));
+			pl.handleSlotClick('hotbar', hotbarIndex, e);
+		};
+	});
+}
+
+// handleCraftingTableSlotClick( index, event )
+//
+// Handles click on a crafting table slot (3x3 grid).
+
+Player.prototype.handleCraftingTableSlotClick = function(index, e)
+{
+	if (index < 0 || index >= 9) return;
+	
+	var currentItem = this.craftingTableGrid[index];
+	
+	if (this.draggedSlot) {
+		// Place dragged item into crafting slot
+		if (this.draggedSlot.type === 'crafting-table' && this.draggedSlot.index === index) {
+			// Clicking same slot - clear drag
+			this.draggedSlot = null;
+			this.hideDraggedItemCursor();
+		} else {
+			// Swap or place
+			var draggedItem = this.getDraggedItem();
+			this.setDraggedItem(currentItem);
+			this.craftingTableGrid[index] = draggedItem;
+			
+			if (!currentItem) {
+				this.draggedSlot = null;
+				this.hideDraggedItemCursor();
+			}
+		}
+	} else if (currentItem) {
+		// Pick up item from crafting slot
+		this.draggedSlot = { type: 'crafting-table', index: index };
+		this.showDraggedItemCursor(currentItem);
+		this.craftingTableGrid[index] = null;
+	}
+	
+	// Update crafting result after grid change
+	this.updateCraftingTableResult();
+	this.updateCraftingTableDisplay();
+}
+
+// handleSlotClick should also update crafting result when items change in crafting table
+
+// handleCraftingTableResultClick( event )
+//
+// Handles click on crafting table result slot - crafts the item.
+
+Player.prototype.handleCraftingTableResultClick = function(e)
+{
+	if (!this.craftingTableResult) return;
+	
+	// Try to add result to inventory
+	var result = this.craftingTableResult.clone();
+	var added = this.addItemStack(result);
+	
+	if (added) {
+		// Consume crafting ingredients
+		for (var i = 0; i < 9; i++) {
+			if (this.craftingTableGrid[i]) {
+				this.craftingTableGrid[i].count--;
+				if (this.craftingTableGrid[i].count <= 0) {
+					this.craftingTableGrid[i] = null;
+				}
+			}
+		}
+		
+		// Update result
+		this.updateCraftingTableResult();
+		this.updateCraftingTableDisplay();
+		this.updateHotbarDisplay();
+		this.updateInventoryDisplay();
+	}
+}
+
+// updateCraftingTableResult()
+//
+// Checks if current crafting table grid (3x3) matches any recipe.
+
+Player.prototype.updateCraftingTableResult = function()
+{
+	if (typeof CRAFTING === 'undefined') {
+		this.craftingTableResult = null;
+		return;
+	}
+	
+	// Convert crafting grid to 3x3 array for recipe matching
+	var grid = [
+		[this.craftingTableGrid[0], this.craftingTableGrid[1], this.craftingTableGrid[2]],
+		[this.craftingTableGrid[3], this.craftingTableGrid[4], this.craftingTableGrid[5]],
+		[this.craftingTableGrid[6], this.craftingTableGrid[7], this.craftingTableGrid[8]]
+	];
+	
+	// Find matching recipe
+	this.craftingTableResult = CRAFTING.getResult(grid);
+}
+
+// updateCraftingTableDisplay()
+//
+// Updates the crafting table slots display.
+
+Player.prototype.updateCraftingTableDisplay = function()
+{
+	if (!this.craftingTableOpen) return;
+	
+	var pl = this;
+	var craftingSlots = document.querySelectorAll('.crafting-table-grid .crafting-table-slot');
+	var craftingResultSlot = document.querySelector('.crafting-table-result');
+	
+	// Update crafting grid slots (3x3)
+	craftingSlots.forEach(function(slot, i) {
+		pl.updateSlotDisplay(slot, pl.craftingTableGrid[i]);
+	});
+	
+	// Update result slot
+	if (craftingResultSlot) {
+		this.updateSlotDisplay(craftingResultSlot, this.craftingTableResult);
+	}
+	
+	// Populate and update inventory grid (3x9) in crafting table GUI
+	this.populateCraftingTableInventoryGrid();
+	
+	// Update inventory slots in crafting table GUI
+	var inventorySlots = document.querySelectorAll('.crafting-table-inventory-grid .crafting-table-slot');
+	inventorySlots.forEach(function(slot, i) {
+		pl.updateSlotDisplay(slot, pl.inventory[i]);
+	});
+	
+	// Update hotbar slots in crafting table GUI
+	var hotbarSlots = document.querySelectorAll('.crafting-table-hotbar .crafting-table-slot');
+	hotbarSlots.forEach(function(slot, i) {
+		pl.updateSlotDisplay(slot, pl.hotbar[i]);
+	});
+}
+
+// populateCraftingTableInventoryGrid()
+//
+// Populates the inventory grid in crafting table GUI with slots.
+
+Player.prototype.populateCraftingTableInventoryGrid = function()
+{
+	var inventoryGrid = document.querySelector('.crafting-table-inventory-grid');
+	if (!inventoryGrid) return;
+	
+	// Clear existing slots
+	inventoryGrid.innerHTML = '';
+	
+	// Create 3 rows x 9 columns = 27 slots
+	for (var i = 0; i < 27; i++) {
+		var slot = document.createElement('div');
+		slot.className = 'crafting-table-slot';
+		slot.setAttribute('data-inv-slot', i);
+		inventoryGrid.appendChild(slot);
+	}
+	
+	// Re-setup click handlers
+	var pl = this;
+	var inventorySlots = document.querySelectorAll('.crafting-table-inventory-grid .crafting-table-slot');
+	inventorySlots.forEach(function(slot) {
+		slot.onclick = function(e) {
+			var invIndex = parseInt(this.getAttribute('data-inv-slot'));
+			pl.handleSlotClick('inventory', invIndex, e);
+		};
+	});
+}
+
+// clearCraftingTableGrid()
+//
+// Returns crafting table items to inventory and clears the grid.
+
+Player.prototype.clearCraftingTableGrid = function()
+{
+	for (var i = 0; i < 9; i++) {
+		if (this.craftingTableGrid[i]) {
+			// Try to add back to inventory
+			this.addItemStack(this.craftingTableGrid[i]);
+			this.craftingTableGrid[i] = null;
+		}
+	}
+	this.craftingTableResult = null;
+	this.updateCraftingTableDisplay();
+}
+
+// updateSlotDisplay( slotElement, itemStack )
+//
+// Updates a single slot's visual display with the given item.
+
+Player.prototype.updateSlotDisplay = function(slotElement, itemStack)
+{
+	if (!slotElement) return;
+	
+	// Clear existing content
+	slotElement.innerHTML = '';
+	
+	if (!itemStack || (itemStack instanceof ItemStack && itemStack.isEmpty())) {
+		return;
+	}
+	
+	// Get the block to render
+	var block = null;
+	if (itemStack instanceof ItemStack && itemStack.item) {
+		if (itemStack.item.data && itemStack.item.data.block) {
+			block = itemStack.item.data.block;
+		} else if (itemStack.item.blockId !== undefined) {
+			block = BLOCK.fromId(itemStack.item.blockId);
+		}
+	} else if (itemStack && itemStack.id !== undefined) {
+		// Direct block reference
+		block = itemStack;
+	}
+	
+	if (block && block !== BLOCK.AIR) {
+		// Create thumbnail
+		var thumb = this.renderBlockThumbnail(block, 16);
+		thumb.classList.add('block-thumbnail');
+		slotElement.appendChild(thumb);
+		
+		// Show count if more than 1
+		if (itemStack instanceof ItemStack && itemStack.count > 1) {
+			var countEl = document.createElement('span');
+			countEl.className = 'item-count';
+			countEl.textContent = itemStack.count;
+			slotElement.appendChild(countEl);
+		}
+	}
 }
 
 // setupCreativeInventoryButton()
@@ -959,14 +1646,14 @@ Player.prototype.setHotbarSlot = function(index, block)
 
 Player.prototype.handleSlotClick = function(type, index, event)
 {
-	// If inventory is not open, just select the hotbar slot
-	if (type === 'hotbar' && !this.inventoryOpen) {
+	// If inventory is not open and crafting table is not open, just select the hotbar slot
+	if (type === 'hotbar' && !this.inventoryOpen && !this.craftingTableOpen) {
 		this.selectHotbarSlot(index);
 		return;
 	}
 	
-	// If inventory is open, handle item movement
-	if (this.inventoryOpen) {
+	// If inventory or crafting table is open, handle item movement
+	if (this.inventoryOpen || this.craftingTableOpen) {
 		// Get the slot data
 		var sourceSlot = null;
 		if (type === 'hotbar') {
@@ -1019,6 +1706,11 @@ Player.prototype.handleSlotClick = function(type, index, event)
 				// Update displays
 				this.updateHotbarDisplay();
 				this.updateInventoryDisplay();
+				
+				// Update crafting table display if open
+				if (this.craftingTableOpen) {
+					this.updateCraftingTableDisplay();
+				}
 			}
 			
 			// Clear dragged slot
@@ -1032,6 +1724,11 @@ Player.prototype.handleSlotClick = function(type, index, event)
 				// Update displays to hide item from original slot
 				this.updateHotbarDisplay();
 				this.updateInventoryDisplay();
+				
+				// Update crafting table display if open
+				if (this.craftingTableOpen) {
+					this.updateCraftingTableDisplay();
+				}
 			}
 		}
 	} else {
@@ -1743,6 +2440,7 @@ Player.prototype.toggleInventory = function()
 		document.body.classList.remove("inventory-open");
 		// Clear dragged slot when closing inventory
 		this.draggedSlot = null;
+		this.hideDraggedItemCursor();
 		// Pause rendering the miniature player model (don't stop completely, just pause)
 		if (this.inventoryPlayerModelRenderer) {
 			this.inventoryPlayerModelRenderer.pauseRenderLoop();
@@ -1756,6 +2454,77 @@ Player.prototype.toggleInventory = function()
 			this.canvas.requestPointerLock();
 		}
 	}
+}
+
+// toggleCraftingTable()
+//
+// Opens or closes the crafting table GUI.
+
+Player.prototype.toggleCraftingTable = function()
+{
+	if (this.craftingTableOpen) {
+		this.closeCraftingTable();
+	} else {
+		this.openCraftingTable();
+	}
+}
+
+// isCraftingTable( block )
+//
+// Checks if a block is a crafting table using interaction properties.
+
+Player.prototype.isCraftingTable = function(block)
+{
+	if (!block) return false;
+	
+	// Check by interaction type
+	if (block.interactive && block.interaction === "crafting_table") {
+		return true;
+	}
+	
+	// Check by interactionData type
+	if (block.interactionData && block.interactionData.type === "crafting_table") {
+		return true;
+	}
+	
+	// Fallback: Check by ID
+	if (block.id === 27) return true; // CRAFTING_TABLE ID
+	
+	// Fallback: Check by reference
+	if (block === BLOCK.CRAFTING_TABLE) return true;
+	
+	return false;
+}
+
+// getBlockInteractionType( block )
+//
+// Gets the interaction type of a block, or null if not interactive.
+
+Player.prototype.getBlockInteractionType = function(block)
+{
+	if (!block || !block.interactive) return null;
+	
+	// Check interaction property first
+	if (block.interaction) {
+		return block.interaction;
+	}
+	
+	// Check interactionData
+	if (block.interactionData && block.interactionData.type) {
+		return block.interactionData.type;
+	}
+	
+	return null;
+}
+
+// canInteractWithBlock( block )
+//
+// Checks if a block can be interacted with (right-clicked).
+
+Player.prototype.canInteractWithBlock = function(block)
+{
+	if (!block) return false;
+	return block.interactive === true;
 }
 
 // on( event, callback )
@@ -1774,6 +2543,16 @@ Player.prototype.on = function( event, callback )
 Player.prototype.onKeyEvent = function( keyCode, down )
 {
 	var key = String.fromCharCode( keyCode ).toLowerCase();
+	
+	// If crafting table is open, only process E and Esc keys
+	if (this.craftingTableOpen) {
+		// Close crafting table with E or ESC
+		if ( !down && ((keyCode == 69 || key == "e") || keyCode == 27) ) {
+			this.closeCraftingTable();
+		}
+		// Don't process any other keys when crafting table is open
+		return;
+	}
 	
 	// If inventory is open, only process E and Esc keys
 	if (this.inventoryOpen) {
@@ -1840,6 +2619,70 @@ Player.prototype.onKeyEvent = function( keyCode, down )
 			pauseGame();
 		}
 	}
+	
+	// Drop item (Q key - keyCode 81)
+	if ( !down && (keyCode == 81 || key == "q") ) {
+		this.dropSelectedItem();
+	}
+}
+
+// dropSelectedItem()
+//
+// Drops one item from the currently selected hotbar slot.
+
+Player.prototype.dropSelectedItem = function()
+{
+	// Only in survival mode
+	if (this.gameMode !== GAME_MODE.SURVIVAL) return;
+	
+	var slot = this.hotbar[this.selectedHotbarSlot];
+	if (!slot || slot.count <= 0) return;
+	
+	if (!this.world || !this.world.addEntity) return;
+	
+	// Get the item to drop
+	var item = slot.item;
+	if (!item) return;
+	
+	// Create ItemStack with 1 item
+	var droppedStack = new ItemStack(item, 1);
+	
+	// Reduce count in hotbar
+	slot.count--;
+	if (slot.count <= 0) {
+		this.hotbar[this.selectedHotbarSlot] = null;
+	}
+	
+	// Update hotbar display
+	this.updateHotbarDisplay();
+	
+	// Create ItemEntity
+	var itemEntity = new ItemEntity(null, droppedStack, this.world);
+	
+	// Position in front of player
+	var throwDir = new Vector(
+		Math.sin(this.angles[1]),
+		0,
+		Math.cos(this.angles[1])
+	);
+	
+	itemEntity.pos = new Vector(
+		this.pos.x + throwDir.x * 0.5,
+		this.pos.y + 1.5, // Eye level
+		this.pos.z + throwDir.z * 0.5
+	);
+	
+	// Throw velocity (forward and slightly up)
+	itemEntity.velocity = new Vector(
+		throwDir.x * 0.3,
+		0.2,
+		throwDir.z * 0.3
+	);
+	
+	// Add to world
+	this.world.addEntity(itemEntity);
+	
+	console.log("Dropped item:", item.name);
 }
 
 // onMouseEvent( x, y, type, rmb )
@@ -2020,6 +2863,9 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 	if ( block != false )
 	{
 		var obj = this.client ? this.client : this.world;
+		
+		// Get the clicked block
+		var clickedBlock = world.getBlock( block.x, block.y, block.z );
 
 		if ( destroy )
 		{
@@ -2036,6 +2882,21 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 		}
 		else
 		{
+			// Right-click action (place block or interact)
+			// Check if clicking on an interactive block
+			if (clickedBlock && this.canInteractWithBlock(clickedBlock)) {
+				var interactionType = this.getBlockInteractionType(clickedBlock);
+				
+				// Handle different interaction types
+				if (interactionType === "crafting_table") {
+					// Open crafting table GUI
+					this.openCraftingTable();
+					return; // Don't place block
+				}
+				// Future: Add other interaction types here (chest, furnace, etc.)
+				// else if (interactionType === "chest") { ... }
+			}
+			
 			// Stop any breaking in progress when placing a block
 			if (this.breakingBlock) {
 				this.stopBreakingBlock();
@@ -2299,6 +3160,7 @@ Player.prototype.updateBreakingProgress = function(delta)
 // dropBlockItem( block, x, y, z )
 //
 // Drops an item entity when a block is broken.
+// Uses block.itemdrop property if defined (e.g., grass drops dirt)
 
 Player.prototype.dropBlockItem = function(block, x, y, z)
 {
@@ -2310,14 +3172,27 @@ Player.prototype.dropBlockItem = function(block, x, y, z)
 		return; // World doesn't support entities
 	}
 	
+	// Check if block has a different itemdrop (e.g., grass -> dirt)
+	var dropBlock = block;
+	if (block.itemdrop !== undefined) {
+		var dropBlockType = BLOCK.fromId(block.itemdrop);
+		if (dropBlockType && dropBlockType !== BLOCK.AIR) {
+			dropBlock = dropBlockType;
+		}
+	}
+	
 	// Create ItemStack for the block
-	// Always use the registered item from ITEM_REGISTRY to ensure consistency
-	var item = ITEM_REGISTRY.getByBlock(block);
+	// Check if ITEM_REGISTRY is available
+	if (typeof ITEM_REGISTRY === 'undefined') {
+		console.warn("ITEM_REGISTRY not defined, cannot drop item");
+		return;
+	}
+	
+	var item = ITEM_REGISTRY.getByBlock(dropBlock);
 	if (!item) {
 		// Block doesn't have an item registered, try to find it in ITEM global object
-		// by matching the BLOCK property name
 		for (var prop in BLOCK) {
-			if (BLOCK.hasOwnProperty(prop) && BLOCK[prop] === block) {
+			if (BLOCK.hasOwnProperty(prop) && BLOCK[prop] === dropBlock) {
 				if (typeof ITEM !== 'undefined' && ITEM[prop]) {
 					item = ITEM[prop];
 					break;
@@ -2326,20 +3201,18 @@ Player.prototype.dropBlockItem = function(block, x, y, z)
 		}
 		
 		// If still not found, create and register a new one
-		if (!item) {
-			// Use blockId as parameter to ensure it's set correctly
-			item = new Item(block.id, block.name || "Block", ITEM_TYPE.BLOCK, { 
-				block: block, 
-				blockId: block.id, // Store block ID in data too
+		if (!item && typeof Item !== 'undefined') {
+			item = new Item(dropBlock.id, dropBlock.name || "Block", ITEM_TYPE.BLOCK, { 
+				block: dropBlock, 
+				blockId: dropBlock.id,
 				maxStack: 64 
-			}, block.id); // Also pass blockId as parameter
+			}, dropBlock.id);
 			
-			// Register it so future drops use the same instance
 			ITEM_REGISTRY.register(item);
 			
-			// Also store in ITEM global object
+			// Store in ITEM global object
 			for (var prop in BLOCK) {
-				if (BLOCK.hasOwnProperty(prop) && BLOCK[prop] === block) {
+				if (BLOCK.hasOwnProperty(prop) && BLOCK[prop] === dropBlock) {
 					if (typeof ITEM !== 'undefined') {
 						ITEM[prop] = item;
 					}
@@ -2347,6 +3220,11 @@ Player.prototype.dropBlockItem = function(block, x, y, z)
 				}
 			}
 		}
+	}
+	
+	if (!item) {
+		console.warn("Could not create item for block:", dropBlock);
+		return;
 	}
 	
 	var itemStack = new ItemStack(item, 1);
@@ -2493,6 +3371,12 @@ Player.prototype.update = function()
 		// Update step sounds (play footstep sounds while walking)
 		this.updateStepSounds();
 		
+		// Update fall damage (check if player landed from a fall)
+		this.updateFallDamage();
+		
+		// Update health regeneration (heal when hunger is high, damage when starving)
+		this.updateHealthRegeneration();
+		
 		// Modo espectador: volar libremente sin colisiones ni gravedad
 		if ( this.spectatorMode || this.gameMode === GAME_MODE.SPECTATOR )
 		{
@@ -2554,8 +3438,13 @@ Player.prototype.update = function()
 				velocity.y += -0.5; // Y es altura
 
 			// Jumping
-			if ( this.keys[" "] && !this.falling )
+			if ( this.keys[" "] && !this.falling ) {
 				velocity.y = 8; // Y es altura
+				// Consume hunger when jumping (survival mode)
+				if (this.gameMode === GAME_MODE.SURVIVAL) {
+					this.consumeHunger(0.05); // Small hunger cost per jump
+				}
+			}
 
 			// Walking
 			// Ejes: X y Z = horizontal, Y = vertical (altura)
@@ -2583,6 +3472,12 @@ Player.prototype.update = function()
 					walkVelocity = walkVelocity.normal();
 					velocity.x = walkVelocity.x * 4; // X horizontal
 					velocity.z = walkVelocity.z * 4; // Z horizontal
+					
+					// Consume hunger while walking (survival mode)
+					// Very small amount per frame, adds up over time
+					if (this.gameMode === GAME_MODE.SURVIVAL && !this.falling) {
+						this.consumeHunger(0.001 * delta); // Gradual hunger drain while walking
+					}
 			} else {
 				velocity.x /= this.falling ? 1.01 : 1.5;
 				velocity.z /= this.falling ? 1.01 : 1.5;
@@ -2799,6 +3694,8 @@ Player.prototype.updateHealthHungerIcons = function()
 	
 	// Render hunger icons
 	// Each drumstick represents 2 hunger points
+	// In Minecraft vanilla, hunger bar fills from RIGHT to LEFT
+	// (rightmost drumsticks fill first, leftmost empty first)
 	var maxHungerIcons = Math.ceil(this.maxHunger / 2); // Maximum drumsticks (10 for 20 hunger)
 	var currentHunger = Math.max(0, Math.min(this.hunger, this.maxHunger));
 	
@@ -2816,7 +3713,9 @@ Player.prototype.updateHealthHungerIcons = function()
 		var filledIcon = document.createElement("div");
 		filledIcon.className = "hunger-icon-filled";
 		
-		var hungerAmount = currentHunger - (i * 2); // Hunger for this specific drumstick
+		// Inverted calculation: fills from right to left (like vanilla Minecraft)
+		// i=0 (leftmost) shows last hunger points, i=9 (rightmost) shows first hunger points
+		var hungerAmount = currentHunger - ((maxHungerIcons - 1 - i) * 2);
 		var texX, texY;
 		
 		if (hungerAmount >= 2) {

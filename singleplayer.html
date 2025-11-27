@@ -17,6 +17,7 @@
 		<script src="js/helpers.js" type="text/javascript"></script>
 		<script src="js/items.js" type="text/javascript"></script>
 		<script src="js/entities.js" type="text/javascript"></script>
+		<script src="js/crafting.js" type="text/javascript"></script>
 		<script src="js/worldManager.js" type="text/javascript"></script>
 		<script src="js/world.js" type="text/javascript"></script>
 		<script src="js/render.js" type="text/javascript"></script>
@@ -113,18 +114,7 @@
 					<canvas id="inventoryPlayerCanvas" class="inventory-player-canvas"></canvas>
 				</div>
 				
-				<!-- Crafting grid (top right) -->
-				<div class="inventory-crafting">
-					<div class="crafting-grid">
-						<div class="inventory-slot" data-craft="0"></div>
-						<div class="inventory-slot" data-craft="1"></div>
-						<div class="inventory-slot" data-craft="2"></div>
-						<div class="inventory-slot" data-craft="3"></div>
-					</div>
-					<div class="crafting-output">
-						<div class="inventory-slot" data-craft="output"></div>
-					</div>
-				</div>
+				<!-- Crafting grid 2x2 removed - only in crafting table GUI -->
 				
 				<!-- Main inventory grid (center) -->
 				<div class="inventory-grid">
@@ -142,6 +132,51 @@
 					<div class="inventory-slot" data-inv-slot="6"></div>
 					<div class="inventory-slot" data-inv-slot="7"></div>
 					<div class="inventory-slot" data-inv-slot="8"></div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Crafting Table GUI -->
+		<div id="craftingTable" class="crafting-table" style="display: none;">
+			<div id="craftingTableOverlay" class="crafting-table-overlay"></div>
+			<div class="crafting-table-container">
+				<!-- Crafting grid 3x3 -->
+				<div class="crafting-table-grid">
+					<div class="crafting-table-slot" data-craft-table="0"></div>
+					<div class="crafting-table-slot" data-craft-table="1"></div>
+					<div class="crafting-table-slot" data-craft-table="2"></div>
+					<div class="crafting-table-slot" data-craft-table="3"></div>
+					<div class="crafting-table-slot" data-craft-table="4"></div>
+					<div class="crafting-table-slot" data-craft-table="5"></div>
+					<div class="crafting-table-slot" data-craft-table="6"></div>
+					<div class="crafting-table-slot" data-craft-table="7"></div>
+					<div class="crafting-table-slot" data-craft-table="8"></div>
+				</div>
+				
+				<!-- Crafting arrow -->
+				<div class="crafting-table-arrow"></div>
+				
+				<!-- Crafting output -->
+				<div class="crafting-table-output">
+					<div class="crafting-table-result" data-craft-table="output"></div>
+				</div>
+				
+				<!-- Player inventory (below crafting area) -->
+				<div class="crafting-table-inventory-grid">
+					<!-- 3 rows x 9 columns -->
+				</div>
+				
+				<!-- Hotbar (bottom) -->
+				<div class="crafting-table-hotbar">
+					<div class="crafting-table-slot" data-inv-slot="0"></div>
+					<div class="crafting-table-slot" data-inv-slot="1"></div>
+					<div class="crafting-table-slot" data-inv-slot="2"></div>
+					<div class="crafting-table-slot" data-inv-slot="3"></div>
+					<div class="crafting-table-slot" data-inv-slot="4"></div>
+					<div class="crafting-table-slot" data-inv-slot="5"></div>
+					<div class="crafting-table-slot" data-inv-slot="6"></div>
+					<div class="crafting-table-slot" data-inv-slot="7"></div>
+					<div class="crafting-table-slot" data-inv-slot="8"></div>
 				</div>
 			</div>
 		</div>
@@ -1477,7 +1512,19 @@
 			};
 
 			document.getElementById('exitButton').onclick = async function() {
-				// Guardar datos del jugador antes de salir
+				console.log("Saving game data before exit...");
+				
+				// Guardar todos los chunks modificados (esperar a que termine)
+				if ( world && world.saveAllLoadedChunks ) {
+					try {
+						var savedChunks = await world.saveAllLoadedChunks();
+						console.log("Saved", savedChunks, "modified chunks");
+					} catch (e) {
+						console.warn("Error saving chunks:", e);
+					}
+				}
+				
+				// Guardar datos del jugador
 				if ( world && world.worldId && player ) {
 					try {
 						var playerData = player.serializePlayerData();
@@ -1488,16 +1535,8 @@
 					}
 				}
 				
-				// Guardar todos los chunks modificados antes de salir
-				if ( world && world.saveAllLoadedChunks ) {
-					var saved = world.saveAllLoadedChunks();
-					console.log("Exiting world, saved", saved, "chunks");
-				}
-				// Esperar un momento para que IndexedDB termine de guardar
-				// Aumentar el delay para asegurar que IndexedDB termine
-				setTimeout(function() {
-					window.location.href = 'index.html';
-				}, 1000);
+				// Redirigir inmediatamente (los datos ya están guardados)
+				window.location.href = 'index.html';
 			};
 
 			// Pause settings menu event handlers
@@ -1530,6 +1569,16 @@
 			
 			// Función para guardar todos los datos (chunks y jugador)
 			async function saveAllGameData() {
+				// Guardar chunks modificados
+				if ( world && world.saveAllLoadedChunks ) {
+					try {
+						await world.saveAllLoadedChunks();
+						console.log("Auto-saved chunks");
+					} catch (e) {
+						console.warn("Could not auto-save chunks:", e);
+					}
+				}
+				
 				// Guardar datos del jugador
 				if ( world && world.worldId && player ) {
 					try {
@@ -1540,42 +1589,50 @@
 						console.warn("Could not auto-save player data:", e);
 					}
 				}
-				
-				// Guardar chunks modificados
-				if ( world && world.saveAllLoadedChunks ) {
-					world.saveAllLoadedChunks();
-				}
 			}
 			
-			// Auto-guardar cada 30 segundos
+			// Auto-guardar datos del jugador cada 60 segundos (solo posición/inventario, NO chunks)
+			// Los chunks se mantienen en RAM y solo se guardan al salir del mundo
 			var autoSaveInterval = setInterval(function() {
-				if ( !paused && world && player ) {
-					saveAllGameData();
+				if ( !paused && world && world.worldId && player ) {
+					try {
+						var playerData = player.serializePlayerData();
+						savePlayerDataToWorld(world.worldId, playerData);
+					} catch (e) {
+						console.warn("Auto-save player data failed:", e);
+					}
 				}
-			}, 30000);
+			}, 60000);
 			
 			// Guardar chunks cuando se cierra la pestaña o el navegador
 			window.addEventListener('beforeunload', function() {
-				// Intentar guardar datos del jugador (puede no completarse)
+				// Usar localStorage como backup rápido para datos del jugador
 				if ( world && world.worldId && player ) {
 					try {
 						var playerData = player.serializePlayerData();
-						// Usar localStorage como backup rápido
 						localStorage.setItem('player_backup_' + world.worldId, JSON.stringify(playerData));
 					} catch (e) {
 						console.warn("Could not backup player data:", e);
 					}
 				}
 				
+				// Intentar guardar chunks (puede no completarse si se cierra muy rápido)
 				if ( world && world.saveAllLoadedChunks ) {
 					world.saveAllLoadedChunks();
 				}
 			});
 			
-			// También guardar cuando la pestaña se oculta (útil para móviles)
+			// Guardar cuando la pestaña se oculta (útil para móviles)
 			document.addEventListener('visibilitychange', function() {
-				if ( document.hidden ) {
-					saveAllGameData();
+				if ( document.hidden && world && world.worldId && player ) {
+					// Solo guardar datos del jugador (rápido)
+					try {
+						var playerData = player.serializePlayerData();
+						savePlayerDataToWorld(world.worldId, playerData);
+						localStorage.setItem('player_backup_' + world.worldId, JSON.stringify(playerData));
+					} catch (e) {
+						console.warn("Visibility save failed:", e);
+					}
 				}
 			});
 		</script>
