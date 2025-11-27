@@ -798,11 +798,20 @@
 				var ctx = canvas.getContext('2d');
 				if (!ctx) return;
 				
-				// Set canvas size - must match the black area size in inventory.png (54x54 base size)
-				// The canvas must fit exactly inside the black area defined in the texture
-				// GUI scale will scale it automatically, so we use base size
-				canvas.width = 54;
-				canvas.height = 54;
+				// Set canvas size - must match the container size exactly
+				// Get the actual size of the container (accounts for GUI scale)
+				var container = canvas.parentElement;
+				if (container) {
+					var rect = container.getBoundingClientRect();
+					// Use the actual rendered size (after GUI scale)
+					canvas.width = 52; // Base width in pixels (matches container)
+					canvas.height = 70; // Base height in pixels (matches container)
+					// The CSS will scale it, so we keep base size here
+				} else {
+					// Fallback to base size
+					canvas.width = 52;
+					canvas.height = 70;
+				}
 				
 				var container = canvas.parentElement; // .inventory-player-model
 				if (!container) return;
@@ -818,8 +827,31 @@
 					canvas._playerTexture = playerImage;
 					// Store ctx and canvas for later use
 					canvas._ctx = ctx;
+					
+					// Ensure rotation state is initialized
+					if (canvas._modelYaw === undefined) canvas._modelYaw = Math.PI;
+					if (canvas._modelPitch === undefined) canvas._modelPitch = 0;
+					if (canvas._targetYaw === undefined) canvas._targetYaw = Math.PI;
+					if (canvas._targetPitch === undefined) canvas._targetPitch = 0;
+					
 					// Initial render
-					renderInventoryPlayerModel(ctx, canvas, 0, 0);
+					renderInventoryPlayerModel(ctx, canvas, canvas._modelYaw, canvas._modelPitch);
+					
+					// If inventory is already open, start render loop now that texture is loaded
+					var inventory = document.getElementById('inventory');
+					if (inventory && inventory.style.display === 'flex') {
+						// Initialize mouse position
+						var container = canvas.parentElement;
+						if (container && (canvas._lastMouseX === undefined || canvas._lastMouseX === null)) {
+							var rect = container.getBoundingClientRect();
+							canvas._lastMouseX = rect.left + rect.width / 2;
+							canvas._lastMouseY = rect.top + rect.height / 2;
+						}
+						// Start render loop if not already running
+						if (window._startInventoryRenderLoop) {
+							window._startInventoryRenderLoop();
+						}
+					}
 				};
 				playerImage.src = 'media/player.png';
 				
@@ -899,79 +931,133 @@
 				// Store on canvas so it persists across function scopes
 				canvas._lastMouseEvent = null;
 				
-				// Track mouse movement globally when inventory is open (exactly like player.js does)
+				// Track mouse movement globally (always track, not just when inventory is open)
+				// This ensures mouse position is always available when inventory opens
 				document.addEventListener('mousemove', function(e) {
-					// Check if inventory is open
+					var canvas = window._inventoryPlayerCanvas;
+					if (canvas) {
+						// Always store mouse position for continuous tracking
+						canvas._lastMouseX = e.clientX;
+						canvas._lastMouseY = e.clientY;
+						canvas._lastMouseEvent = e;
+					}
+					
+					// Check if inventory is open for immediate update
 					var inventory = document.getElementById('inventory');
 					if (inventory && inventory.style.display === 'flex') {
-						// Store last mouse event for continuous tracking (on canvas for persistence)
-						var canvas = window._inventoryPlayerCanvas;
-						if (canvas) {
-							canvas._lastMouseEvent = e;
-							// Update model rotation when mouse moves
-							if (window.updateInventoryPlayerModelRotation) {
-								window.updateInventoryPlayerModelRotation(e);
-							}
-							// Debug window removed
+						// Also update immediately for instant response
+						if (window.updateInventoryPlayerModelRotation) {
+							window.updateInventoryPlayerModelRotation(e);
 						}
 					}
 				});
 				
-				// Continuously update rotation based on last known mouse position
-				// This ensures the model keeps looking at the mouse even when it's not moving
-				var mouseTrackingInterval = setInterval(function() {
-					var inventory = document.getElementById('inventory');
-					if (inventory && inventory.style.display === 'flex') {
-						var canvas = window._inventoryPlayerCanvas;
-						if (canvas && canvas._lastMouseEvent) {
-							if (window.updateInventoryPlayerModelRotation) {
-								window.updateInventoryPlayerModelRotation(canvas._lastMouseEvent);
-							}
-							// Debug window removed
-						}
-					}
-				}, 16); // Update at ~60 FPS
+				// Mouse position is now tracked continuously in mousemove listener above
+				// The render loop will use the stored position to update rotation each frame
 				
 				// Render loop for continuous updates when inventory is open
+				// Uses requestAnimationFrame for smooth, browser-synchronized rendering
 				// Uses same interpolation system as player.js (line 864-865)
-				var renderLoop = null;
+				var renderLoopAnimationFrame = null;
 				var lastUpdateTime = Date.now();
-				var startRenderLoop = function() {
-					if (renderLoop) return; // Already running
-					lastUpdateTime = Date.now();
-					renderLoop = setInterval(function() {
-						var inventory = document.getElementById('inventory');
-						if (inventory && inventory.style.display === 'flex' && canvas._playerTexture && canvas._ctx) {
-							// Interpolate angles towards target (same as player.js line 864-865)
-							var now = Date.now();
-							var delta = (now - lastUpdateTime) / 1000; // Convert to seconds
-							lastUpdateTime = now;
+				
+				var renderFrame = function() {
+					var inventory = document.getElementById('inventory');
+					// Check if we should continue rendering
+					if (inventory && inventory.style.display === 'flex' && canvas && canvas._ctx) {
+						// If texture not loaded yet, skip rendering but continue loop
+						if (!canvas._playerTexture) {
+							renderLoopAnimationFrame = requestAnimationFrame(renderFrame);
+							return;
+						}
+						
+						// Update target angles based on current mouse position (continuous tracking)
+						var container = canvas.parentElement;
+						if (container) {
+							var rect = container.getBoundingClientRect();
+							var centerX = rect.left + rect.width / 2;
+							var centerY = rect.top + rect.height / 2;
 							
-							// Smooth interpolation - faster for more responsive feel (like vanilla)
-							var interpolationSpeed = 50; // Increased from 30 for more responsive rotation
-							if (canvas._modelYaw === undefined) canvas._modelYaw = Math.PI;
-							if (canvas._modelPitch === undefined) canvas._modelPitch = 0;
+							// Always use stored last mouse position (updated by mousemove listener)
+							// If not available yet, use center (default position)
+							var mouseX = (canvas._lastMouseX !== undefined && canvas._lastMouseX !== null) ? canvas._lastMouseX : centerX;
+							var mouseY = (canvas._lastMouseY !== undefined && canvas._lastMouseY !== null) ? canvas._lastMouseY : centerY;
+							
+							var deltaX = mouseX - centerX;
+							var deltaY = mouseY - centerY;
+							
+							var maxRotation = Math.PI / 2;
+							var sensitivity = Math.max(rect.width, rect.height) / 2;
+							
+							var normalizedX = Math.max(-1, Math.min(1, deltaX / sensitivity));
+							var normalizedY = Math.max(-1, Math.min(1, deltaY / sensitivity));
+							
+							// Ensure target angles are initialized
 							if (canvas._targetYaw === undefined) canvas._targetYaw = Math.PI;
 							if (canvas._targetPitch === undefined) canvas._targetPitch = 0;
 							
-							// Interpolate towards target angles (smooth rotation)
-							canvas._modelYaw += (canvas._targetYaw - canvas._modelYaw) * interpolationSpeed * delta;
-							canvas._modelPitch += (canvas._targetPitch - canvas._modelPitch) * interpolationSpeed * delta;
+							// Update target angles continuously based on mouse position
+							canvas._targetYaw = Math.PI + (normalizedX * maxRotation);
+							canvas._targetPitch = -(normalizedY * maxRotation);
 							
-							// Clamp pitch (same as player.js line 866-867)
-							if (canvas._modelPitch < -Math.PI/2) canvas._modelPitch = -Math.PI/2;
-							if (canvas._modelPitch > Math.PI/2) canvas._modelPitch = Math.PI/2;
-							
-							// Render with interpolated angles
-							renderInventoryPlayerModel(canvas._ctx, canvas, canvas._modelYaw, canvas._modelPitch);
-						} else {
-							// Stop loop if inventory closed
-							if (renderLoop) {
-								clearInterval(renderLoop);
-								renderLoop = null;
-							}
+							// Clamp target pitch
+							if (canvas._targetPitch < -Math.PI/2) canvas._targetPitch = -Math.PI/2;
+							if (canvas._targetPitch > Math.PI/2) canvas._targetPitch = Math.PI/2;
 						}
-					}, 16); // ~60 FPS - continuous rendering
+						
+						// Interpolate angles towards target (same as player.js line 864-865)
+						var now = Date.now();
+						var delta = (now - lastUpdateTime) / 1000; // Convert to seconds
+						lastUpdateTime = now;
+						
+						// Smooth interpolation - faster for more responsive feel (like vanilla)
+						var interpolationSpeed = 50; // Increased from 30 for more responsive rotation
+						if (canvas._modelYaw === undefined) canvas._modelYaw = Math.PI;
+						if (canvas._modelPitch === undefined) canvas._modelPitch = 0;
+						if (canvas._targetYaw === undefined) canvas._targetYaw = Math.PI;
+						if (canvas._targetPitch === undefined) canvas._targetPitch = 0;
+						
+						// Interpolate towards target angles (smooth rotation)
+						canvas._modelYaw += (canvas._targetYaw - canvas._modelYaw) * interpolationSpeed * delta;
+						canvas._modelPitch += (canvas._targetPitch - canvas._modelPitch) * interpolationSpeed * delta;
+						
+						// Clamp pitch (same as player.js line 866-867)
+						if (canvas._modelPitch < -Math.PI/2) canvas._modelPitch = -Math.PI/2;
+						if (canvas._modelPitch > Math.PI/2) canvas._modelPitch = Math.PI/2;
+						
+						// Render with interpolated angles
+						renderInventoryPlayerModel(canvas._ctx, canvas, canvas._modelYaw, canvas._modelPitch);
+						
+						// Schedule next frame
+						renderLoopAnimationFrame = requestAnimationFrame(renderFrame);
+					} else {
+						// Stop loop if inventory closed
+						if (renderLoopAnimationFrame) {
+							cancelAnimationFrame(renderLoopAnimationFrame);
+							renderLoopAnimationFrame = null;
+							canvas._renderLoopActive = false;
+						}
+					}
+				};
+				
+				var startRenderLoop = function() {
+					// Check if loop already exists (stored on canvas)
+					if (canvas._renderLoopActive || renderLoopAnimationFrame) {
+						// Already running, just ensure it continues
+						return;
+					}
+					
+					// Ensure canvas and context are available
+					if (!canvas || !canvas._ctx) {
+						console.log('Canvas or context not ready for render loop');
+						return;
+					}
+					
+					lastUpdateTime = Date.now();
+					canvas._renderLoopActive = true;
+					
+					// Start the animation frame loop
+					renderLoopAnimationFrame = requestAnimationFrame(renderFrame);
 				};
 				
 				// Start render loop when inventory opens
@@ -982,20 +1068,46 @@
 							var mutation = mutations[i];
 							if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
 								var display = inventory.style.display;
-								if (display === 'flex' && canvas._playerTexture) {
+								if (display === 'flex') {
+									// Wait for texture to load if not ready
+									if (!canvas._playerTexture) {
+										console.log('Waiting for player texture to load...');
+										// Texture will load and trigger render, but we should still start the loop
+									}
+									
+									// Initialize mouse position if not set yet
+									// Use center of container as default
+									var container = canvas.parentElement;
+									if (container && (canvas._lastMouseX === undefined || canvas._lastMouseX === null)) {
+										var rect = container.getBoundingClientRect();
+										canvas._lastMouseX = rect.left + rect.width / 2;
+										canvas._lastMouseY = rect.top + rect.height / 2;
+									}
+									
+									// Ensure rotation state is initialized
+									if (canvas._modelYaw === undefined) canvas._modelYaw = Math.PI;
+									if (canvas._modelPitch === undefined) canvas._modelPitch = 0;
+									if (canvas._targetYaw === undefined) canvas._targetYaw = Math.PI;
+									if (canvas._targetPitch === undefined) canvas._targetPitch = 0;
+									
+									// Store startRenderLoop globally so it can be called when texture loads
+									window._startInventoryRenderLoop = startRenderLoop;
+									
 									// Inventory opened, start render loop
 									startRenderLoop();
+									
+									// Initial render if texture is ready
 									setTimeout(function() {
-										if (canvas._ctx && canvas._playerTexture) {
+										if (canvas && canvas._ctx && canvas._playerTexture) {
 											renderInventoryPlayerModel(canvas._ctx, canvas, canvas._modelYaw, canvas._modelPitch);
 										}
-										// Debug window removed
 									}, 10);
 								} else if (display === 'none') {
 									// Inventory closed, stop render loop and reset rotation
-									if (renderLoop) {
-										clearInterval(renderLoop);
-										renderLoop = null;
+									if (renderLoopAnimationFrame) {
+										cancelAnimationFrame(renderLoopAnimationFrame);
+										renderLoopAnimationFrame = null;
+										canvas._renderLoopActive = false;
 									}
 									// Reset to default angles (same as player.js: angles = [0, Math.PI, 0])
 									canvas._modelYaw = Math.PI;
@@ -1039,7 +1151,7 @@
 				var img = canvas._playerTexture;
 				var centerX = canvas.width / 2;
 				var centerY = canvas.height / 2;
-				// Calculate scale to fit model in 54x54px canvas (base size, before GUI scale)
+				// Calculate scale to fit model in canvas (52x70px base size, before GUI scale)
 				// Model dimensions at scale 1: head (8px) + body (12px) + legs (12px) = 32px height
 				// Model width at scale 1: body (8px) + arms (4px each side) ≈ 16px
 				// In vanilla Minecraft, the inventory player model is slightly smaller to fit better

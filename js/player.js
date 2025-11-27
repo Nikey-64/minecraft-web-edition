@@ -2181,6 +2181,78 @@ Player.prototype.hideDraggedItemCursor = function()
 	}
 }
 
+// getDraggedItem()
+//
+// Gets the currently dragged item from the dragged slot.
+
+Player.prototype.getDraggedItem = function()
+{
+	if (!this.draggedSlot) {
+		return null;
+	}
+	
+	var draggedItem = null;
+	if (this.draggedSlot.type === 'hotbar') {
+		draggedItem = this.hotbar[this.draggedSlot.index];
+	} else if (this.draggedSlot.type === 'inventory') {
+		draggedItem = this.inventory[this.draggedSlot.index];
+	} else if (this.draggedSlot.type === 'inventory-crafting') {
+		draggedItem = this.craftingInventory[this.draggedSlot.index];
+	} else if (this.draggedSlot.type === 'crafting-table') {
+		draggedItem = this.craftingTableGrid[this.draggedSlot.index];
+	} else if (this.draggedSlot.type === 'temp-result') {
+		// For temporary result items that aren't in a specific slot yet
+		// Return the item from a temporary storage (stored on draggedSlot)
+		return this.draggedSlot.item || null;
+	}
+	
+	return draggedItem;
+}
+
+// setDraggedItem( item )
+//
+// Sets the item being dragged. Updates the dragged slot and shows the cursor.
+
+Player.prototype.setDraggedItem = function(item)
+{
+	if (!this.draggedSlot) {
+		return;
+	}
+	
+	// Update the slot with the new item
+	if (this.draggedSlot.type === 'hotbar') {
+		this.hotbar[this.draggedSlot.index] = item;
+	} else if (this.draggedSlot.type === 'inventory') {
+		this.inventory[this.draggedSlot.index] = item;
+	} else if (this.draggedSlot.type === 'inventory-crafting') {
+		this.craftingInventory[this.draggedSlot.index] = item;
+	} else if (this.draggedSlot.type === 'crafting-table') {
+		this.craftingTableGrid[this.draggedSlot.index] = item;
+	} else if (this.draggedSlot.type === 'temp-result') {
+		// Store item on draggedSlot for temp-result type
+		this.draggedSlot.item = item;
+	}
+	
+	// Update the cursor display
+	if (item) {
+		// Get the last mouse event or create a default one
+		var lastEvent = this._lastMouseEvent || { clientX: 0, clientY: 0 };
+		this.showDraggedItemCursor(item, lastEvent);
+	} else {
+		this.hideDraggedItemCursor();
+	}
+}
+
+// showDraggedItemCursor( item, event )
+//
+// Shows the dragged item cursor with the specified item.
+
+Player.prototype.showDraggedItemCursor = function(item, event)
+{
+	// Use updateDraggedItemCursor which handles the display
+	this.updateDraggedItemCursor(item, event);
+}
+
 // updateDraggedItemCursorPosition( event )
 //
 // Updates the position of the dragged item cursor to follow the mouse.
@@ -2893,6 +2965,12 @@ Player.prototype.renderBlock3D = function(block, size)
 
 Player.prototype.toggleInventory = function()
 {
+	// Don't allow opening inventory if pause menu is open
+	var pauseMenu = document.getElementById("pauseMenu");
+	if (pauseMenu && pauseMenu.style.display !== "none") {
+		return; // Pause menu is open, don't open inventory
+	}
+	
 	// In creative mode, toggle creative inventory instead
 	if (this.gameMode === GAME_MODE.CREATIVE) {
 		var creativeInventory = document.getElementById("creativeInventory");
@@ -3095,8 +3173,13 @@ Player.prototype.onKeyEvent = function( keyCode, down )
 
 	if ( !down && key == "t" && this.eventHandlers["openChat"] ) this.eventHandlers.openChat();
 	
-	// Inventory toggle (E key)
+	// Inventory toggle (E key) - only if pause menu is not open
 	if ( !down && (keyCode == 69 || key == "e") ) {
+		// Check if pause menu is open
+		var pauseMenu = document.getElementById("pauseMenu");
+		if (pauseMenu && pauseMenu.style.display !== "none") {
+			return; // Don't open inventory if pause menu is open
+		}
 		this.toggleInventory();
 	}
 	

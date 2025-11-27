@@ -486,41 +486,37 @@ body.creative-mode .hunger-icons {
 .inventory-player-model {
 	position: absolute;
 	top: 8px;
-	left: 30px; /* Exact position of black area in inventory.png: between armor (26px) and crafting (138px) */
+	left: 26px; /* Adjusted further left to better align with inventory.png */
 	/* Black area in inventory.png is 54x54px (base size, before GUI scale) */
-	/* With GUI scale 2x, the visual size is 108x108px, but container should match base size */
-	width: 54px; /* Base size of black area in inventory.png (will be scaled by GUI scale) */
-	height: 54px; /* Base size of black area in inventory.png */
+	width: 52px; /* Base size of black area in inventory.png (will be scaled by GUI scale) */
+	height: 70px; /* Slightly taller to accommodate the player model better */
 	z-index: 10;
 	pointer-events: auto;
 	/* Player model area - matches the black area in inventory.png texture */
-	/* No background needed - the black area is part of inventory.png */
 	display: block;
-	overflow: hidden; /* Ensure canvas stays within the black area bounds - clip anything outside */
-	box-sizing: border-box; /* Include padding/border in width/height */
+	overflow: hidden; /* Ensure canvas stays within the black area bounds */
+	box-sizing: border-box;
 	padding: 0;
 	margin: 0;
 }
 
 .inventory-player-canvas {
-	/* Canvas must match container size exactly - no scaling, must fit inside black area */
-	/* Container is 54x54px base, canvas must be exactly the same */
-	width: 54px; /* Exact size - matches container and black area in inventory.png */
-	height: 54px; /* Exact size - matches container and black area in inventory.png */
+	/* Canvas must match container size exactly - fills the black area in inventory.png */
+	width: 100%; /* Fill container completely */
+	height: 100%; /* Fill container completely */
 	image-rendering: pixelated;
 	cursor: default;
 	position: absolute;
 	top: 0;
 	left: 0;
-	/* Canvas fills container exactly - no transforms, no scaling */
 	z-index: 10;
 	pointer-events: none; /* Allow mouse events to pass through - model follows mouse anywhere */
 	background: transparent !important; /* Transparent background - black area shows from inventory.png */
 	display: block;
-	/* Ensure canvas doesn't overflow container */
-	max-width: 54px;
-	max-height: 54px;
 	box-sizing: border-box;
+	/* Ensure canvas fills container exactly without overflow */
+	max-width: 100%;
+	max-height: 100%;
 }
 
 /* Inventory Crafting 2x2 (top right, like vanilla Minecraft) */
