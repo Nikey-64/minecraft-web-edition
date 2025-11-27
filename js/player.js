@@ -59,8 +59,9 @@ Player.prototype.setWorld = function( world )
 	this.craftingTableGrid = [null, null, null, null, null, null, null, null, null]; // 9 slots for 3x3 crafting
 	this.craftingTableResult = null; // Result of current crafting recipe
 	this.craftingTableOpen = false; // Whether crafting table GUI is open
-	// Crafting inventory system
+	// Crafting inventory system (2x2 grid in inventory)
 	this.craftingInventory = new Array(4).fill(null); // 4 slots for crafting inventory ( 2 rows x 2 columns) 
+	this.craftingInventoryResult = null; // Result of current 2x2 crafting recipe
 	this.craftingSelectedSlot = 0; // Slot seleccionado (0-8)
 	this.craftingInventoryOpen = false; // Whether crafting inventory GUI is open
 
@@ -965,6 +966,9 @@ Player.prototype.initInventory = function()
 	// Setup crafting table slots
 	this.setupCraftingTableSlots();
 	
+	// Setup inventory crafting (2x2) slots
+	this.setupInventoryCraftingSlots();
+	
 	// Don't initialize with any blocks by default
 	// Inventory will be populated based on game mode
 	this.clearInventory();
@@ -990,6 +994,208 @@ Player.prototype.setupCraftingTableSlots = function()
 	
 	// Setup crafting table grid slots (3x3) - will be set up when GUI opens
 	// This is handled in openCraftingTable()
+}
+
+// setupInventoryCraftingSlots()
+//
+// Sets up click handlers for inventory crafting slots (2x2 grid).
+
+Player.prototype.setupInventoryCraftingSlots = function()
+{
+	var pl = this;
+	
+	// Setup 2x2 crafting grid slots
+	var craftingSlots = document.querySelectorAll('.inventory-crafting-slot');
+	craftingSlots.forEach(function(slot) {
+		slot.onclick = function(e) {
+			var index = parseInt(this.getAttribute('data-craft-inv'));
+			pl.handleInventoryCraftingSlotClick(index, e);
+		};
+	});
+	
+	// Setup crafting result slot
+	var resultSlot = document.getElementById('inventoryCraftingResult');
+	if (resultSlot) {
+		resultSlot.onclick = function(e) {
+			pl.handleInventoryCraftingResultClick(e);
+		};
+	}
+}
+
+// handleInventoryCraftingSlotClick( index, event )
+//
+// Handles click on an inventory crafting slot (2x2 grid).
+
+Player.prototype.handleInventoryCraftingSlotClick = function(index, e)
+{
+	if (index < 0 || index >= 4) return;
+	
+	var currentItem = this.craftingInventory[index];
+	
+	if (this.draggedSlot) {
+		// Place dragged item into crafting slot
+		if (this.draggedSlot.type === 'inventory-crafting' && this.draggedSlot.index === index) {
+			// Clicking same slot - clear drag
+			this.draggedSlot = null;
+			this.hideDraggedItemCursor();
+		} else {
+			// Swap or place
+			var draggedItem = this.getDraggedItem();
+			this.setDraggedItem(currentItem);
+			this.craftingInventory[index] = draggedItem;
+			
+			if (!currentItem) {
+				this.draggedSlot = null;
+				this.hideDraggedItemCursor();
+			}
+		}
+	} else if (currentItem) {
+		// Pick up item from crafting slot
+		this.draggedSlot = { type: 'inventory-crafting', index: index };
+		this.showDraggedItemCursor(currentItem);
+		this.craftingInventory[index] = null;
+	}
+	
+	// Update crafting result after grid change
+	this.updateInventoryCraftingResult();
+	this.updateInventoryDisplay();
+}
+
+// handleInventoryCraftingResultClick( event )
+//
+// Handles click on inventory crafting result slot - crafts the item.
+
+Player.prototype.handleInventoryCraftingResultClick = function(e)
+{
+	if (!this.craftingInventoryResult) return;
+	if (typeof CRAFTING === 'undefined') return;
+	
+	var isShiftClick = e && e.shiftKey;
+	
+	// Convert crafting grid to 2x2 array
+	var grid = [
+		[this.craftingInventory[0], this.craftingInventory[1]],
+		[this.craftingInventory[2], this.craftingInventory[3]]
+	];
+	
+	if (isShiftClick) {
+		// Shift+Click: Craft maximum possible and place directly in inventory
+		this.craftMaximumAndPlace(grid, 'inventory-crafting');
+	} else {
+		// Normal click: Craft once
+		var times = 1;
+		var maxCraft = CRAFTING.getCraftingCount(grid);
+		if (maxCraft === 0) return;
+		
+		// Check if we have space for the result
+		var resultStack = this.craftingInventoryResult.clone();
+		if (!this.canAddItemStack(resultStack)) {
+			return; // No space in inventory
+		}
+		
+		// Create a copy of the grid for crafting
+		var gridCopy = [];
+		for (var y = 0; y < grid.length; y++) {
+			gridCopy[y] = [];
+			for (var x = 0; x < grid[y].length; x++) {
+				if (grid[y][x]) {
+					gridCopy[y][x] = grid[y][x].clone();
+				} else {
+					gridCopy[y][x] = null;
+				}
+			}
+		}
+		
+		// Only craft recipes that fit in 2x2 (check before crafting)
+		var recipe2x2 = CRAFTING.findRecipe2x2(gridCopy);
+		if (!recipe2x2) return;
+		
+		// Use the 2x2 recipe for crafting
+		var result = CRAFTING.craft(gridCopy, times);
+		if (result) {
+			// Apply changes back to crafting grid
+			for (var y = 0; y < grid.length; y++) {
+				for (var x = 0; x < grid[y].length; x++) {
+					var idx = y * 2 + x;
+					this.craftingInventory[idx] = gridCopy[y][x];
+				}
+			}
+			
+			// Add result to inventory
+			if (this.draggedSlot && this.draggedSlot.type === 'inventory') {
+				var draggedItem = this.getDraggedItem();
+				if (!draggedItem || (draggedItem.item.id === result.item.id && draggedItem.count + result.count <= draggedItem.item.maxStack)) {
+					if (!draggedItem) {
+						this.setDraggedItem(result);
+					} else {
+						draggedItem.count += result.count;
+					}
+				} else {
+					var added = this.addItemStack(result);
+					if (!added) {
+						this.setDraggedItem(result);
+					}
+				}
+			} else {
+				var added = this.addItemStack(result);
+				if (!added && !this.draggedSlot) {
+					this.draggedSlot = { type: 'temp-result' };
+					this.setDraggedItem(result);
+				}
+			}
+			
+			// Update displays
+			this.updateInventoryCraftingResult();
+			this.updateInventoryDisplay();
+			this.updateHotbarDisplay();
+		}
+	}
+}
+
+// updateInventoryCraftingResult()
+//
+// Checks if current inventory crafting grid (2x2) matches any recipe.
+
+Player.prototype.updateInventoryCraftingResult = function()
+{
+	if (typeof CRAFTING === 'undefined') {
+		this.craftingInventoryResult = null;
+		return;
+	}
+	
+	// Convert crafting grid to 2x2 array for recipe matching
+	var grid = [
+		[this.craftingInventory[0], this.craftingInventory[1]],
+		[this.craftingInventory[2], this.craftingInventory[3]]
+	];
+	
+	// Only find recipes that fit in 2x2
+	this.craftingInventoryResult = CRAFTING.getResult2x2(grid);
+}
+
+// updateInventoryCraftingDisplay()
+//
+// Updates the inventory crafting (2x2) slots display.
+
+Player.prototype.updateInventoryCraftingDisplay = function()
+{
+	if (!this.inventoryOpen) return;
+	
+	var pl = this;
+	var craftingSlots = document.querySelectorAll('.inventory-crafting-slot');
+	var craftingResultSlot = document.getElementById('inventoryCraftingResult');
+	
+	// Update crafting grid slots (2x2)
+	if (craftingSlots) {
+		craftingSlots.forEach(function(slot, i) {
+			pl.updateSlotDisplay(slot, pl.craftingInventory[i]);
+		});
+	}
+	
+	// Update result slot
+	if (craftingResultSlot) {
+		this.updateSlotDisplay(craftingResultSlot, this.craftingInventoryResult);
+	}
 }
 
 // openCraftingTable()
@@ -1157,29 +1363,187 @@ Player.prototype.handleCraftingTableSlotClick = function(index, e)
 // handleCraftingTableResultClick( event )
 //
 // Handles click on crafting table result slot - crafts the item.
+// Shift+Click crafts maximum possible and places directly in inventory.
 
 Player.prototype.handleCraftingTableResultClick = function(e)
 {
 	if (!this.craftingTableResult) return;
+	if (typeof CRAFTING === 'undefined') return;
 	
-	// Try to add result to inventory
-	var result = this.craftingTableResult.clone();
-	var added = this.addItemStack(result);
+	var isShiftClick = e && e.shiftKey;
 	
-	if (added) {
-		// Consume crafting ingredients
-		for (var i = 0; i < 9; i++) {
-			if (this.craftingTableGrid[i]) {
-				this.craftingTableGrid[i].count--;
-				if (this.craftingTableGrid[i].count <= 0) {
-					this.craftingTableGrid[i] = null;
+	// Convert crafting grid to 3x3 array
+	var grid = [
+		[this.craftingTableGrid[0], this.craftingTableGrid[1], this.craftingTableGrid[2]],
+		[this.craftingTableGrid[3], this.craftingTableGrid[4], this.craftingTableGrid[5]],
+		[this.craftingTableGrid[6], this.craftingTableGrid[7], this.craftingTableGrid[8]]
+	];
+	
+	if (isShiftClick) {
+		// Shift+Click: Craft maximum possible and place directly in inventory
+		this.craftMaximumAndPlace(grid, 'crafting-table');
+	} else {
+		// Normal click: Craft once and let player place manually
+		var times = 1;
+		var maxCraft = CRAFTING.getCraftingCount(grid);
+		if (maxCraft === 0) return;
+		
+		// Check if we have space for the result
+		var resultStack = this.craftingTableResult.clone();
+		if (!this.canAddItemStack(resultStack)) {
+			return; // No space in inventory
+		}
+		
+		// Create a copy of the grid for crafting
+		var gridCopy = [];
+		for (var y = 0; y < grid.length; y++) {
+			gridCopy[y] = [];
+			for (var x = 0; x < grid[y].length; x++) {
+				if (grid[y][x]) {
+					gridCopy[y][x] = grid[y][x].clone();
+				} else {
+					gridCopy[y][x] = null;
 				}
 			}
 		}
 		
-		// Update result
-		this.updateCraftingTableResult();
-		this.updateCraftingTableDisplay();
+		var result = CRAFTING.craft(gridCopy, times);
+		if (result) {
+			// Apply changes back to crafting grid
+			for (var y = 0; y < grid.length; y++) {
+				for (var x = 0; x < grid[y].length; x++) {
+					var idx = y * 3 + x;
+					this.craftingTableGrid[idx] = gridCopy[y][x];
+				}
+			}
+			
+			// Add result to inventory
+			if (this.draggedSlot && this.draggedSlot.type === 'inventory') {
+				// If holding an item, try to add to it or swap
+				var draggedItem = this.getDraggedItem();
+				if (!draggedItem || (draggedItem.item.id === result.item.id && draggedItem.count + result.count <= draggedItem.item.maxStack)) {
+					// Can merge
+					if (!draggedItem) {
+						this.setDraggedItem(result);
+					} else {
+						draggedItem.count += result.count;
+					}
+				} else {
+					// Can't merge, try to add to inventory first
+					var added = this.addItemStack(result);
+					if (!added) {
+						// Inventory full, swap with dragged item
+						this.setDraggedItem(result);
+					}
+				}
+			} else {
+				// Not holding anything, add to inventory
+				var added = this.addItemStack(result);
+				if (!added && !this.draggedSlot) {
+					// Inventory full, hold the result
+					this.draggedSlot = { type: 'temp-result' };
+					this.setDraggedItem(result);
+				}
+			}
+			
+			// Update displays
+			this.updateCraftingTableResult();
+			this.updateCraftingTableDisplay();
+			this.updateHotbarDisplay();
+			this.updateInventoryDisplay();
+		}
+	}
+}
+
+// craftMaximumAndPlace( grid, gridType )
+//
+// Crafts the maximum possible amount and places directly in inventory (Shift+Click behavior).
+
+Player.prototype.craftMaximumAndPlace = function(grid, gridType)
+{
+	if (typeof CRAFTING === 'undefined') return;
+	
+	var maxCraft = CRAFTING.getCraftingCount(grid);
+	if (maxCraft === 0) return;
+	
+	// Find recipe based on grid type (2x2 vs 3x3)
+	var recipe;
+	if (gridType === 'inventory-crafting') {
+		recipe = CRAFTING.findRecipe2x2(grid);
+	} else {
+		recipe = CRAFTING.findRecipe(grid);
+	}
+	if (!recipe) return;
+	
+	var resultItem = recipe.result;
+	if (typeof resultItem === 'number') {
+		resultItem = ITEM_REGISTRY.get(resultItem);
+	}
+	if (!resultItem) return;
+	
+	var totalResultCount = recipe.resultCount * maxCraft;
+	var resultStack = new ItemStack(resultItem, totalResultCount);
+	
+	// Check if we have space for all results
+	var canFit = this.canAddItemStack(resultStack);
+	if (!canFit) {
+		// Calculate how many we can actually fit
+		var canFitCount = this.getSpaceForItemStack(resultStack.item);
+		if (canFitCount === 0) return;
+		
+		maxCraft = Math.min(maxCraft, Math.floor(canFitCount / recipe.resultCount));
+		if (maxCraft === 0) return;
+		
+		totalResultCount = recipe.resultCount * maxCraft;
+		resultStack = new ItemStack(resultItem, totalResultCount);
+	}
+	
+	// Create a copy of the grid for crafting
+	var gridCopy = [];
+	for (var y = 0; y < grid.length; y++) {
+		gridCopy[y] = [];
+		for (var x = 0; x < grid[y].length; x++) {
+			if (grid[y][x]) {
+				gridCopy[y][x] = grid[y][x].clone();
+			} else {
+				gridCopy[y][x] = null;
+			}
+		}
+	}
+	
+	// Craft the items
+	var result = CRAFTING.craft(gridCopy, maxCraft);
+	if (result) {
+		// Apply changes back to crafting grid
+		if (gridType === 'crafting-table') {
+			for (var y = 0; y < grid.length; y++) {
+				for (var x = 0; x < grid[y].length; x++) {
+					var idx = y * 3 + x;
+					this.craftingTableGrid[idx] = gridCopy[y][x];
+				}
+			}
+		} else if (gridType === 'inventory-crafting') {
+			for (var i = 0; i < 4; i++) {
+				var y = Math.floor(i / 2);
+				var x = i % 2;
+				this.craftingInventory[i] = (gridCopy[y] && gridCopy[y][x]) ? gridCopy[y][x] : null;
+			}
+		}
+		
+		// Add all results to inventory (auto-distribute)
+		var remaining = this.addItemStackAuto(result);
+		if (remaining && remaining.count > 0) {
+			// Drop remaining items (shouldn't happen if canFit check worked)
+			console.warn("Could not fit all crafted items in inventory");
+		}
+		
+		// Update displays
+		if (gridType === 'crafting-table') {
+			this.updateCraftingTableResult();
+			this.updateCraftingTableDisplay();
+		} else {
+			this.updateInventoryCraftingResult();
+		}
 		this.updateHotbarDisplay();
 		this.updateInventoryDisplay();
 	}
@@ -1519,9 +1883,12 @@ Player.prototype.updateCreativeInventoryDisplay = function()
 //
 // Selects a hotbar slot (0-8).
 
-Player.prototype.selectHotbarSlot = function(index)
+Player.prototype.selectHotbarSlot = function(index, showTitle)
 {
 	if (index < 0 || index >= 9) return;
+	
+	// Check if slot actually changed
+	var slotChanged = (this.selectedHotbarSlot !== index);
 	
 	this.selectedHotbarSlot = index;
 	
@@ -1540,8 +1907,11 @@ Player.prototype.selectHotbarSlot = function(index)
 	var block = this.getSelectedBlock();
 	this.buildMaterial = block || BLOCK.AIR;
 	
-	// Show item title
-	this.showItemTitle(block);
+	// Only show item title if slot actually changed OR explicitly requested
+	// This prevents showing title when hotbar is just being refreshed
+	if (slotChanged || showTitle === true) {
+		this.showItemTitle(block);
+	}
 }
 
 // showItemTitle( block )
@@ -1711,6 +2081,12 @@ Player.prototype.handleSlotClick = function(type, index, event)
 				if (this.craftingTableOpen) {
 					this.updateCraftingTableDisplay();
 				}
+				
+				// Update inventory crafting result if inventory is open
+				if (this.inventoryOpen) {
+					this.updateInventoryCraftingResult();
+					this.updateInventoryCraftingDisplay();
+				}
 			}
 			
 			// Clear dragged slot
@@ -1728,6 +2104,12 @@ Player.prototype.handleSlotClick = function(type, index, event)
 				// Update crafting table display if open
 				if (this.craftingTableOpen) {
 					this.updateCraftingTableDisplay();
+				}
+				
+				// Update inventory crafting result if inventory is open
+				if (this.inventoryOpen) {
+					this.updateInventoryCraftingResult();
+					this.updateInventoryCraftingDisplay();
 				}
 			}
 		}
@@ -1893,6 +2275,127 @@ Player.prototype.addItemStack = function(itemStack) {
 	return itemAdded;
 };
 
+// canAddItemStack( itemStack )
+//
+// Checks if the entire item stack can be added to inventory.
+
+Player.prototype.canAddItemStack = function(itemStack) {
+	if (!itemStack || !itemStack.item || itemStack.isEmpty()) {
+		return true; // Empty stack can always be "added"
+	}
+	
+	var needed = itemStack.count;
+	var availableSpace = this.getSpaceForItemStack(itemStack.item);
+	return availableSpace >= needed;
+};
+
+// getSpaceForItemStack( item )
+//
+// Calculates how many of the given item can fit in inventory (hotbar + inventory).
+
+Player.prototype.getSpaceForItemStack = function(item) {
+	if (!item) return 0;
+	
+	var available = 0;
+	
+	// Check hotbar for existing stacks and empty slots
+	for (var i = 0; i < this.hotbar.length; i++) {
+		var slot = this.hotbar[i];
+		if (!slot || (slot instanceof ItemStack && slot.isEmpty())) {
+			available += item.maxStack;
+		} else if (slot instanceof ItemStack && slot.item && slot.item.id === item.id) {
+			available += item.maxStack - slot.count;
+		}
+	}
+	
+	// Check inventory for existing stacks and empty slots
+	for (var i = 0; i < this.inventory.length; i++) {
+		var slot = this.inventory[i];
+		if (!slot || (slot instanceof ItemStack && slot.isEmpty())) {
+			available += item.maxStack;
+		} else if (slot instanceof ItemStack && slot.item && slot.item.id === item.id) {
+			available += item.maxStack - slot.count;
+		}
+	}
+	
+	return available;
+};
+
+// addItemStackAuto( itemStack )
+//
+// Adds item stack to inventory and returns remaining items (if any).
+
+Player.prototype.addItemStackAuto = function(itemStack) {
+	if (!itemStack || !itemStack.item || itemStack.isEmpty()) {
+		return null;
+	}
+	
+	var remainingCount = itemStack.count;
+	var itemAdded = false;
+	
+	// Try to add to existing stacks first (hotbar)
+	for (var i = 0; i < this.hotbar.length && remainingCount > 0; i++) {
+		var slot = this.hotbar[i];
+		if (slot && slot instanceof ItemStack && slot.item) {
+			if (slot.item.id === itemStack.item.id) {
+				if (!slot.isFull()) {
+					var toAdd = Math.min(remainingCount, slot.item.maxStack - slot.count);
+					slot.add(toAdd);
+					remainingCount -= toAdd;
+					itemAdded = true;
+				}
+			}
+		}
+	}
+	
+	// Try inventory slots for stacking
+	for (var i = 0; i < this.inventory.length && remainingCount > 0; i++) {
+		var slot = this.inventory[i];
+		if (slot && slot instanceof ItemStack && slot.item) {
+			if (slot.item.id === itemStack.item.id) {
+				if (!slot.isFull()) {
+					var toAdd = Math.min(remainingCount, slot.item.maxStack - slot.count);
+					slot.add(toAdd);
+					remainingCount -= toAdd;
+					itemAdded = true;
+				}
+			}
+		}
+	}
+	
+	// If still have items remaining, try to add to empty hotbar slots
+	for (var i = 0; i < this.hotbar.length && remainingCount > 0; i++) {
+		if (!this.hotbar[i] || (this.hotbar[i] instanceof ItemStack && this.hotbar[i].isEmpty())) {
+			var toAdd = Math.min(remainingCount, itemStack.item.maxStack);
+			this.hotbar[i] = new ItemStack(itemStack.item, toAdd);
+			remainingCount -= toAdd;
+			itemAdded = true;
+		}
+	}
+	
+	// If still have items remaining, try to add to empty inventory slots
+	for (var i = 0; i < this.inventory.length && remainingCount > 0; i++) {
+		if (!this.inventory[i] || (this.inventory[i] instanceof ItemStack && this.inventory[i].isEmpty())) {
+			var toAdd = Math.min(remainingCount, itemStack.item.maxStack);
+			this.inventory[i] = new ItemStack(itemStack.item, toAdd);
+			remainingCount -= toAdd;
+			itemAdded = true;
+		}
+	}
+	
+	// Update displays if items were added
+	if (itemAdded) {
+		this.updateHotbarDisplay();
+		this.updateInventoryDisplay();
+	}
+	
+	// Return remaining items (if any)
+	if (remainingCount > 0) {
+		return new ItemStack(itemStack.item, remainingCount);
+	}
+	return null;
+};
+
 // getSelectedItem()
 //
 // Gets the currently selected item/block from hotbar.
@@ -2022,6 +2525,12 @@ Player.prototype.updateInventoryDisplay = function()
 	if (!inventoryGrid) return;
 	
 	var pl = this;
+	
+	// Update inventory crafting (2x2) display
+	this.updateInventoryCraftingDisplay();
+	
+	// Update inventory crafting result
+	this.updateInventoryCraftingResult();
 	
 	// Clear existing slots
 	inventoryGrid.innerHTML = "";

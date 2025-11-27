@@ -42,11 +42,6 @@
 			<div id="debugInfo"></div>
 		</div>
 		
-		<!-- Mouse Debug Window (when inventory is open) -->
-		<div id="mouseDebugWindow" style="position: absolute; top: 10px; right: 10px; color: #00ff00; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; text-shadow: 2px 2px 0px rgba(0,0,0,0.8); display: none; pointer-events: none; z-index: 1001; background: rgba(0,0,0,0.5); padding: 8px; border: 1px solid #00ff00;">
-			<div><strong>Mouse Debug (Inventario)</strong></div>
-			<div id="mouseDebugInfo"></div>
-		</div>
 		
 		<!-- Item Title Display (shows item name when switching hotbar slots) -->
 		<div id="itemTitleDisplay" style="position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%) scale(var(--gui-scale)); transform-origin: center bottom; color: white; font-family: 'Minecraftia', monospace; font-size: 11px; text-shadow: 2px 2px 0px rgba(0,0,0,0.8); pointer-events: none; z-index: 1002; opacity: 0; transition: opacity 0.3s ease-in-out; text-align: center;">
@@ -114,7 +109,19 @@
 					<canvas id="inventoryPlayerCanvas" class="inventory-player-canvas"></canvas>
 				</div>
 				
-				<!-- Crafting grid 2x2 removed - only in crafting table GUI -->
+				<!-- Crafting grid 2x2 (top right, like vanilla Minecraft) -->
+				<div class="inventory-crafting-area">
+					<div class="inventory-crafting-grid">
+						<div class="inventory-crafting-slot" data-craft-inv="0"></div>
+						<div class="inventory-crafting-slot" data-craft-inv="1"></div>
+						<div class="inventory-crafting-slot" data-craft-inv="2"></div>
+						<div class="inventory-crafting-slot" data-craft-inv="3"></div>
+					</div>
+					<div class="inventory-crafting-arrow"></div>
+					<div class="inventory-crafting-result">
+						<div class="inventory-crafting-result-slot" id="inventoryCraftingResult"></div>
+					</div>
+				</div>
 				
 				<!-- Main inventory grid (center) -->
 				<div class="inventory-grid">
@@ -828,8 +835,7 @@
 				window._inventoryPlayerCtx = ctx;
 				
 				// Global function to update model rotation (accessible from document listener)
-				// Uses same logic as player.js onMouseMove: calculate target angles based on mouse position
-				// Model follows mouse anywhere on screen, not just within canvas area
+				// Model follows mouse anywhere on screen, like in vanilla Minecraft
 				window.updateInventoryPlayerModelRotation = function(e) {
 					// Check if inventory is open
 					var inventory = document.getElementById('inventory');
@@ -852,28 +858,34 @@
 					var centerX = rect.left + rect.width / 2;
 					var centerY = rect.top + rect.height / 2;
 					
-					// Calculate normalized position (-1 to 1, where 0,0 is center)
-					// Use actual mouse position - model follows mouse anywhere
+					// Calculate distance from center (for rotation calculation)
 					var deltaX = e.clientX - centerX;
 					var deltaY = e.clientY - centerY;
 					
-					// Normalize based on container size (similar to how Minecraft calculates)
-					// In Minecraft vanilla, the model rotates based on mouse position relative to center
-					// Use a sensitivity that makes the model rotate smoothly (similar to player.js)
-					var sensitivity = rect.width / 3; // Sensitivity based on container size (bigger = less sensitive)
-					var normalizedDeltaX = deltaX / sensitivity;
-					var normalizedDeltaY = deltaY / sensitivity;
+					// In vanilla Minecraft, the model rotates directly based on mouse position
+					// The rotation range is approximately ±90 degrees (π/2 radians)
+					// Calculate rotation angles based on mouse position relative to center
+					// Sensitivity: the model rotates ~π radians (180°) when mouse is at edge of container
+					var maxRotation = Math.PI / 2; // Max 90 degrees rotation
+					var sensitivity = Math.max(rect.width, rect.height) / 2; // Use max dimension for consistent rotation
+					
+					// Calculate rotation angles (yaw and pitch)
+					// Yaw: rotation around Y axis (horizontal) - based on mouse X position
+					var normalizedX = Math.max(-1, Math.min(1, deltaX / sensitivity));
+					// Pitch: rotation around X axis (vertical) - based on mouse Y position  
+					var normalizedY = Math.max(-1, Math.min(1, deltaY / sensitivity));
 					
 					// Ensure target angles are initialized
 					if (canvas._targetYaw === undefined) canvas._targetYaw = Math.PI;
 					if (canvas._targetPitch === undefined) canvas._targetPitch = 0;
 					
-					// Update target angles (similar to player.js line 544-545)
-					// In inventory, we want the model to look towards the mouse
-					// For yaw: positive deltaX (mouse right) = rotate right (increase yaw)
-					// For pitch: positive deltaY (mouse down) = look down (decrease pitch)
-					canvas._targetYaw = Math.PI + normalizedDeltaX; // Base yaw is Math.PI (facing forward)
-					canvas._targetPitch = -normalizedDeltaY; // Inverted: mouse down = look down
+					// Update target angles
+					// Base yaw is Math.PI (facing forward/away from camera in inventory)
+					// Positive deltaX (mouse right) = rotate model right (increase yaw)
+					canvas._targetYaw = Math.PI + (normalizedX * maxRotation);
+					
+					// Pitch: mouse down = model looks down (negative pitch)
+					canvas._targetPitch = -(normalizedY * maxRotation);
 					
 					// Clamp target pitch to prevent extreme angles
 					if (canvas._targetPitch < -Math.PI/2) canvas._targetPitch = -Math.PI/2;
@@ -886,66 +898,6 @@
 				// Track mouse position constantly - store last position to maintain rotation
 				// Store on canvas so it persists across function scopes
 				canvas._lastMouseEvent = null;
-				
-				// Function to update mouse debug window
-				function updateMouseDebug(e) {
-					var debugWindow = document.getElementById('mouseDebugWindow');
-					var debugInfo = document.getElementById('mouseDebugInfo');
-					if (!debugWindow || !debugInfo) return;
-					
-					var inventory = document.getElementById('inventory');
-					if (inventory && inventory.style.display === 'flex') {
-						var canvas = window._inventoryPlayerCanvas;
-						if (canvas) {
-							var container = canvas.parentElement;
-							if (container) {
-								var rect = container.getBoundingClientRect();
-								var centerX = rect.left + rect.width / 2;
-								var centerY = rect.top + rect.height / 2;
-								
-								// Mouse position relative to viewport
-								var mouseX = e.clientX;
-								var mouseY = e.clientY;
-								
-								// Mouse position relative to container
-								var relativeX = mouseX - rect.left;
-								var relativeY = mouseY - rect.top;
-								
-								// Mouse position relative to container center (normalized -1 to 1)
-								var normalizedX = (mouseX - centerX) / (rect.width / 2);
-								var normalizedY = (mouseY - centerY) / (rect.height / 2);
-								
-								// Rotation angles
-								var yaw = canvas._modelYaw || 0;
-								var pitch = canvas._modelPitch || 0;
-								var yawDeg = (yaw * 180 / Math.PI).toFixed(1);
-								var pitchDeg = (pitch * 180 / Math.PI).toFixed(1);
-								
-								// Is mouse inside model area?
-								var insideModel = (mouseX >= rect.left && mouseX <= rect.right &&
-								                  mouseY >= rect.top && mouseY <= rect.bottom);
-								
-								var html = '';
-								html += '<div style="margin-top: 4px;">Mouse Viewport: ' + mouseX + ', ' + mouseY + '</div>';
-								html += '<div>Container: [' + rect.left.toFixed(0) + ', ' + rect.top.toFixed(0) + '] ' + 
-								        rect.width.toFixed(0) + 'x' + rect.height.toFixed(0) + '</div>';
-								html += '<div>Rel. Container: ' + relativeX.toFixed(1) + ', ' + relativeY.toFixed(1) + '</div>';
-								html += '<div>Normalized: ' + normalizedX.toFixed(3) + ', ' + normalizedY.toFixed(3) + '</div>';
-								html += '<div style="margin-top: 4px; border-top: 1px solid #00ff00; padding-top: 4px;">';
-								html += '<div>Yaw: ' + yawDeg + '° (' + yaw.toFixed(3) + ' rad)</div>';
-								html += '<div>Pitch: ' + pitchDeg + '° (' + pitch.toFixed(3) + ' rad)</div>';
-								html += '<div style="color: ' + (insideModel ? '#00ff00' : '#ffaa00') + ';">';
-								html += 'Dentro área: ' + (insideModel ? 'Sí' : 'No');
-								html += '</div></div>';
-								
-								debugInfo.innerHTML = html;
-								debugWindow.style.display = 'block';
-							}
-						}
-					} else {
-						debugWindow.style.display = 'none';
-					}
-				}
 				
 				// Track mouse movement globally when inventory is open (exactly like player.js does)
 				document.addEventListener('mousemove', function(e) {
@@ -960,14 +912,7 @@
 							if (window.updateInventoryPlayerModelRotation) {
 								window.updateInventoryPlayerModelRotation(e);
 							}
-							// Update debug window
-							updateMouseDebug(e);
-						}
-					} else {
-						// Hide debug window when inventory is closed
-						var debugWindow = document.getElementById('mouseDebugWindow');
-						if (debugWindow) {
-							debugWindow.style.display = 'none';
+							// Debug window removed
 						}
 					}
 				});
@@ -982,8 +927,7 @@
 							if (window.updateInventoryPlayerModelRotation) {
 								window.updateInventoryPlayerModelRotation(canvas._lastMouseEvent);
 							}
-							// Update debug window continuously
-							updateMouseDebug(canvas._lastMouseEvent);
+							// Debug window removed
 						}
 					}
 				}, 16); // Update at ~60 FPS
@@ -1003,13 +947,14 @@
 							var delta = (now - lastUpdateTime) / 1000; // Convert to seconds
 							lastUpdateTime = now;
 							
-							// Smooth interpolation (same factor as player.js: 30)
-							var interpolationSpeed = 30;
+							// Smooth interpolation - faster for more responsive feel (like vanilla)
+							var interpolationSpeed = 50; // Increased from 30 for more responsive rotation
 							if (canvas._modelYaw === undefined) canvas._modelYaw = Math.PI;
 							if (canvas._modelPitch === undefined) canvas._modelPitch = 0;
 							if (canvas._targetYaw === undefined) canvas._targetYaw = Math.PI;
 							if (canvas._targetPitch === undefined) canvas._targetPitch = 0;
 							
+							// Interpolate towards target angles (smooth rotation)
 							canvas._modelYaw += (canvas._targetYaw - canvas._modelYaw) * interpolationSpeed * delta;
 							canvas._modelPitch += (canvas._targetPitch - canvas._modelPitch) * interpolationSpeed * delta;
 							
@@ -1044,10 +989,7 @@
 										if (canvas._ctx && canvas._playerTexture) {
 											renderInventoryPlayerModel(canvas._ctx, canvas, canvas._modelYaw, canvas._modelPitch);
 										}
-										// Update debug window with initial mouse position if available
-										if (canvas._lastMouseEvent) {
-											updateMouseDebug(canvas._lastMouseEvent);
-										}
+										// Debug window removed
 									}, 10);
 								} else if (display === 'none') {
 									// Inventory closed, stop render loop and reset rotation
@@ -1060,11 +1002,6 @@
 									canvas._modelPitch = 0;
 									canvas._targetYaw = Math.PI;
 									canvas._targetPitch = 0;
-									// Hide debug window
-									var debugWindow = document.getElementById('mouseDebugWindow');
-									if (debugWindow) {
-										debugWindow.style.display = 'none';
-									}
 								}
 							}
 						}
@@ -1105,10 +1042,9 @@
 				// Calculate scale to fit model in 54x54px canvas (base size, before GUI scale)
 				// Model dimensions at scale 1: head (8px) + body (12px) + legs (12px) = 32px height
 				// Model width at scale 1: body (8px) + arms (4px each side) ≈ 16px
-				// Canvas is 54px, so max scale for height: 54 / 32 ≈ 1.69
-				// Canvas is 54px, so max scale for width: 54 / 16 ≈ 3.38
-				// Use smaller scale (height constraint) with padding for rotation: 1.5
-				var scale = 1.5; // Scale factor to fit model within 54x54px canvas with padding for rotation
+				// In vanilla Minecraft, the inventory player model is slightly smaller to fit better
+				// Adjust scale to match vanilla proportions - scale of 2.0 gives better visibility
+				var scale = 2.0; // Increased scale for better visibility, like vanilla Minecraft
 				
 				var bodyW = 8 * scale;
 				var bodyH = 12 * scale;
@@ -1128,7 +1064,7 @@
 				if (clampedPitch < -0.32) clampedPitch = -0.32;
 				if (clampedPitch > 0.32) clampedPitch = 0.32;
 				
-				// Center the model in the canvas
+				// Center the model in the canvas (like vanilla Minecraft)
 				// Body center Y position: start from top of legs, go up by legH + bodyH/2
 				var bodyCenterY = legH + bodyH/2;
 				// Head center Y position: above body
@@ -1136,8 +1072,8 @@
 				// Total model center (vertical center of entire model)
 				var modelCenterY = (legH + bodyH + headSize) / 2;
 				
-				// Offset to center the model in canvas
-				var verticalOffset = centerY - modelCenterY;
+				// Offset to center the model in canvas - adjust slightly upward for better positioning
+				var verticalOffset = centerY - modelCenterY - (scale * 2); // Slight upward offset for better centering
 				
 				// Draw body first - rotates with yaw only (like render.js line 319-323)
 				ctx.save();
