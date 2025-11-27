@@ -116,7 +116,8 @@ WorldManager.prototype.createWorldDatabase = function(worldId)
 {
 	return new Promise(function(resolve, reject) {
 		var dbName = "minecraft_world_" + worldId;
-		var request = indexedDB.open(dbName, 1);
+		// Use version 2 to include playerdata store from the start
+		var request = indexedDB.open(dbName, 2);
 		
 		request.onerror = function() {
 			reject(new Error("Failed to create world database: " + request.error));
@@ -133,6 +134,11 @@ WorldManager.prototype.createWorldDatabase = function(worldId)
 			if (!db.objectStoreNames.contains("chunks")) {
 				var chunkStore = db.createObjectStore("chunks", { keyPath: "key" });
 				chunkStore.createIndex("key", "key", { unique: true });
+			}
+			
+			// Create object store for player data
+			if (!db.objectStoreNames.contains("playerdata")) {
+				db.createObjectStore("playerdata", { keyPath: "id" });
 			}
 		};
 	});
@@ -246,7 +252,8 @@ WorldManager.prototype.getWorldChunkDB = function(worldId)
 {
 	return new Promise(function(resolve, reject) {
 		var dbName = "minecraft_world_" + worldId;
-		var request = indexedDB.open(dbName, 1);
+		// Use version 2 to include playerdata store
+		var request = indexedDB.open(dbName, 2);
 		
 		request.onerror = function() {
 			reject(new Error("Failed to open world database: " + request.error));
@@ -263,6 +270,11 @@ WorldManager.prototype.getWorldChunkDB = function(worldId)
 			if (!db.objectStoreNames.contains("chunks")) {
 				var chunkStore = db.createObjectStore("chunks", { keyPath: "key" });
 				chunkStore.createIndex("key", "key", { unique: true });
+			}
+			
+			// Create object store for player data if it doesn't exist
+			if (!db.objectStoreNames.contains("playerdata")) {
+				db.createObjectStore("playerdata", { keyPath: "id" });
 			}
 		};
 	});
@@ -370,6 +382,69 @@ WorldManager.prototype.updateWorldMetadata = function(worldId, updates)
 	});
 };
 
+// savePlayerData( worldId, playerData )
+//
+// Saves player data to the world's database.
+// playerData: object from player.serializePlayerData()
+
+WorldManager.prototype.savePlayerData = function(worldId, playerData)
+{
+	var self = this;
+	return new Promise(function(resolve, reject) {
+		self.getWorldChunkDB(worldId).then(function(db) {
+			var transaction = db.transaction(["playerdata"], "readwrite");
+			var store = transaction.objectStore("playerdata");
+			
+			var record = {
+				id: "player",
+				data: playerData,
+				modified: Date.now()
+			};
+			
+			var putRequest = store.put(record);
+			
+			putRequest.onsuccess = function() {
+				resolve();
+			};
+			
+			putRequest.onerror = function() {
+				reject(new Error("Failed to save player data: " + putRequest.error));
+			};
+		}).catch(reject);
+	});
+};
+
+// loadPlayerData( worldId )
+//
+// Loads player data from the world's database.
+// Returns a promise that resolves with player data object, or null if not found.
+
+WorldManager.prototype.loadPlayerData = function(worldId)
+{
+	var self = this;
+	return new Promise(function(resolve, reject) {
+		self.getWorldChunkDB(worldId).then(function(db) {
+			var transaction = db.transaction(["playerdata"], "readonly");
+			var store = transaction.objectStore("playerdata");
+			var getRequest = store.get("player");
+			
+			getRequest.onsuccess = function() {
+				if (getRequest.result && getRequest.result.data) {
+					resolve(getRequest.result.data);
+				} else {
+					resolve(null);
+				}
+			};
+			
+			getRequest.onerror = function() {
+				resolve(null); // Return null on error instead of rejecting
+			};
+		}).catch(function() {
+			resolve(null); // Return null on error instead of rejecting
+		});
+	});
+};
+
 // ==========================================
 // World API
 //
@@ -442,5 +517,31 @@ function deleteWorldById(worldId)
 		return Promise.reject(new Error("World manager not initialized"));
 	}
 	return worldManager.deleteWorld(worldId);
+}
+
+// savePlayerDataToWorld( worldId, playerData )
+//
+// Saves player data to a world.
+// Returns a promise that resolves when saving is complete.
+
+function savePlayerDataToWorld(worldId, playerData)
+{
+	if (!worldManager) {
+		return Promise.reject(new Error("World manager not initialized"));
+	}
+	return worldManager.savePlayerData(worldId, playerData);
+}
+
+// loadPlayerDataFromWorld( worldId )
+//
+// Loads player data from a world.
+// Returns a promise that resolves with player data object, or null if not found.
+
+function loadPlayerDataFromWorld(worldId)
+{
+	if (!worldManager) {
+		return Promise.reject(new Error("World manager not initialized"));
+	}
+	return worldManager.loadPlayerData(worldId);
 }
 

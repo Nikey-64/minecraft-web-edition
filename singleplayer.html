@@ -491,6 +491,34 @@
 					// Start game
 					setupGameSystems();
 					initialisePauseSettings();
+					
+					// Load player data after player is created
+					try {
+						var playerData = await loadPlayerDataFromWorld(worldId);
+						
+						// If no data in IndexedDB, try localStorage backup
+						if (!playerData) {
+							var backupData = localStorage.getItem('player_backup_' + worldId);
+							if (backupData) {
+								try {
+									playerData = JSON.parse(backupData);
+									console.log("Loaded player data from backup");
+									// Clear backup after loading
+									localStorage.removeItem('player_backup_' + worldId);
+								} catch (e) {
+									console.warn("Could not parse backup player data:", e);
+								}
+							}
+						}
+						
+						if (playerData && player) {
+							player.loadPlayerData(playerData);
+							console.log("Player data loaded successfully");
+						}
+					} catch (e) {
+						console.warn("Could not load player data:", e);
+					}
+					
 					startGameLoop();
 				} catch ( error ) {
 					console.error( "Failed to load world:", error );
@@ -1448,7 +1476,18 @@
 				document.getElementById('pauseSettingsMenu').style.display = 'flex';
 			};
 
-			document.getElementById('exitButton').onclick = function() {
+			document.getElementById('exitButton').onclick = async function() {
+				// Guardar datos del jugador antes de salir
+				if ( world && world.worldId && player ) {
+					try {
+						var playerData = player.serializePlayerData();
+						await savePlayerDataToWorld(world.worldId, playerData);
+						console.log("Player data saved successfully");
+					} catch (e) {
+						console.warn("Could not save player data:", e);
+					}
+				}
+				
 				// Guardar todos los chunks modificados antes de salir
 				if ( world && world.saveAllLoadedChunks ) {
 					var saved = world.saveAllLoadedChunks();
@@ -1489,8 +1528,45 @@
 				}
 			};
 			
+			// Función para guardar todos los datos (chunks y jugador)
+			async function saveAllGameData() {
+				// Guardar datos del jugador
+				if ( world && world.worldId && player ) {
+					try {
+						var playerData = player.serializePlayerData();
+						await savePlayerDataToWorld(world.worldId, playerData);
+						console.log("Auto-saved player data");
+					} catch (e) {
+						console.warn("Could not auto-save player data:", e);
+					}
+				}
+				
+				// Guardar chunks modificados
+				if ( world && world.saveAllLoadedChunks ) {
+					world.saveAllLoadedChunks();
+				}
+			}
+			
+			// Auto-guardar cada 30 segundos
+			var autoSaveInterval = setInterval(function() {
+				if ( !paused && world && player ) {
+					saveAllGameData();
+				}
+			}, 30000);
+			
 			// Guardar chunks cuando se cierra la pestaña o el navegador
 			window.addEventListener('beforeunload', function() {
+				// Intentar guardar datos del jugador (puede no completarse)
+				if ( world && world.worldId && player ) {
+					try {
+						var playerData = player.serializePlayerData();
+						// Usar localStorage como backup rápido
+						localStorage.setItem('player_backup_' + world.worldId, JSON.stringify(playerData));
+					} catch (e) {
+						console.warn("Could not backup player data:", e);
+					}
+				}
+				
 				if ( world && world.saveAllLoadedChunks ) {
 					world.saveAllLoadedChunks();
 				}
@@ -1498,8 +1574,8 @@
 			
 			// También guardar cuando la pestaña se oculta (útil para móviles)
 			document.addEventListener('visibilitychange', function() {
-				if ( document.hidden && world && world.saveAllLoadedChunks ) {
-					world.saveAllLoadedChunks();
+				if ( document.hidden ) {
+					saveAllGameData();
 				}
 			});
 		</script>

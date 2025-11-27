@@ -282,6 +282,21 @@ Renderer.prototype.draw = function()
 		this.drawChunkGrid();
 	}
 
+	// Draw block breaking overlay (survival mode)
+	if ( this.world && this.world.localPlayer )
+	{
+		var player = this.world.localPlayer;
+		if ( player.breakingBlock && player.breakingProgress > 0 )
+		{
+			this.drawBreakingOverlay(
+				player.breakingBlock.x,
+				player.breakingBlock.y,
+				player.breakingBlock.z,
+				player.breakingProgress
+			);
+		}
+	}
+
 	// Draw players
 	var players = this.world.players;
 	var localPlayer = this.world.localPlayer;
@@ -1933,4 +1948,125 @@ Renderer.prototype.loadPlayerBodyModel = function()
 	buffer.vertices = vertices.length / 9;
 	gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
 	gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.DYNAMIC_DRAW );
+}
+
+// drawBreakingOverlay( x, y, z, progress )
+//
+// Draws the block breaking overlay (crack texture) on top of a block being broken.
+// Uses the break textures from terrain.png (row 15, stages 0-9).
+//
+// x, y, z - Block coordinates in world space (Y is height)
+// progress - Breaking progress from 0 to 1
+
+Renderer.prototype.drawBreakingOverlay = function( x, y, z, progress )
+{
+	if ( !progress || progress <= 0 ) return;
+	
+	var gl = this.gl;
+	
+	// Get break texture coordinates based on progress
+	var texCoords = BLOCK.break( progress, null );
+	if ( !texCoords ) return;
+	
+	// Small offset to prevent z-fighting (draw slightly outside the block)
+	var OFFSET = 0.002;
+	
+	// Build vertices for all 6 faces of the block with break texture
+	var vertices = [];
+	
+	// Texture coordinates
+	var u0 = texCoords[0];
+	var v0 = texCoords[1];
+	var u1 = texCoords[2];
+	var v1 = texCoords[3];
+	
+	// Color (white to preserve texture color, slight transparency)
+	var r = 1.0, g = 1.0, b = 1.0, a = 0.8;
+	
+	// Coordenadas del mundo: X y Z = horizontal, Y = vertical (altura)
+	// El shader espera: [x, z, y] donde z es altura
+	
+	// Top face (Y+1)
+	vertices.push(
+		x - OFFSET, z - OFFSET, y + 1 + OFFSET, u0, v0, r, g, b, a,
+		x + 1 + OFFSET, z - OFFSET, y + 1 + OFFSET, u1, v0, r, g, b, a,
+		x + 1 + OFFSET, z + 1 + OFFSET, y + 1 + OFFSET, u1, v1, r, g, b, a,
+		x + 1 + OFFSET, z + 1 + OFFSET, y + 1 + OFFSET, u1, v1, r, g, b, a,
+		x - OFFSET, z + 1 + OFFSET, y + 1 + OFFSET, u0, v1, r, g, b, a,
+		x - OFFSET, z - OFFSET, y + 1 + OFFSET, u0, v0, r, g, b, a
+	);
+	
+	// Bottom face (Y-1)
+	vertices.push(
+		x - OFFSET, z + 1 + OFFSET, y - OFFSET, u0, v1, r, g, b, a,
+		x + 1 + OFFSET, z + 1 + OFFSET, y - OFFSET, u1, v1, r, g, b, a,
+		x + 1 + OFFSET, z - OFFSET, y - OFFSET, u1, v0, r, g, b, a,
+		x + 1 + OFFSET, z - OFFSET, y - OFFSET, u1, v0, r, g, b, a,
+		x - OFFSET, z - OFFSET, y - OFFSET, u0, v0, r, g, b, a,
+		x - OFFSET, z + 1 + OFFSET, y - OFFSET, u0, v1, r, g, b, a
+	);
+	
+	// Front face (Z-1)
+	vertices.push(
+		x - OFFSET, z - OFFSET, y - OFFSET, u0, v1, r, g, b, a,
+		x + 1 + OFFSET, z - OFFSET, y - OFFSET, u1, v1, r, g, b, a,
+		x + 1 + OFFSET, z - OFFSET, y + 1 + OFFSET, u1, v0, r, g, b, a,
+		x + 1 + OFFSET, z - OFFSET, y + 1 + OFFSET, u1, v0, r, g, b, a,
+		x - OFFSET, z - OFFSET, y + 1 + OFFSET, u0, v0, r, g, b, a,
+		x - OFFSET, z - OFFSET, y - OFFSET, u0, v1, r, g, b, a
+	);
+	
+	// Back face (Z+1)
+	vertices.push(
+		x - OFFSET, z + 1 + OFFSET, y + 1 + OFFSET, u1, v0, r, g, b, a,
+		x + 1 + OFFSET, z + 1 + OFFSET, y + 1 + OFFSET, u0, v0, r, g, b, a,
+		x + 1 + OFFSET, z + 1 + OFFSET, y - OFFSET, u0, v1, r, g, b, a,
+		x + 1 + OFFSET, z + 1 + OFFSET, y - OFFSET, u0, v1, r, g, b, a,
+		x - OFFSET, z + 1 + OFFSET, y - OFFSET, u1, v1, r, g, b, a,
+		x - OFFSET, z + 1 + OFFSET, y + 1 + OFFSET, u1, v0, r, g, b, a
+	);
+	
+	// Left face (X-1)
+	vertices.push(
+		x - OFFSET, z - OFFSET, y + 1 + OFFSET, u1, v0, r, g, b, a,
+		x - OFFSET, z + 1 + OFFSET, y + 1 + OFFSET, u0, v0, r, g, b, a,
+		x - OFFSET, z + 1 + OFFSET, y - OFFSET, u0, v1, r, g, b, a,
+		x - OFFSET, z + 1 + OFFSET, y - OFFSET, u0, v1, r, g, b, a,
+		x - OFFSET, z - OFFSET, y - OFFSET, u1, v1, r, g, b, a,
+		x - OFFSET, z - OFFSET, y + 1 + OFFSET, u1, v0, r, g, b, a
+	);
+	
+	// Right face (X+1)
+	vertices.push(
+		x + 1 + OFFSET, z - OFFSET, y - OFFSET, u0, v1, r, g, b, a,
+		x + 1 + OFFSET, z + 1 + OFFSET, y - OFFSET, u1, v1, r, g, b, a,
+		x + 1 + OFFSET, z + 1 + OFFSET, y + 1 + OFFSET, u1, v0, r, g, b, a,
+		x + 1 + OFFSET, z + 1 + OFFSET, y + 1 + OFFSET, u1, v0, r, g, b, a,
+		x + 1 + OFFSET, z - OFFSET, y + 1 + OFFSET, u0, v0, r, g, b, a,
+		x + 1 + OFFSET, z - OFFSET, y - OFFSET, u0, v1, r, g, b, a
+	);
+	
+	// Create temporary buffer
+	var buffer = gl.createBuffer();
+	buffer.vertices = vertices.length / 9;
+	gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
+	gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STREAM_DRAW );
+	
+	// Enable blending for transparency
+	gl.enable( gl.BLEND );
+	gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+	
+	// Use terrain texture
+	gl.bindTexture( gl.TEXTURE_2D, this.texTerrain );
+	
+	// Reset model matrix
+	mat4.identity( this.modelMatrix );
+	gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+	
+	// Draw the overlay
+	this.drawBuffer( buffer );
+	
+	// Cleanup
+	gl.deleteBuffer( buffer );
+	gl.disable( gl.BLEND );
 }

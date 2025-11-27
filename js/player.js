@@ -67,6 +67,37 @@ Player.prototype.setWorld = function( world )
 	this.breakingStartTime = 0; // Time when breaking started
 	this.isMouseDown = false; // Whether mouse button is currently held down
 	this.lastBreakTarget = null; // Last block targeted for breaking
+	this.lastDigSoundTime = 0; // Time when last dig sound was played
+	this.digSoundInterval = 250; // Interval between dig sounds in ms
+	
+	// Preload dig sounds
+	this.digSounds = {
+		grass: [],
+		stone: [],
+		wood: [],
+		gravel: [],
+		sand: [],
+		cloth: [],
+		snow: []
+	};
+	this.preloadDigSounds();
+	
+	// Step sounds system
+	this.lastStepSoundTime = 0; // Time when last step sound was played
+	this.stepSoundInterval = 350; // Interval between step sounds in ms
+	this.lastStepPos = null; // Last position when step sound played
+	
+	// Preload step sounds
+	this.stepSounds = {
+		grass: [],
+		stone: [],
+		wood: [],
+		gravel: [],
+		sand: [],
+		cloth: [],
+		snow: []
+	};
+	this.preloadStepSounds();
 	
 	// Initialize game mode UI
 	// Use setTimeout to ensure DOM is ready
@@ -77,6 +108,220 @@ Player.prototype.setWorld = function( world )
 	}.bind(this), 100);
 }
 
+// preloadDigSounds()
+//
+// Preloads all dig sounds for different block materials.
+
+Player.prototype.preloadDigSounds = function()
+{
+	var materials = ['grass', 'stone', 'wood', 'gravel', 'sand', 'cloth', 'snow'];
+	var self = this;
+	
+	for (var m = 0; m < materials.length; m++) {
+		var material = materials[m];
+		for (var i = 1; i <= 4; i++) {
+			var audio = new Audio('sounds/game/sound3/dig/' + material + i + '.ogg');
+			audio.preload = 'auto';
+			audio.volume = 0.5;
+			this.digSounds[material].push(audio);
+		}
+	}
+}
+
+// preloadStepSounds()
+//
+// Preloads all step sounds for different block materials.
+
+Player.prototype.preloadStepSounds = function()
+{
+	// Step sounds have varying counts per material
+	var materialCounts = {
+		grass: 6,
+		stone: 6,
+		wood: 6,
+		gravel: 4,
+		sand: 5,
+		cloth: 4,
+		snow: 4
+	};
+	
+	for (var material in materialCounts) {
+		var count = materialCounts[material];
+		for (var i = 1; i <= count; i++) {
+			var audio = new Audio('sounds/game/sound3/step/' + material + i + '.ogg');
+			audio.preload = 'auto';
+			audio.volume = 0.3;
+			this.stepSounds[material].push(audio);
+		}
+	}
+}
+
+// getBlockDigSound( block )
+//
+// Returns the dig sound type for a given block.
+
+Player.prototype.getBlockDigSound = function(block)
+{
+	if (!block) return 'stone';
+	
+	// Determine sound type based on block properties
+	if (block === BLOCK.GRASS || block === BLOCK.DIRT || block === BLOCK.LEAVES) {
+		return 'grass';
+	}
+	if (block === BLOCK.SAND) {
+		return 'sand';
+	}
+	if (block === BLOCK.GRAVEL) {
+		return 'gravel';
+	}
+	if (block === BLOCK.WOOD || block === BLOCK.PLANK || block === BLOCK.BOOKCASE || 
+	    block === BLOCK.PLANKS_STAIRS) {
+		return 'wood';
+	}
+	if (block === BLOCK.WHITE_WOOL) {
+		return 'cloth';
+	}
+	// Default to stone for most blocks
+	return 'stone';
+}
+
+// playDigSound( block )
+//
+// Plays a random dig sound for the given block type.
+
+Player.prototype.playDigSound = function(block)
+{
+	var soundType = this.getBlockDigSound(block);
+	var sounds = this.digSounds[soundType];
+	
+	if (sounds && sounds.length > 0) {
+		var randomIndex = Math.floor(Math.random() * sounds.length);
+		var sound = sounds[randomIndex];
+		
+		// Clone the audio to allow overlapping sounds
+		var soundClone = sound.cloneNode();
+		soundClone.volume = 0.4;
+		soundClone.play().catch(function(e) {
+			// Ignore autoplay errors
+		});
+	}
+}
+
+// playBlockBreakSound( block )
+//
+// Plays the block break sound (final destruction sound).
+
+Player.prototype.playBlockBreakSound = function(block)
+{
+	var soundType = this.getBlockDigSound(block);
+	var sounds = this.digSounds[soundType];
+	
+	if (sounds && sounds.length > 0) {
+		var randomIndex = Math.floor(Math.random() * sounds.length);
+		var sound = sounds[randomIndex];
+		
+		// Clone the audio for the break sound (slightly louder)
+		var soundClone = sound.cloneNode();
+		soundClone.volume = 0.7;
+		soundClone.play().catch(function(e) {
+			// Ignore autoplay errors
+		});
+	}
+}
+
+// getBlockBelowPlayer()
+//
+// Returns the block directly below the player's feet.
+
+Player.prototype.getBlockBelowPlayer = function()
+{
+	if (!this.world) return null;
+	
+	// Player position: pos.y is the bottom of the player
+	// Check the block at y-1 (directly below feet)
+	var blockX = Math.floor(this.pos.x);
+	var blockY = Math.floor(this.pos.y - 0.1); // Slightly below to detect ground
+	var blockZ = Math.floor(this.pos.z);
+	
+	return this.world.getBlock(blockX, blockY, blockZ);
+}
+
+// getBlockStepSound( block )
+//
+// Returns the step sound type for a given block.
+
+Player.prototype.getBlockStepSound = function(block)
+{
+	if (!block || block === BLOCK.AIR) return 'stone';
+	
+	// Determine sound type based on block properties
+	if (block === BLOCK.GRASS || block === BLOCK.DIRT || block === BLOCK.LEAVES) {
+		return 'grass';
+	}
+	if (block === BLOCK.SAND) {
+		return 'sand';
+	}
+	if (block === BLOCK.GRAVEL) {
+		return 'gravel';
+	}
+	if (block === BLOCK.WOOD || block === BLOCK.PLANK || block === BLOCK.BOOKCASE || 
+	    block === BLOCK.PLANKS_STAIRS) {
+		return 'wood';
+	}
+	if (block === BLOCK.WHITE_WOOL) {
+		return 'cloth';
+	}
+	// Default to stone for most blocks (cobblestone, brick, concrete, etc.)
+	return 'stone';
+}
+
+// playStepSound()
+//
+// Plays a random step sound based on the block below the player.
+
+Player.prototype.playStepSound = function()
+{
+	var blockBelow = this.getBlockBelowPlayer();
+	if (!blockBelow || blockBelow === BLOCK.AIR) return;
+	
+	var soundType = this.getBlockStepSound(blockBelow);
+	var sounds = this.stepSounds[soundType];
+	
+	if (sounds && sounds.length > 0) {
+		var randomIndex = Math.floor(Math.random() * sounds.length);
+		var sound = sounds[randomIndex];
+		
+		// Clone the audio to allow overlapping sounds
+		var soundClone = sound.cloneNode();
+		soundClone.volume = 0.25;
+		soundClone.play().catch(function(e) {
+			// Ignore autoplay errors
+		});
+	}
+}
+
+// updateStepSounds()
+//
+// Called every frame to check if player is walking and play step sounds.
+
+Player.prototype.updateStepSounds = function()
+{
+	// Don't play step sounds if falling, in spectator mode, or inventory is open
+	if (this.falling || this.spectatorMode || this.inventoryOpen) return;
+	
+	// Check if player is moving horizontally
+	var isMoving = Math.abs(this.velocity.x) > 0.1 || Math.abs(this.velocity.z) > 0.1;
+	if (!isMoving) return;
+	
+	// Check time interval
+	var now = Date.now();
+	if (now - this.lastStepSoundTime < this.stepSoundInterval) return;
+	
+	// Play step sound
+	this.playStepSound();
+	this.lastStepSoundTime = now;
+}
+
 // setClient( client )
 //
 // Assign the local player to a socket client.
@@ -84,6 +329,201 @@ Player.prototype.setWorld = function( world )
 Player.prototype.setClient = function( client )
 {
 	this.client = client;
+}
+
+// serializePlayerData()
+//
+// Serializes the player's state to an object for saving.
+// Returns an object with position, inventory, health, hunger, etc.
+
+Player.prototype.serializePlayerData = function()
+{
+	var playerData = {
+		// Position
+		pos: {
+			x: this.pos.x,
+			y: this.pos.y,
+			z: this.pos.z
+		},
+		// View angles
+		angles: this.angles.slice(),
+		// Health and hunger
+		health: this.health,
+		hunger: this.hunger,
+		// Selected hotbar slot
+		selectedHotbarSlot: this.selectedHotbarSlot,
+		// Hotbar items (serialize ItemStacks)
+		hotbar: [],
+		// Inventory items (serialize ItemStacks)
+		inventory: []
+	};
+	
+	// Serialize hotbar
+	for (var i = 0; i < this.hotbar.length; i++) {
+		var item = this.hotbar[i];
+		if (item && item !== BLOCK.AIR) {
+			if (item instanceof ItemStack) {
+				playerData.hotbar[i] = {
+					type: 'itemstack',
+					itemId: item.item ? item.item.id : null,
+					blockId: item.item ? item.item.blockId : null,
+					count: item.count
+				};
+			} else if (item && item.id !== undefined) {
+				// Legacy block format
+				playerData.hotbar[i] = {
+					type: 'block',
+					blockId: item.id
+				};
+			} else {
+				playerData.hotbar[i] = null;
+			}
+		} else {
+			playerData.hotbar[i] = null;
+		}
+	}
+	
+	// Serialize inventory
+	for (var i = 0; i < this.inventory.length; i++) {
+		var item = this.inventory[i];
+		if (item && item !== BLOCK.AIR) {
+			if (item instanceof ItemStack) {
+				playerData.inventory[i] = {
+					type: 'itemstack',
+					itemId: item.item ? item.item.id : null,
+					blockId: item.item ? item.item.blockId : null,
+					count: item.count
+				};
+			} else if (item && item.id !== undefined) {
+				// Legacy block format
+				playerData.inventory[i] = {
+					type: 'block',
+					blockId: item.id
+				};
+			} else {
+				playerData.inventory[i] = null;
+			}
+		} else {
+			playerData.inventory[i] = null;
+		}
+	}
+	
+	return playerData;
+}
+
+// loadPlayerData( playerData )
+//
+// Loads the player's state from a saved object.
+// playerData: object from serializePlayerData()
+
+Player.prototype.loadPlayerData = function(playerData)
+{
+	if (!playerData) return;
+	
+	// Load position
+	if (playerData.pos) {
+		this.pos = new Vector(playerData.pos.x, playerData.pos.y, playerData.pos.z);
+	}
+	
+	// Load view angles
+	if (playerData.angles && Array.isArray(playerData.angles)) {
+		this.angles = playerData.angles.slice();
+		this.targetPitch = this.angles[0];
+		this.targetYaw = this.angles[1];
+	}
+	
+	// Load health and hunger
+	if (playerData.health !== undefined) {
+		this.health = Math.max(0, Math.min(this.maxHealth, playerData.health));
+	}
+	if (playerData.hunger !== undefined) {
+		this.hunger = Math.max(0, Math.min(this.maxHunger, playerData.hunger));
+	}
+	
+	// Load selected hotbar slot
+	if (playerData.selectedHotbarSlot !== undefined) {
+		this.selectedHotbarSlot = playerData.selectedHotbarSlot;
+	}
+	
+	// Load hotbar
+	if (playerData.hotbar && Array.isArray(playerData.hotbar)) {
+		for (var i = 0; i < playerData.hotbar.length && i < this.hotbar.length; i++) {
+			var itemData = playerData.hotbar[i];
+			if (itemData) {
+				this.hotbar[i] = this.deserializeItem(itemData);
+			} else {
+				this.hotbar[i] = null;
+			}
+		}
+	}
+	
+	// Load inventory
+	if (playerData.inventory && Array.isArray(playerData.inventory)) {
+		for (var i = 0; i < playerData.inventory.length && i < this.inventory.length; i++) {
+			var itemData = playerData.inventory[i];
+			if (itemData) {
+				this.inventory[i] = this.deserializeItem(itemData);
+			} else {
+				this.inventory[i] = null;
+			}
+		}
+	}
+	
+	// Update UI
+	this.updateHotbarDisplay();
+	this.updateInventoryDisplay();
+	this.selectHotbarSlot(this.selectedHotbarSlot);
+	this.updateHealthHungerIcons();
+}
+
+// deserializeItem( itemData )
+//
+// Deserializes an item from saved data.
+// Returns an ItemStack or Block.
+
+Player.prototype.deserializeItem = function(itemData)
+{
+	if (!itemData) return null;
+	
+	if (itemData.type === 'itemstack') {
+		// Reconstruct ItemStack
+		var block = null;
+		if (itemData.blockId !== undefined && itemData.blockId !== null) {
+			block = BLOCK.fromId(itemData.blockId);
+		}
+		
+		if (block) {
+			// Get or create item from registry
+			var item = ITEM_REGISTRY.getByBlock(block);
+			if (!item) {
+				// Create new item if not found
+				item = new Item(itemData.itemId || block.id, block.name || "Block", ITEM_TYPE.BLOCK, {
+					block: block,
+					blockId: block.id,
+					maxStack: 64
+				}, block.id);
+				ITEM_REGISTRY.register(item);
+			}
+			return new ItemStack(item, itemData.count || 1);
+		}
+	} else if (itemData.type === 'block') {
+		// Legacy block format - convert to ItemStack
+		var block = BLOCK.fromId(itemData.blockId);
+		if (block) {
+			var item = ITEM_REGISTRY.getByBlock(block);
+			if (!item) {
+				item = new Item(block.id, block.name || "Block", ITEM_TYPE.BLOCK, {
+					block: block,
+					blockId: block.id,
+					maxStack: 64
+				}, block.id);
+				ITEM_REGISTRY.register(item);
+			}
+			return new ItemStack(item, 1);
+		}
+	}
+	
+	return null;
 }
 
 // setPhysics( physics )
@@ -1742,6 +2182,11 @@ Player.prototype.startBreakingBlock = function()
 			this.breakingBlock = { x: block.x, y: block.y, z: block.z, block: currentBlock };
 			this.breakingProgress = 0;
 			this.breakingStartTime = Date.now();
+			this.lastDigSoundTime = 0; // Reset sound timer to play immediately
+			
+			// Play initial dig sound
+			this.playDigSound(currentBlock);
+			this.lastDigSoundTime = Date.now();
 		}
 		
 		this.lastBreakTarget = { x: block.x, y: block.y, z: block.z };
@@ -1827,9 +2272,20 @@ Player.prototype.updateBreakingProgress = function(delta)
 	var progressPerSecond = 1000.0 / breaktime;
 	this.breakingProgress += progressPerSecond * delta;
 	
+	// Play dig sound at intervals
+	var now = Date.now();
+	if (now - this.lastDigSoundTime >= this.digSoundInterval) {
+		this.playDigSound(currentBlock);
+		this.lastDigSoundTime = now;
+	}
+	
 	// Break the block when progress reaches 1.0
 	if (this.breakingProgress >= 1.0) {
 		var obj = this.client ? this.client : this.world;
+		
+		// Play break sound (louder final sound)
+		this.playBlockBreakSound(this.breakingBlock.block);
+		
 		obj.setBlock(this.breakingBlock.x, this.breakingBlock.y, this.breakingBlock.z, BLOCK.AIR);
 		
 		// Drop item
@@ -2033,6 +2489,9 @@ Player.prototype.update = function()
 		
 		// Update block breaking progress
 		this.updateBreakingProgress(delta);
+		
+		// Update step sounds (play footstep sounds while walking)
+		this.updateStepSounds();
 		
 		// Modo espectador: volar libremente sin colisiones ni gravedad
 		if ( this.spectatorMode || this.gameMode === GAME_MODE.SPECTATOR )
