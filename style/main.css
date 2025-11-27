@@ -145,6 +145,48 @@ body {
 	image-rendering: pixelated;
 }
 
+.hotbar-slot .item-count {
+	position: absolute;
+	top: 0;
+	right: 0;
+	font-size: 9px;
+	color: white;
+	text-shadow: 1px 1px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000;
+	font-family: minecraftia;
+	line-height: 1;
+	padding: 0 1px;
+	pointer-events: none;
+	z-index: 2;
+}
+
+/* Dragged Item Cursor */
+#draggedItemCursor {
+	position: fixed;
+	pointer-events: none;
+	z-index: 2000;
+	display: none;
+	image-rendering: pixelated;
+}
+
+#draggedItemCursor #draggedItemThumbnail {
+	width: 32px;
+	height: 32px;
+	position: relative;
+}
+
+#draggedItemCursor #draggedItemCount {
+	position: absolute;
+	top: 0;
+	right: 0;
+	font-size: 12px;
+	color: white;
+	text-shadow: 1px 1px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000;
+	font-family: minecraftia;
+	line-height: 1;
+	padding: 0 2px;
+	pointer-events: none;
+}
+
 /* Health and Hunger Icons */
 .health-icons, .hunger-icons {
 	position: fixed;
@@ -547,6 +589,20 @@ body.creative-mode .hunger-icons {
 	width: 16px;
 	height: 16px;
 	image-rendering: pixelated;
+}
+
+.inventory-slot .item-count {
+	position: absolute;
+	top: 0;
+	right: 0;
+	font-size: 9px;
+	color: white;
+	text-shadow: 1px 1px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000;
+	font-family: minecraftia;
+	line-height: 1;
+	padding: 0 1px;
+	pointer-events: none;
+	z-index: 2;
 }
 
 /* Username input */

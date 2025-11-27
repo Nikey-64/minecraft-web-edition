@@ -351,23 +351,25 @@ ItemEntity.prototype.onUpdate = function(deltaTime) {
 	// Rotate item (visual effect)
 	this.angles[1] += deltaTime * 2; // Rotate around Y axis
 	
-	// Check if player is nearby and can pick up
-	if (this.age >= this.pickupDelay && this.world && this.world.localPlayer) {
-		var player = this.world.localPlayer;
-		var dist = this.distanceTo(player);
-		if (dist < 1.5) {
-			// Try to add to player inventory
-			if (player.addItemStack && typeof player.addItemStack === 'function') {
-				var added = player.addItemStack(this.itemStack);
-				if (added) {
-					// Item picked up, remove entity
-					if (this.world.removeEntity) {
-						this.world.removeEntity(this.id);
+		// Check if player is nearby and can pick up
+		if (this.age >= this.pickupDelay && this.world && this.world.localPlayer) {
+			var player = this.world.localPlayer;
+			var dist = this.distanceTo(player);
+			if (dist < 1.5) {
+				// Try to add to player inventory
+				if (player.addItemStack && typeof player.addItemStack === 'function' && this.itemStack) {
+					// Clone the ItemStack to avoid modifying the original
+					var stackToAdd = this.itemStack.clone();
+					var added = player.addItemStack(stackToAdd);
+					if (added) {
+						// Item picked up, remove entity
+						if (this.world.removeEntity) {
+							this.world.removeEntity(this.id);
+						}
 					}
 				}
 			}
 		}
-	}
 };
 
 // Export for Node.js

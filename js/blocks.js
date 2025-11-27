@@ -106,6 +106,8 @@ BLOCK.GRASS = {
 BLOCK.DIRT = {
 	id: 2,
 	spawnable: true,
+	item: true,
+	itemdrop: 2,
 	transparent: false,
 	selflit: false,
 	gravity: false,
@@ -417,7 +419,14 @@ BLOCK.PLANKS_STAIRS = {
 	gravity: false,
 	fluid: false,
 	solid: true,
+	flammable: true,
+	explosive: false,
+	bloctype: "stairs",
 	breakable: true,
+	requiredtool: "axe",
+	tooltime: 5000,
+	toollevel: 1,
+	breaktime: 10000, /* 10 seconds to break */
 	// Stairs need orientation data (stored in block metadata)
 	// For now, use simple texture - can be enhanced later with orientation support
 	texture: function( world, lightmap, lit, x, y, z, dir ) { 

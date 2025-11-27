@@ -55,8 +55,11 @@ Player.prototype.setWorld = function( world )
 	this.selectedHotbarSlot = 0; // Slot seleccionado (0-8)
 	this.inventoryOpen = false;
 	
-	// Item system support (optional, for future use)
-	this.useItemSystem = false; // Set to true to use ItemStack instead of Block
+	// Inventory management - for manual organization
+	this.draggedSlot = null; // {type: 'hotbar'|'inventory', index: number} - slot being dragged
+	
+	// Item system support - now enabled by default
+	this.useItemSystem = true; // Use ItemStack instead of Block for better item management
 	
 	// Block breaking system (survival mode)
 	this.breakingBlock = null; // {x, y, z} - current block being broken
@@ -146,6 +149,10 @@ Player.prototype.setInputCanvas = function( id )
 		if (t.pointerLocked && !t.inventoryOpen) {
 			t.onMouseMove(e.movementX, e.movementY);
 		}
+		// Update dragged item cursor position if dragging
+		if (t.inventoryOpen && t.draggedSlot) {
+			t.updateDraggedItemCursorPosition(e);
+		}
 	});
 
 	document.addEventListener('mousedown', function(e) {
@@ -178,12 +185,13 @@ Player.prototype.initInventory = function()
 	var hotbarEl = document.getElementById("hotbar");
 	var pl = this;
 	
-	// Set up hotbar slot click handlers
+	// Set up hotbar slot click handlers for manual organization
 	for (var i = 0; i < 9; i++) {
 		var slot = hotbarEl.children[i];
-		slot.onclick = function() {
+		slot.setAttribute("data-slot", i);
+		slot.onclick = function(e) {
 			var slotIndex = parseInt(this.getAttribute("data-slot"));
-			pl.selectHotbarSlot(slotIndex);
+			pl.handleSlotClick('hotbar', slotIndex, e);
 		};
 	}
 	
@@ -290,6 +298,8 @@ Player.prototype.closeCreativeInventory = function()
 		creativeInventory.style.display = "none";
 	}
 	this.inventoryOpen = false;
+	// Clear dragged slot when closing creative inventory
+	this.draggedSlot = null;
 }
 
 // updateCreativeInventoryDisplay()
@@ -379,13 +389,9 @@ Player.prototype.selectHotbarSlot = function(index)
 		}
 	}
 	
-	// Update buildMaterial
-	var block = this.hotbar[index];
-	if (block) {
-		this.buildMaterial = block;
-	} else {
-		this.buildMaterial = BLOCK.AIR;
-	}
+	// Update buildMaterial - get the actual block from ItemStack if needed
+	var block = this.getSelectedBlock();
+	this.buildMaterial = block || BLOCK.AIR;
 	
 	// Show item title
 	this.showItemTitle(block);
@@ -401,27 +407,38 @@ Player.prototype.showItemTitle = function(block)
 	var titleTextEl = document.getElementById("itemTitleText");
 	if (!titleEl || !titleTextEl) return;
 	
+	// Don't show title for AIR or empty slots
+	if (!block || block === BLOCK.AIR) {
+		titleEl.style.opacity = "0";
+		return;
+	}
+	
 	// Get item name
-	var itemName = "Air";
-	if (block && block !== BLOCK.AIR) {
-		// Try to get name from ItemStack if using item system
-		if (block instanceof ItemStack && block.item) {
+	var itemName = "Unknown Item";
+	
+	// Try to get name from ItemStack if using item system
+	if (block instanceof ItemStack) {
+		if (block.item && !block.isEmpty()) {
 			itemName = block.item.name || "Unknown Item";
+		} else {
+			// Empty ItemStack, don't show
+			titleEl.style.opacity = "0";
+			return;
 		}
-		// Try to get name from ITEM_REGISTRY
-		else if (typeof ITEM_REGISTRY !== 'undefined') {
-			var item = ITEM_REGISTRY.getByBlock(block);
-			if (item) {
-				itemName = item.name || "Unknown Item";
-			} else {
-				// Fallback: get name from block property name
-				itemName = this.getBlockDisplayName(block);
-			}
-		}
-		// Fallback: get name from block property name
-		else {
+	}
+	// Try to get name from ITEM_REGISTRY
+	else if (typeof ITEM_REGISTRY !== 'undefined') {
+		var item = ITEM_REGISTRY.getByBlock(block);
+		if (item) {
+			itemName = item.name || "Unknown Item";
+		} else {
+			// Fallback: get name from block property name
 			itemName = this.getBlockDisplayName(block);
 		}
+	}
+	// Fallback: get name from block property name
+	else {
+		itemName = this.getBlockDisplayName(block);
 	}
 	
 	// Update title text
@@ -475,6 +492,174 @@ Player.prototype.setHotbarSlot = function(index, block)
 	this.updateHotbarDisplay();
 }
 
+// handleSlotClick( type, index, event )
+//
+// Handles clicking on inventory slots for manual organization.
+// Allows moving items between slots but prevents stacking/combining.
+
+Player.prototype.handleSlotClick = function(type, index, event)
+{
+	// If inventory is not open, just select the hotbar slot
+	if (type === 'hotbar' && !this.inventoryOpen) {
+		this.selectHotbarSlot(index);
+		return;
+	}
+	
+	// If inventory is open, handle item movement
+	if (this.inventoryOpen) {
+		// Get the slot data
+		var sourceSlot = null;
+		if (type === 'hotbar') {
+			sourceSlot = this.hotbar[index];
+		} else if (type === 'inventory') {
+			sourceSlot = this.inventory[index];
+		}
+		
+		// If we have a dragged slot, try to move/swap
+		if (this.draggedSlot) {
+			var draggedItem = null;
+			if (this.draggedSlot.type === 'hotbar') {
+				draggedItem = this.hotbar[this.draggedSlot.index];
+			} else if (this.draggedSlot.type === 'inventory') {
+				draggedItem = this.inventory[this.draggedSlot.index];
+			}
+			
+			// Only move if dragged item exists
+			if (draggedItem && draggedItem !== BLOCK.AIR) {
+				// Check if target slot has an item
+				if (sourceSlot && sourceSlot !== BLOCK.AIR) {
+					// Both slots have items - swap them (but don't combine stacks)
+					if (type === 'hotbar') {
+						this.hotbar[index] = draggedItem;
+					} else if (type === 'inventory') {
+						this.inventory[index] = draggedItem;
+					}
+					
+					if (this.draggedSlot.type === 'hotbar') {
+						this.hotbar[this.draggedSlot.index] = sourceSlot;
+					} else if (this.draggedSlot.type === 'inventory') {
+						this.inventory[this.draggedSlot.index] = sourceSlot;
+					}
+				} else {
+					// Target slot is empty - move item
+					if (type === 'hotbar') {
+						this.hotbar[index] = draggedItem;
+					} else if (type === 'inventory') {
+						this.inventory[index] = draggedItem;
+					}
+					
+					// Clear source slot
+					if (this.draggedSlot.type === 'hotbar') {
+						this.hotbar[this.draggedSlot.index] = null;
+					} else if (this.draggedSlot.type === 'inventory') {
+						this.inventory[this.draggedSlot.index] = null;
+					}
+				}
+				
+				// Update displays
+				this.updateHotbarDisplay();
+				this.updateInventoryDisplay();
+			}
+			
+			// Clear dragged slot
+			this.draggedSlot = null;
+			this.hideDraggedItemCursor();
+		} else {
+			// Start dragging from this slot (if it has an item)
+			if (sourceSlot && sourceSlot !== BLOCK.AIR) {
+				this.draggedSlot = { type: type, index: index };
+				this.updateDraggedItemCursor(sourceSlot, event);
+				// Update displays to hide item from original slot
+				this.updateHotbarDisplay();
+				this.updateInventoryDisplay();
+			}
+		}
+	} else {
+		// Inventory not open, just select hotbar slot
+		if (type === 'hotbar') {
+			this.selectHotbarSlot(index);
+		}
+	}
+}
+
+// updateDraggedItemCursor( item, event )
+//
+// Updates the dragged item cursor to show the item being dragged and follows the mouse.
+
+Player.prototype.updateDraggedItemCursor = function(item, event)
+{
+	var cursorEl = document.getElementById("draggedItemCursor");
+	var thumbnailEl = document.getElementById("draggedItemThumbnail");
+	var countEl = document.getElementById("draggedItemCount");
+	
+	if (!cursorEl || !thumbnailEl) return;
+	
+	// Get actual block from ItemStack if using item system
+	var actualBlock = item;
+	if (item instanceof ItemStack) {
+		if (item.item && item.item.blockId !== undefined && item.item.blockId !== null) {
+			actualBlock = BLOCK.fromId(item.item.blockId);
+			if (!actualBlock && item.item.data && item.item.data.block) {
+				actualBlock = item.item.data.block;
+			}
+		} else if (item.item && item.item.type === ITEM_TYPE.BLOCK && item.item.data && item.item.data.block) {
+			actualBlock = item.item.data.block;
+		}
+	}
+	
+	if (actualBlock && actualBlock !== BLOCK.AIR) {
+		// Render thumbnail
+		var thumb = this.renderBlockThumbnail(actualBlock, 32);
+		thumbnailEl.innerHTML = "";
+		thumbnailEl.appendChild(thumb);
+		
+		// Show count if ItemStack has more than 1
+		if (item instanceof ItemStack && item.count > 1) {
+			countEl.textContent = item.count;
+			countEl.style.display = "block";
+		} else {
+			countEl.style.display = "none";
+		}
+		
+		// Show cursor and position it at mouse
+		cursorEl.style.display = "block";
+		if (event) {
+			cursorEl.style.left = (event.clientX - 16) + "px";
+			cursorEl.style.top = (event.clientY - 16) + "px";
+		}
+	}
+}
+
+// hideDraggedItemCursor()
+//
+// Hides the dragged item cursor.
+
+Player.prototype.hideDraggedItemCursor = function()
+{
+	var cursorEl = document.getElementById("draggedItemCursor");
+	if (cursorEl) {
+		cursorEl.style.display = "none";
+	}
+}
+
+// updateDraggedItemCursorPosition( event )
+//
+// Updates the position of the dragged item cursor to follow the mouse.
+
+Player.prototype.updateDraggedItemCursorPosition = function(event)
+{
+	if (!this.draggedSlot) {
+		this.hideDraggedItemCursor();
+		return;
+	}
+	
+	var cursorEl = document.getElementById("draggedItemCursor");
+	if (cursorEl && cursorEl.style.display !== "none") {
+		cursorEl.style.left = (event.clientX - 16) + "px";
+		cursorEl.style.top = (event.clientY - 16) + "px";
+	}
+}
+
 // Item System Methods (for future use with ItemStack)
 
 // addItemStack( itemStack )
@@ -486,58 +671,69 @@ Player.prototype.addItemStack = function(itemStack) {
 		return false;
 	}
 	
-	// Try to add to existing stacks first
-	for (var i = 0; i < this.hotbar.length; i++) {
+	var remainingCount = itemStack.count;
+	var itemAdded = false;
+	
+	// Try to add to existing stacks first (hotbar)
+	for (var i = 0; i < this.hotbar.length && remainingCount > 0; i++) {
 		var slot = this.hotbar[i];
-		if (slot && slot instanceof ItemStack && slot.item && slot.item.id === itemStack.item.id) {
-			if (!slot.isFull()) {
-				var toAdd = Math.min(itemStack.count, slot.item.maxStack - slot.count);
-				slot.add(toAdd);
-				itemStack.remove(toAdd);
-				if (itemStack.isEmpty()) {
-					this.updateHotbarDisplay();
-					return true;
+		if (slot && slot instanceof ItemStack && slot.item) {
+			// Compare items by id - this is the key for stacking
+			if (slot.item.id === itemStack.item.id) {
+				if (!slot.isFull()) {
+					var toAdd = Math.min(remainingCount, slot.item.maxStack - slot.count);
+					slot.add(toAdd);
+					remainingCount -= toAdd;
+					itemAdded = true;
 				}
 			}
 		}
 	}
 	
-	// Try inventory slots
-	for (var i = 0; i < this.inventory.length; i++) {
+	// Try inventory slots for stacking
+	for (var i = 0; i < this.inventory.length && remainingCount > 0; i++) {
 		var slot = this.inventory[i];
-		if (slot && slot instanceof ItemStack && slot.item && slot.item.id === itemStack.item.id) {
-			if (!slot.isFull()) {
-				var toAdd = Math.min(itemStack.count, slot.item.maxStack - slot.count);
-				slot.add(toAdd);
-				itemStack.remove(toAdd);
-				if (itemStack.isEmpty()) {
-					this.updateInventoryDisplay();
-					return true;
+		if (slot && slot instanceof ItemStack && slot.item) {
+			// Compare items by id - this is the key for stacking
+			if (slot.item.id === itemStack.item.id) {
+				if (!slot.isFull()) {
+					var toAdd = Math.min(remainingCount, slot.item.maxStack - slot.count);
+					slot.add(toAdd);
+					remainingCount -= toAdd;
+					itemAdded = true;
 				}
 			}
 		}
 	}
 	
-	// Try to add to empty hotbar slot
-	for (var i = 0; i < this.hotbar.length; i++) {
+	// If still have items remaining, try to add to empty hotbar slots
+	for (var i = 0; i < this.hotbar.length && remainingCount > 0; i++) {
 		if (!this.hotbar[i] || (this.hotbar[i] instanceof ItemStack && this.hotbar[i].isEmpty())) {
-			this.hotbar[i] = itemStack.clone();
-			this.updateHotbarDisplay();
-			return true;
+			var toAdd = Math.min(remainingCount, itemStack.item.maxStack);
+			this.hotbar[i] = new ItemStack(itemStack.item, toAdd);
+			remainingCount -= toAdd;
+			itemAdded = true;
 		}
 	}
 	
-	// Try to add to empty inventory slot
-	for (var i = 0; i < this.inventory.length; i++) {
+	// If still have items remaining, try to add to empty inventory slots
+	for (var i = 0; i < this.inventory.length && remainingCount > 0; i++) {
 		if (!this.inventory[i] || (this.inventory[i] instanceof ItemStack && this.inventory[i].isEmpty())) {
-			this.inventory[i] = itemStack.clone();
-			this.updateInventoryDisplay();
-			return true;
+			var toAdd = Math.min(remainingCount, itemStack.item.maxStack);
+			this.inventory[i] = new ItemStack(itemStack.item, toAdd);
+			remainingCount -= toAdd;
+			itemAdded = true;
 		}
 	}
 	
-	// No space available
-	return false;
+	// Update displays if items were added
+	if (itemAdded) {
+		this.updateHotbarDisplay();
+		this.updateInventoryDisplay();
+	}
+	
+	// Return true if at least some items were added
+	return itemAdded;
 };
 
 // getSelectedItem()
@@ -562,20 +758,33 @@ Player.prototype.getSelectedItem = function() {
 // Gets the currently selected block (for compatibility).
 
 Player.prototype.getSelectedBlock = function() {
-	var item = this.getSelectedItem();
-	if (!item) return null;
+	var slot = this.hotbar[this.selectedHotbarSlot];
+	if (!slot) return BLOCK.AIR;
 	
-	// If item is a block type
-	if (item.type === ITEM_TYPE.BLOCK && item.data && item.data.block) {
-		return item.data.block;
+	// If using ItemStack system
+	if (slot instanceof ItemStack) {
+		if (slot.isEmpty() || !slot.item) return BLOCK.AIR;
+		
+		// If item has blockId, use it to get the block from BLOCK registry
+		if (slot.item.blockId !== undefined && slot.item.blockId !== null) {
+			var block = BLOCK.fromId(slot.item.blockId);
+			if (block) return block;
+		}
+		
+		// Fallback: try to get block from item.data.block
+		if (slot.item.type === ITEM_TYPE.BLOCK && slot.item.data && slot.item.data.block) {
+			return slot.item.data.block;
+		}
+		
+		return BLOCK.AIR;
 	}
 	
-	// Legacy: might be a block directly
-	if (item && item.id !== undefined && item.texture) {
-		return item;
+	// Legacy: return block directly (if it's a block object)
+	if (slot && slot !== BLOCK.AIR && typeof slot === 'object' && slot.id !== undefined) {
+		return slot;
 	}
 	
-	return null;
+	return BLOCK.AIR;
 };
 
 // updateHotbarDisplay()
@@ -590,23 +799,53 @@ Player.prototype.updateHotbarDisplay = function()
 		var slot = hotbarEl.children[i];
 		var block = this.hotbar[i];
 		
-		// Clear existing thumbnail
+		// Don't show item if it's being dragged
+		if (this.draggedSlot && this.draggedSlot.type === 'hotbar' && this.draggedSlot.index === i) {
+			block = null;
+		}
+		
+		// Clear existing thumbnail and count
 		var existingThumb = slot.querySelector(".block-thumbnail");
 		if (existingThumb) {
 			existingThumb.remove();
 		}
+		var existingCount = slot.querySelector(".item-count");
+		if (existingCount) {
+			existingCount.remove();
+		}
 		
-		// Add thumbnail if block exists
+		// Add thumbnail if block/item exists
 		if (block && block !== BLOCK.AIR) {
 			// Get actual block from ItemStack if using item system
 			var actualBlock = block;
-			if (block instanceof ItemStack && block.item && block.item.type === ITEM_TYPE.BLOCK && block.item.data && block.item.data.block) {
-				actualBlock = block.item.data.block;
+			if (block instanceof ItemStack) {
+				if (block.item && block.item.blockId !== undefined && block.item.blockId !== null) {
+					// Use blockId to get the correct block
+					actualBlock = BLOCK.fromId(block.item.blockId);
+					if (!actualBlock) {
+						// Fallback to data.block
+						actualBlock = (block.item.data && block.item.data.block) ? block.item.data.block : BLOCK.AIR;
+					}
+				} else if (block.item && block.item.type === ITEM_TYPE.BLOCK && block.item.data && block.item.data.block) {
+					actualBlock = block.item.data.block;
+				} else {
+					actualBlock = BLOCK.AIR;
+				}
 			}
 			
-			var thumb = this.renderBlockThumbnail(actualBlock, 16);
-			thumb.className = "block-thumbnail";
-			slot.appendChild(thumb);
+			if (actualBlock && actualBlock !== BLOCK.AIR) {
+				var thumb = this.renderBlockThumbnail(actualBlock, 16);
+				thumb.className = "block-thumbnail";
+				slot.appendChild(thumb);
+				
+				// Show count if ItemStack has more than 1 (like Minecraft)
+				if (block instanceof ItemStack && block.count > 1) {
+					var countEl = document.createElement("div");
+					countEl.className = "item-count";
+					countEl.textContent = block.count;
+					slot.appendChild(countEl);
+				}
+			}
 		}
 	}
 	
@@ -642,42 +881,55 @@ Player.prototype.updateInventoryDisplay = function()
 		}
 	}
 	
-	// Create slots for each item (max 27 slots)
+	// Create slots for each inventory slot (27 slots total)
 	for (var i = 0; i < 27; i++) {
 		var slot = document.createElement("div");
 		slot.className = "inventory-slot";
+		slot.setAttribute("data-inv-index", i);
 		
-		if (i < itemsToShow.length) {
-			var item = itemsToShow[i];
-			slot.blockData = item;
-			
+		// Get item from inventory array (not from itemsToShow, to maintain slot positions)
+		var item = this.inventory[i];
+		
+		// Don't show item if it's being dragged
+		if (this.draggedSlot && this.draggedSlot.type === 'inventory' && this.draggedSlot.index === i) {
+			item = null;
+		}
+		
+		if (item && item !== BLOCK.AIR) {
 			// Get actual block from ItemStack if using item system
 			var actualBlock = item;
-			if (item instanceof ItemStack && item.item && item.item.type === ITEM_TYPE.BLOCK && item.item.data && item.item.data.block) {
-				actualBlock = item.item.data.block;
+			if (item instanceof ItemStack) {
+				if (item.item && item.item.blockId !== undefined && item.item.blockId !== null) {
+					actualBlock = BLOCK.fromId(item.item.blockId);
+					if (!actualBlock && item.item.data && item.item.data.block) {
+						actualBlock = item.item.data.block;
+					}
+				} else if (item.item && item.item.type === ITEM_TYPE.BLOCK && item.item.data && item.item.data.block) {
+					actualBlock = item.item.data.block;
+				}
 			}
 			
-			// Render thumbnail
-			var thumb = this.renderBlockThumbnail(actualBlock, 16);
-			thumb.className = "block-thumbnail";
-			slot.appendChild(thumb);
-			
-			// Set up click handler
-			slot.onclick = function() {
-				var block = this.blockData;
-				if (block) {
-					// Add to first empty hotbar slot
-					var emptySlot = pl.hotbar.indexOf(null);
-					if (emptySlot !== -1) {
-						pl.setHotbarSlot(emptySlot, block);
-						pl.selectHotbarSlot(emptySlot);
-					} else {
-						// Replace current selected slot
-						pl.setHotbarSlot(pl.selectedHotbarSlot, block);
-					}
+			if (actualBlock && actualBlock !== BLOCK.AIR) {
+				// Render thumbnail
+				var thumb = this.renderBlockThumbnail(actualBlock, 16);
+				thumb.className = "block-thumbnail";
+				slot.appendChild(thumb);
+				
+				// Show count if ItemStack has more than 1
+				if (item instanceof ItemStack && item.count > 1) {
+					var countEl = document.createElement("div");
+					countEl.className = "item-count";
+					countEl.textContent = item.count;
+					slot.appendChild(countEl);
 				}
-			};
+			}
 		}
+		
+		// Set up click handler for manual organization
+		slot.onclick = function(e) {
+			var slotIndex = parseInt(this.getAttribute("data-inv-index"));
+			pl.handleSlotClick('inventory', slotIndex, e);
+		};
 		
 		inventoryGrid.appendChild(slot);
 	}
@@ -701,37 +953,57 @@ Player.prototype.updateInventoryHotbarDisplay = function()
 		var slot = slots[i];
 		var block = this.hotbar[i];
 		
-		// Clear existing thumbnail
-		var existingThumb = slot.querySelector(".block-thumbnail");
-		if (existingThumb) {
-			existingThumb.remove();
+		// Don't show item if it's being dragged
+		if (this.draggedSlot && this.draggedSlot.type === 'hotbar' && this.draggedSlot.index === i) {
+			block = null;
 		}
 		
-		// Add thumbnail if block exists
-		if (block && block !== BLOCK.AIR) {
-			// Get actual block from ItemStack if using item system
-			var actualBlock = block;
-			if (block instanceof ItemStack && block.item && block.item.type === ITEM_TYPE.BLOCK && block.item.data && block.item.data.block) {
-				actualBlock = block.item.data.block;
+		// Clear existing thumbnail and count
+			var existingThumb = slot.querySelector(".block-thumbnail");
+			if (existingThumb) {
+				existingThumb.remove();
+			}
+			var existingCount = slot.querySelector(".item-count");
+			if (existingCount) {
+				existingCount.remove();
 			}
 			
-			var thumb = this.renderBlockThumbnail(actualBlock, 16);
-			thumb.className = "block-thumbnail";
-			slot.appendChild(thumb);
-		}
-		
-		slot.blockData = block;
-		
-		// Set up click handler
-		slot.onclick = function() {
-			var slotIndex = parseInt(this.getAttribute("data-inv-slot"));
-			var block = this.blockData;
-			if (block) {
-				pl.setHotbarSlot(slotIndex, block);
-				pl.selectHotbarSlot(slotIndex);
+			// Add thumbnail if block exists
+			if (block && block !== BLOCK.AIR) {
+				// Get actual block from ItemStack if using item system
+				var actualBlock = block;
+				if (block instanceof ItemStack) {
+					if (block.item && block.item.blockId !== undefined && block.item.blockId !== null) {
+						actualBlock = BLOCK.fromId(block.item.blockId);
+						if (!actualBlock && block.item.data && block.item.data.block) {
+							actualBlock = block.item.data.block;
+						}
+					} else if (block.item && block.item.type === ITEM_TYPE.BLOCK && block.item.data && block.item.data.block) {
+						actualBlock = block.item.data.block;
+					}
+				}
+				
+				if (actualBlock && actualBlock !== BLOCK.AIR) {
+					var thumb = this.renderBlockThumbnail(actualBlock, 16);
+					thumb.className = "block-thumbnail";
+					slot.appendChild(thumb);
+					
+					// Show count if ItemStack has more than 1
+					if (block instanceof ItemStack && block.count > 1) {
+						var countEl = document.createElement("div");
+						countEl.className = "item-count";
+						countEl.textContent = block.count;
+						slot.appendChild(countEl);
+					}
+				}
 			}
-		};
-	}
+			
+			// Set up click handler for manual organization
+			slot.onclick = function(e) {
+				var slotIndex = parseInt(this.getAttribute("data-inv-slot"));
+				pl.handleSlotClick('hotbar', slotIndex, e);
+			};
+		}
 }
 
 // Block to thumbnail image filename mapping
@@ -756,7 +1028,7 @@ var BLOCK_PRE_RENDERED_MAP = {
 	22: 'bedrock.png', // BEDROCK
 	23: 'grass_block.png', // GRASS (using Césped which is Spanish for grass)
 	24: 'oak_stairs.png', // PLANKS_STAIRS (using oak_stairs as fallback)
-	25: 'stone.png' // WOOL (need wool image)
+	25: 'white_wool.png' // WOOL (need wool image)
 };
 
 // getBlockPreRenderedFilename( block )
@@ -982,6 +1254,8 @@ Player.prototype.toggleInventory = function()
 		// Clear all keys to prevent movement while inventory is open
 		// This prevents keys from being "stuck" when inventory is opened
 		this.keys = {};
+		// Clear dragged slot when opening inventory
+		this.draggedSlot = null;
 		// Update inventory display (main grid and hotbar)
 		this.updateInventoryDisplay();
 		// Resume rendering the miniature player model
@@ -1007,6 +1281,8 @@ Player.prototype.toggleInventory = function()
 		inventory.style.display = "none";
 		// Remove class from body to show health/armor icons when inventory is closed
 		document.body.classList.remove("inventory-open");
+		// Clear dragged slot when closing inventory
+		this.draggedSlot = null;
 		// Pause rendering the miniature player model (don't stop completely, just pause)
 		if (this.inventoryPlayerModelRenderer) {
 			this.inventoryPlayerModelRenderer.pauseRenderLoop();
@@ -1357,8 +1633,26 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 			// Stop any breaking before placing a block (reset breaking state)
 			this.stopBreakingBlock();
 			
+			// Get the actual block to place (ensure it's correct)
+			var blockToPlace = this.getSelectedBlock();
+			if (!blockToPlace || blockToPlace === BLOCK.AIR) {
+				return; // No block to place
+			}
+			
 			// Colocar el bloque
-			obj.setBlock( placeX, placeY, placeZ, this.buildMaterial );
+			obj.setBlock( placeX, placeY, placeZ, blockToPlace );
+			
+			// Consume item from ItemStack if using item system
+			var selectedSlot = this.hotbar[this.selectedHotbarSlot];
+			if (selectedSlot instanceof ItemStack && !selectedSlot.isEmpty()) {
+				selectedSlot.remove(1);
+				if (selectedSlot.isEmpty()) {
+					this.hotbar[this.selectedHotbarSlot] = null;
+				}
+				this.updateHotbarDisplay();
+				// Update buildMaterial after consuming
+				this.buildMaterial = this.getSelectedBlock() || BLOCK.AIR;
+			}
 		}
 	}
 }
@@ -1541,10 +1835,42 @@ Player.prototype.dropBlockItem = function(block, x, y, z)
 	}
 	
 	// Create ItemStack for the block
+	// Always use the registered item from ITEM_REGISTRY to ensure consistency
 	var item = ITEM_REGISTRY.getByBlock(block);
 	if (!item) {
-		// Block doesn't have an item, create a temporary one
-		item = new Item(block.id, block.name || "Block", ITEM_TYPE.BLOCK, { block: block, maxStack: 64 });
+		// Block doesn't have an item registered, try to find it in ITEM global object
+		// by matching the BLOCK property name
+		for (var prop in BLOCK) {
+			if (BLOCK.hasOwnProperty(prop) && BLOCK[prop] === block) {
+				if (typeof ITEM !== 'undefined' && ITEM[prop]) {
+					item = ITEM[prop];
+					break;
+				}
+			}
+		}
+		
+		// If still not found, create and register a new one
+		if (!item) {
+			// Use blockId as parameter to ensure it's set correctly
+			item = new Item(block.id, block.name || "Block", ITEM_TYPE.BLOCK, { 
+				block: block, 
+				blockId: block.id, // Store block ID in data too
+				maxStack: 64 
+			}, block.id); // Also pass blockId as parameter
+			
+			// Register it so future drops use the same instance
+			ITEM_REGISTRY.register(item);
+			
+			// Also store in ITEM global object
+			for (var prop in BLOCK) {
+				if (BLOCK.hasOwnProperty(prop) && BLOCK[prop] === block) {
+					if (typeof ITEM !== 'undefined') {
+						ITEM[prop] = item;
+					}
+					break;
+				}
+			}
+		}
 	}
 	
 	var itemStack = new ItemStack(item, 1);

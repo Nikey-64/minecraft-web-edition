@@ -51,6 +51,12 @@
 			<div id="itemTitleText"></div>
 		</div>
 
+		<!-- Dragged Item Cursor (follows mouse when dragging items) -->
+		<div id="draggedItemCursor" style="position: fixed; pointer-events: none; z-index: 2000; display: none; image-rendering: pixelated;">
+			<div id="draggedItemThumbnail" style="width: 32px; height: 32px;"></div>
+			<div id="draggedItemCount" class="item-count" style="position: absolute; bottom: 0; right: 0; font-size: 12px;"></div>
+		</div>
+
 		<!-- Health Icons (Survival mode only) - Left side of hotbar -->
 		<div id="healthIcons" class="health-icons" style="display: none;"></div>
 
