@@ -61,67 +61,117 @@ Physics.prototype.simulate = function()
 			}
 		}
 		
-		// Iterar de arriba hacia abajo para evitar que los bloques se salten
-		// IMPORTANTE: Solo procesar bloques en chunks cargados para evitar accesos a memoria no inicializada
-		for ( var x = 0; x < world.sx; x++ ) {
-			// Verificar que el chunk X está cargado
-			if ( !blocks[x] ) continue;
+		// OPTIMIZACIÓN: Solo procesar bloques en chunks cargados (no todo el mundo 256x256x256)
+		// Esto reduce drásticamente el costo de la simulación de física
+		var renderer = world.renderer;
+		var loadedChunks = renderer && renderer.loadedChunks;
+		
+		// Si no hay chunks cargados o no hay renderer, no procesar física
+		if ( !loadedChunks || loadedChunks.size === 0 ) return;
+		
+		// OPTIMIZACIÓN: Procesar chunks incrementalmente para distribuir la carga
+		// Procesar solo algunos chunks por frame para evitar picos de latencia
+		if ( !this._physicsChunkIndex ) this._physicsChunkIndex = 0;
+		var chunksArray = Array.from(loadedChunks);
+		var maxChunksPerFrame = Math.max(1, Math.ceil(chunksArray.length / 4)); // Procesar 1/4 de chunks por frame
+		var startIndex = this._physicsChunkIndex;
+		var endIndex = Math.min(startIndex + maxChunksPerFrame, chunksArray.length);
+		this._physicsChunkIndex = endIndex >= chunksArray.length ? 0 : endIndex;
+		
+		// Procesar solo bloques en chunks cargados
+		var chunkSize = renderer.chunkSize || 8;
+		var processedCoords = {}; // Evitar procesar el mismo bloque múltiples veces
+		
+		// OPTIMIZACIÓN: Limitar altura de búsqueda para bloques con gravedad
+		// La mayoría de bloques con gravedad están cerca de la superficie, no a 256 bloques de altura
+		var maxGravitySearchY = Math.min(world.sy - 1, 128); // Solo buscar hasta altura 128
+		
+		for ( var chunkIdx = startIndex; chunkIdx < endIndex; chunkIdx++ ) {
+			var chunkKey = chunksArray[chunkIdx];
+			// Parsear chunk key: "cx|cz|cy"
+			var parts = chunkKey.split('|');
+			var cx = parseInt(parts[0]);
+			var cz = parseInt(parts[1]);
 			
-			for ( var z = 0; z < world.sz; z++ ) { // Z es horizontal
-				for ( var y = world.sy - 1; y > 0; y-- ) { // Y es altura, iterar de arriba hacia abajo
-					// Usar getBlock para acceso seguro (maneja chunks no cargados)
-					var block = world.getBlock( x, y, z );
-					if ( !block || !block.gravity ) continue;
-					
-					// Verificar que el bloque de abajo es AIR
-					var blockBelow = world.getBlock( x, y - 1, z );
-					if ( blockBelow != BLOCK.AIR ) continue;
-					
-					// Verificar si este bloque ya está en animación
-					var animKey = x + "," + y + "," + z;
-					if ( this.fallingBlocks[animKey] ) {
-						continue; // Ya está cayendo, no hacer nada
-					}
-					
-					// Calcular la distancia de caída
-					var fallDistance = 1; // Empezar con 1 bloque
-					for ( var checkY = y - 1; checkY >= 0; checkY-- ) {
-						var checkBlock = world.getBlock( x, checkY, z );
-						if ( checkBlock == BLOCK.AIR ) {
-							fallDistance = y - checkY;
-						} else {
-							break; // Encontramos un bloque sólido
+			// Calcular rango de bloques para este chunk
+			var startX = cx * chunkSize;
+			var startZ = cz * chunkSize;
+			var endX = Math.min(world.sx, startX + chunkSize);
+			var endZ = Math.min(world.sz, startZ + chunkSize);
+			
+			for ( var x = startX; x < endX; x++ ) {
+				if ( !blocks[x] ) continue;
+				
+				for ( var z = startZ; z < endZ; z++ ) {
+					// OPTIMIZACIÓN: Iterar solo desde una altura razonable hacia abajo
+					// La mayoría de bloques con gravedad están cerca de la superficie
+					var searchStartY = Math.min(maxGravitySearchY, world.sy - 1);
+					for ( var y = searchStartY; y > 0; y-- ) {
+						// OPTIMIZACIÓN: Verificar acceso directo a blocks antes de getBlock
+						if ( !blocks[x] || !blocks[x][y] || !blocks[x][y][z] ) {
+							// Si no hay bloque, saltar rápidamente
+							if ( y < 10 ) break; // Si estamos bajo y no hay bloques, no hay más abajo
+							continue;
 						}
+						
+						// Acceso directo al bloque (más rápido que getBlock)
+						var block = blocks[x][y][z];
+						if ( !block || !block.gravity ) continue;
+						
+						// Verificar que el bloque de abajo es AIR (acceso directo)
+						if ( y > 0 ) {
+							if ( blocks[x][y-1] && blocks[x][y-1][z] && blocks[x][y-1][z] !== BLOCK.AIR ) {
+								continue; // Bloque de abajo no es AIR
+							}
+						}
+						
+						// Verificar si este bloque ya está en animación
+						var animKey = x + "," + y + "," + z;
+						if ( this.fallingBlocks[animKey] ) {
+							continue; // Ya está cayendo, no hacer nada
+						}
+						
+						// OPTIMIZACIÓN: Calcular distancia de caída con límite razonable
+						var fallDistance = 1;
+						var maxFallCheck = Math.max(0, y - 32); // Limitar búsqueda a 32 bloques hacia abajo
+						for ( var checkY = y - 1; checkY >= maxFallCheck; checkY-- ) {
+							// Acceso directo (más rápido)
+							if ( !blocks[x] || !blocks[x][checkY] || !blocks[x][checkY][z] || blocks[x][checkY][z] === BLOCK.AIR ) {
+								fallDistance = y - checkY;
+							} else {
+								break; // Encontramos un bloque sólido
+							}
+						}
+						
+						// Crear animación suave
+						// Duración basada en la distancia: más distancia = más tiempo, pero con límite
+						// Usar una función cuadrática para que caiga más rápido cuanto más distancia
+						var baseDuration = 150; // 150ms por bloque base (más rápido para realismo)
+						var duration = baseDuration * fallDistance;
+						// Limitar duración máxima a 1 segundo para caídas muy largas (más rápido)
+						if ( duration > 1000 ) duration = 1000;
+						
+						// Crear un bloque animado con las propiedades del bloque original
+						// Este bloque animado mantendrá las propiedades del original para recuperarlas después
+						var animatedBlock = BLOCK.createAnimatedBlock( block );
+						
+						// Reemplazar temporalmente el bloque original por el bloque animado en el array del mundo
+						// Esto permite que el bloque animado "tome el lugar" del bloque original durante la animación
+						world.setBlock( x, y, z, animatedBlock );
+						
+						// Crear la animación
+						this.fallingBlocks[animKey] = {
+							x: x,
+							y: y, // Posición actual (se actualizará visualmente)
+							z: z,
+							startY: y,
+							targetY: y - fallDistance,
+							startTime: currentTime,
+							duration: duration,
+							block: block, // Bloque original (para recuperar propiedades después)
+							animatedBlock: animatedBlock // Bloque animado (ya está en el array del mundo)
+						};
 					}
-					
-					// Crear animación suave
-					// Duración basada en la distancia: más distancia = más tiempo, pero con límite
-					// Usar una función cuadrática para que caiga más rápido cuanto más distancia
-					var baseDuration = 150; // 150ms por bloque base (más rápido para realismo)
-					var duration = baseDuration * fallDistance;
-					// Limitar duración máxima a 1 segundo para caídas muy largas (más rápido)
-					if ( duration > 1000 ) duration = 1000;
-					
-					// Crear un bloque animado con las propiedades del bloque original
-					// Este bloque animado mantendrá las propiedades del original para recuperarlas después
-					var animatedBlock = BLOCK.createAnimatedBlock( block );
-					
-					// Reemplazar temporalmente el bloque original por el bloque animado en el array del mundo
-					// Esto permite que el bloque animado "tome el lugar" del bloque original durante la animación
-					world.setBlock( x, y, z, animatedBlock );
-					
-					// Crear la animación
-					this.fallingBlocks[animKey] = {
-						x: x,
-						y: y, // Posición actual (se actualizará visualmente)
-						z: z,
-						startY: y,
-						targetY: y - fallDistance,
-						startTime: currentTime,
-						duration: duration,
-						block: block, // Bloque original (para recuperar propiedades después)
-						animatedBlock: animatedBlock // Bloque animado (ya está en el array del mundo)
-					};
 				}
 			}
 		}
@@ -133,15 +183,39 @@ Physics.prototype.simulate = function()
 	// Los fluidos caen hacia abajo (Y-1) y se extienden horizontalmente (X±1, Z±1)
 	if ( step % 10 == 0 )
 	{
+		// OPTIMIZACIÓN: Solo procesar fluidos en chunks cargados
+		var renderer = world.renderer;
+		var loadedChunks = renderer && renderer.loadedChunks;
+		
+		// Si no hay chunks cargados, no procesar fluidos
+		if ( !loadedChunks || loadedChunks.size === 0 ) return;
+		
 		// Newly spawned fluid blocks are stored so that those aren't
 		// updated in the same step, creating a simulation avalanche.
 		var newFluidBlocks = {};
 		
-		// Iterar de arriba hacia abajo para que los fluidos caigan correctamente
-		// IMPORTANTE: Usar world.getBlock() para acceso seguro a chunks no cargados
-		for ( var x = 0; x < world.sx; x++ ) {
-			for ( var z = 0; z < world.sz; z++ ) { // Z es horizontal
-				for ( var y = world.sy - 1; y >= 0; y-- ) { // Y es altura, iterar de arriba hacia abajo
+		// OPTIMIZACIÓN: Solo procesar fluidos en chunks cargados
+		var chunkSize = renderer.chunkSize || 8;
+		var chunksArray = Array.from(loadedChunks);
+		
+		for ( var chunkIdx = 0; chunkIdx < chunksArray.length; chunkIdx++ ) {
+			var chunkKey = chunksArray[chunkIdx];
+			var parts = chunkKey.split('|');
+			var cx = parseInt(parts[0]);
+			var cz = parseInt(parts[1]);
+			
+			var startX = cx * chunkSize;
+			var startZ = cz * chunkSize;
+			var endX = Math.min(world.sx, startX + chunkSize);
+			var endZ = Math.min(world.sz, startZ + chunkSize);
+			
+			// Iterar de arriba hacia abajo para que los fluidos caigan correctamente
+			for ( var x = startX; x < endX; x++ ) {
+				if ( !blocks[x] ) continue;
+				for ( var z = startZ; z < endZ; z++ ) { // Z es horizontal
+					// OPTIMIZACIÓN: Limitar altura de búsqueda de fluidos
+					var maxFluidSearchY = Math.min(world.sy - 1, 128);
+					for ( var y = maxFluidSearchY; y >= 0; y-- ) { // Y es altura, iterar de arriba hacia abajo
 					var material = world.getBlock( x, y, z );
 					if ( !material || !material.fluid || newFluidBlocks[x+","+y+","+z] != null ) continue;
 					

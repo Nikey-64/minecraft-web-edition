@@ -294,19 +294,28 @@ Renderer.prototype.draw = function()
 		}
 	}
 
-	// Draw level chunks
+	// Draw level chunks - OPTIMIZACIÓN: Solo renderizar chunks cargados y visibles
 	var chunks = this.chunks;
 
 	gl.bindTexture( gl.TEXTURE_2D, this.texTerrain );
 
-	if ( chunks != null )
+	// OPTIMIZACIÓN: Usar loadedChunks Set para iteración más eficiente
+	// Solo iterar sobre chunks que están realmente cargados
+	if ( chunks != null && this.loadedChunks )
 	{
-		for ( var i = 0; i < chunks.length; i++ )
+		// Iterar sobre chunks cargados en lugar de todos los chunks
+		var loadedChunksArray = [];
+		this.loadedChunks.forEach(function(chunkKey) {
+			var chunk = this.chunkLookup && this.chunkLookup[chunkKey];
+			if ( chunk && chunk.loaded && chunk.buffer != null ) {
+				loadedChunksArray.push(chunk);
+			}
+		}.bind(this));
+		
+		// Renderizar chunks cargados
+		for ( var i = 0; i < loadedChunksArray.length; i++ )
 		{
-			var chunk = chunks[i];
-			// Renderizar chunk si está cargado y tiene buffer (o si está cargado pero es solo aire)
-			if ( chunk.loaded && chunk.buffer != null )
-				this.drawBuffer( chunk.buffer );
+			this.drawBuffer( loadedChunksArray[i].buffer );
 		}
 	}
 
@@ -1522,18 +1531,24 @@ Renderer.prototype.buildChunks = function( count )
 						var animatedBlock = anim && anim.animatedBlock ? anim.animatedBlock : null;
 						BLOCK.pushVertices( vertices, world, lightmap, x, y, z, yOffset, animatedBlock );
 					} else {
-						// Renderizar normalmente (pero verificar que no haya un bloque animado encima que esté cayendo aquí)
-						// Verificar si hay un bloque animado que esté cayendo a esta posición
+						// OPTIMIZACIÓN: Verificar solo si hay un bloque cayendo a esta posición específica
+						// Usar lookup map cacheado en el chunk para O(1) lookup en lugar de O(n)
 						var hasFallingBlockAbove = false;
-						if ( world.physics && world.physics.fallingBlocks ) {
-							for ( var key in world.physics.fallingBlocks ) {
-								var anim = world.physics.fallingBlocks[key];
-								if ( anim.x == x && anim.z == z && anim.targetY == y ) {
-									// Hay un bloque cayendo a esta posición
-									hasFallingBlockAbove = true;
-									break;
+						if ( world.physics && world.physics.fallingBlocks && Object.keys(world.physics.fallingBlocks).length > 0 ) {
+							// Crear lookup map por posición destino si no existe (una vez por chunk build)
+							if ( !chunk._fallingBlocksTargetMap ) {
+								chunk._fallingBlocksTargetMap = {};
+								for ( var key in world.physics.fallingBlocks ) {
+									var anim = world.physics.fallingBlocks[key];
+									var targetKey = anim.x + "," + anim.targetY + "," + anim.z;
+									if ( !chunk._fallingBlocksTargetMap[targetKey] ) {
+										chunk._fallingBlocksTargetMap[targetKey] = [];
+									}
+									chunk._fallingBlocksTargetMap[targetKey].push(anim);
 								}
 							}
+							var targetAnimKey = x + "," + y + "," + z;
+							hasFallingBlockAbove = chunk._fallingBlocksTargetMap[targetAnimKey] !== undefined;
 						}
 						
 						// Si no hay un bloque cayendo a esta posición, renderizar normalmente
@@ -1544,6 +1559,9 @@ Renderer.prototype.buildChunks = function( count )
 				}
 			}
 		}
+		
+		// Clear falling blocks target map cache (will be rebuilt next build if needed)
+		chunk._fallingBlocksTargetMap = null;
 		
 		// Create WebGL buffer
 		if ( chunk.buffer ) gl.deleteBuffer( chunk.buffer );
