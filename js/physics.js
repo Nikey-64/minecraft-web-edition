@@ -216,12 +216,15 @@ Physics.prototype.simulate = function()
 					// OPTIMIZACIÓN: Limitar altura de búsqueda de fluidos
 					var maxFluidSearchY = Math.min(world.sy - 1, 128);
 					for ( var y = maxFluidSearchY; y >= 0; y-- ) { // Y es altura, iterar de arriba hacia abajo
-					var material = world.getBlock( x, y, z );
-					if ( !material || !material.fluid || newFluidBlocks[x+","+y+","+z] != null ) continue;
+						// OPTIMIZACIÓN: Acceso directo a blocks en lugar de getBlock
+						if ( !blocks[x] || !blocks[x][y] || !blocks[x][y][z] ) continue;
+						var material = blocks[x][y][z];
+						if ( !material || !material.fluid || newFluidBlocks[x+","+y+","+z] != null ) continue;
 					
 					// Primero, caer hacia abajo (Y-1)
 					if ( y > 0 ) {
-						var blockBelow = world.getBlock( x, y - 1, z );
+						// OPTIMIZACIÓN: Acceso directo
+						var blockBelow = (blocks[x] && blocks[x][y-1] && blocks[x][y-1][z]) || BLOCK.AIR;
 						if ( blockBelow == BLOCK.AIR ) {
 							world.setBlock( x, y - 1, z, material );
 							newFluidBlocks[x+","+(y-1)+","+z] = true;
@@ -231,32 +234,33 @@ Physics.prototype.simulate = function()
 					
 					// Luego, extenderse horizontalmente (X±1, Z±1)
 					if ( x > 0 ) {
-						var blockLeft = world.getBlock( x - 1, y, z );
+						var blockLeft = (blocks[x-1] && blocks[x-1][y] && blocks[x-1][y][z]) || BLOCK.AIR;
 						if ( blockLeft == BLOCK.AIR ) {
 							world.setBlock( x - 1, y, z, material );
 							newFluidBlocks[(x-1)+","+y+","+z] = true;
 						}
 					}
 					if ( x < world.sx - 1 ) {
-						var blockRight = world.getBlock( x + 1, y, z );
+						var blockRight = (blocks[x+1] && blocks[x+1][y] && blocks[x+1][y][z]) || BLOCK.AIR;
 						if ( blockRight == BLOCK.AIR ) {
 							world.setBlock( x + 1, y, z, material );
 							newFluidBlocks[(x+1)+","+y+","+z] = true;
 						}
 					}
 					if ( z > 0 ) {
-						var blockBack = world.getBlock( x, y, z - 1 );
+						var blockBack = (blocks[x] && blocks[x][y] && blocks[x][y][z-1]) || BLOCK.AIR;
 						if ( blockBack == BLOCK.AIR ) {
 							world.setBlock( x, y, z - 1, material );
 							newFluidBlocks[x+","+y+","+(z-1)] = true;
 						}
 					}
 					if ( z < world.sz - 1 ) {
-						var blockFront = world.getBlock( x, y, z + 1 );
+						var blockFront = (blocks[x] && blocks[x][y] && blocks[x][y][z+1]) || BLOCK.AIR;
 						if ( blockFront == BLOCK.AIR ) {
 							world.setBlock( x, y, z + 1, material );
 							newFluidBlocks[x+","+y+","+(z+1)] = true;
 						}
+					}
 					}
 				}
 			}
