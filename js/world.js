@@ -108,10 +108,23 @@ World.prototype.createPerlinWorld = function( seed, options )
 	this.usePerlinTerrain = true;
 	
 	// Calcular altura de spawn basada en el centro del mapa
-	var spawnHeight = this.terrainGenerator.getHeightAt(this.sx / 2, this.sz / 2);
-	this.spawn = new Vector( this.sx / 2 + 0.5, spawnHeight + 2, this.sz / 2 + 0.5 );
+	// Buscar una posición válida para el spawn (sobre el terreno, en aire)
+	var spawnX = this.sx / 2;
+	var spawnZ = this.sz / 2;
+	var spawnHeight = this.terrainGenerator.getHeightAt(spawnX, spawnZ);
 	
-	console.log("Mundo Perlin creado con semilla:", seed, "altura de spawn:", spawnHeight + 2);
+	// Asegurar que el spawn esté al menos 2 bloques por encima del terreno
+	// y verificar que haya espacio suficiente (el jugador tiene ~2 bloques de altura)
+	var spawnY = spawnHeight + 3; // 3 bloques por encima del terreno para estar seguro
+	
+	// Verificar que la posición de spawn esté dentro de los límites del mundo
+	if (spawnY < 0) spawnY = 1;
+	if (spawnY >= this.sy) spawnY = this.sy - 1;
+	
+	this.spawn = new Vector( spawnX + 0.5, spawnY, spawnZ + 0.5 );
+	
+	console.log("Mundo Perlin creado con semilla:", seed);
+	console.log("Altura del terreno en spawn:", spawnHeight, "Spawn Y:", spawnY);
 }
 
 // createFromString( str )

@@ -512,16 +512,54 @@
 							// - noiseScale: Escala del ruido, menor = más suave (default: 0.05)
 							// - octaves: Número de capas de detalle (default: 6)
 							// - persistence: Persistencia del ruido (default: 0.5)
-							tempWorld.createPerlinWorld(null, {
-								baseHeight: 64,
-								heightVariation: 32,
-								noiseScale: 0.05,
-								octaves: 6,
-								persistence: 0.5
-							});
-							
-							// Alternativa: usar terreno plano (descomentar para activar)
-							// tempWorld.createFlatWorld( flatHeight );
+							try {
+								if (tempWorld.createPerlinWorld && typeof tempWorld.createPerlinWorld === "function") {
+									tempWorld.createPerlinWorld(null, {
+										baseHeight: 64,
+										heightVariation: 32,
+										noiseScale: 0.05,
+										octaves: 6,
+										persistence: 0.5
+									});
+									
+									// Guardar información de Perlin en worldData para poder cargarlo después
+									worldData.usePerlinTerrain = true;
+									worldData.perlinSeed = tempWorld.terrainGenerator ? tempWorld.terrainGenerator.perlin.seed : null;
+									worldData.perlinBaseHeight = 64;
+									worldData.perlinHeightVariation = 32;
+									worldData.perlinNoiseScale = 0.05;
+									worldData.perlinOctaves = 6;
+									worldData.perlinPersistence = 0.5;
+									
+									// Actualizar el spawn en worldData con el spawn correcto del terreno Perlin
+									if (tempWorld.spawn) {
+										worldData.spawn = {
+											x: tempWorld.spawn.x,
+											y: tempWorld.spawn.y,
+											z: tempWorld.spawn.z
+										};
+										// Guardar el spawn y metadata de Perlin actualizados en IndexedDB
+										await updateWorldMetadata(worldData.id, { 
+											spawn: worldData.spawn,
+											usePerlinTerrain: worldData.usePerlinTerrain,
+											perlinSeed: worldData.perlinSeed,
+											perlinBaseHeight: worldData.perlinBaseHeight,
+											perlinHeightVariation: worldData.perlinHeightVariation,
+											perlinNoiseScale: worldData.perlinNoiseScale,
+											perlinOctaves: worldData.perlinOctaves,
+											perlinPersistence: worldData.perlinPersistence
+										});
+									}
+								} else {
+									// Fallback a terreno plano si createPerlinWorld no está disponible
+									console.warn("createPerlinWorld no está disponible, usando terreno plano");
+									tempWorld.createFlatWorld( flatHeight );
+								}
+							} catch (err) {
+								console.error("Error al crear mundo Perlin:", err);
+								console.warn("Usando terreno plano como fallback");
+								tempWorld.createFlatWorld( flatHeight );
+							}
 							
 							// Generar y guardar todos los chunks base en IndexedDB
 							console.log("Generating and saving all base chunks for new world with Perlin terrain...");
@@ -655,17 +693,75 @@
 				w.flatHeight = worldData.flatHeight || 4; // Store flatHeight for chunk generation
 				w.gameMode = worldData.gameMode !== undefined ? worldData.gameMode : 0; // Store gameMode (default: Survival)
 				
-				// Set spawn position
+				// Set spawn position first (temporary, will be adjusted if needed)
 				if ( worldData.spawn ) {
 					w.spawn = new Vector( worldData.spawn.x, worldData.spawn.y, worldData.spawn.z );
 				} else {
 					w.spawn = new Vector( worldData.sizeX / 2 + 0.5, worldData.flatHeight + 1, worldData.sizeZ / 2 + 0.5 );
 				}
 				
+				// Si el mundo fue creado con Perlin, inicializar el terrainGenerator
+				// Detectar si es un mundo Perlin (si tiene usePerlinTerrain o el spawn está muy alto)
+				var isPerlinWorld = worldData.usePerlinTerrain || 
+				                    (worldData.spawn && worldData.spawn.y > (worldData.flatHeight || 4) + 20);
+				
+				if (isPerlinWorld && typeof TerrainGenerator !== "undefined") {
+					try {
+						// Usar la misma configuración que al crear el mundo
+						w.createPerlinWorld(worldData.perlinSeed || null, {
+							baseHeight: worldData.perlinBaseHeight || 64,
+							heightVariation: worldData.perlinHeightVariation || 32,
+							noiseScale: worldData.perlinNoiseScale || 0.05,
+							octaves: worldData.perlinOctaves || 6,
+							persistence: worldData.perlinPersistence || 0.5
+						});
+						
+						// Recalcular spawn si es necesario para asegurar que esté sobre el terreno
+						if (w.terrainGenerator) {
+							var spawnHeight = w.terrainGenerator.getHeightAt(w.spawn.x, w.spawn.z);
+							var minSpawnY = spawnHeight + 3;
+							if (w.spawn.y < minSpawnY) {
+								w.spawn.y = minSpawnY;
+								console.log("Spawn ajustado a altura del terreno:", w.spawn.y);
+							}
+						}
+					} catch (err) {
+						console.warn("Error al inicializar terreno Perlin, usando terreno plano:", err);
+						w.usePerlinTerrain = false;
+						w.terrainGenerator = null;
+					}
+				}
+				
 				// Don't generate the entire world - chunks will be loaded on demand
 				// This prevents loading everything into RAM
 				
 				return w;
+			}
+			
+			// Función auxiliar para actualizar metadata del mundo
+			async function updateWorldMetadata(worldId, updates) {
+				if (!worldManager || !worldManager.db) return;
+				return new Promise(function(resolve, reject) {
+					var transaction = worldManager.db.transaction(["worlds"], "readwrite");
+					var store = transaction.objectStore("worlds");
+					var request = store.get(worldId);
+					
+					request.onsuccess = function() {
+						var worldData = request.result;
+						if (worldData) {
+							for (var key in updates) {
+								worldData[key] = updates[key];
+							}
+							worldData.modified = Date.now();
+							var putRequest = store.put(worldData);
+							putRequest.onsuccess = resolve;
+							putRequest.onerror = reject;
+						} else {
+							resolve();
+						}
+					};
+					request.onerror = reject;
+				});
 			}
 
 			function fetchSeedDefinition( seedName ) {

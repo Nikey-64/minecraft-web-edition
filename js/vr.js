@@ -102,14 +102,35 @@ VRManager.prototype.requestVRSession = function()
 	}).then(function(referenceSpace) {
 		self.xrSpace = referenceSpace;
 		
-		// Configurar el canvas para WebXR
+		// Verificar que el renderer y el contexto WebGL estén disponibles
+		if (!self.renderer) {
+			console.error("VR: Renderer no está disponible");
+			return Promise.reject("Renderer no está disponible");
+		}
+		
 		var canvas = self.renderer.canvas;
 		var gl = self.renderer.gl;
+		
+		if (!canvas) {
+			console.error("VR: Canvas no está disponible");
+			return Promise.reject("Canvas no está disponible");
+		}
+		
+		if (!gl) {
+			console.error("VR: Contexto WebGL no está disponible");
+			return Promise.reject("Contexto WebGL no está disponible");
+		}
 		
 		// Para Oculus Quest, el contexto WebGL debe ser compatible con XR
 		// Hacer el contexto WebGL compatible con XR antes de crear el layer
 		var setupXRLayer = function() {
 			try {
+				// Verificar que gl sigue disponible dentro de setupXRLayer
+				if (!gl) {
+					console.error("VR: gl no está disponible en setupXRLayer");
+					throw new Error("gl no está disponible");
+				}
+				
 				// Crear el layer de renderizado XR
 				// Para Oculus Quest, usar opciones específicas si están disponibles
 				var layerOptions = {
@@ -132,6 +153,9 @@ VRManager.prototype.requestVRSession = function()
 				console.error("VR: Error al crear XRWebGLLayer:", e);
 				// Intentar sin opciones como fallback
 				try {
+					if (!gl) {
+						throw new Error("gl no está disponible para fallback");
+					}
 					var xrLayer = new XRWebGLLayer(self.xrSession, gl);
 					self.xrSession.updateRenderState({
 						baseLayer: xrLayer
@@ -146,7 +170,7 @@ VRManager.prototype.requestVRSession = function()
 		
 		// Hacer el contexto WebGL compatible con XR
 		// Nota: makeXRCompatible puede no estar disponible en todos los contextos
-		if (gl.makeXRCompatible) {
+		if (gl && typeof gl.makeXRCompatible === 'function') {
 			gl.makeXRCompatible().then(function() {
 				console.log("VR: Contexto WebGL hecho compatible con XR");
 				setupXRLayer();
