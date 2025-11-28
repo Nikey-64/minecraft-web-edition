@@ -14,6 +14,7 @@
 		<!-- Modules -->
 		<script src="js/glMatrix-1.2.min.js" type="text/javascript"></script>
 		<script src="js/blocks.js" type="text/javascript"></script>
+		<script src="js/perlin.js" type="text/javascript"></script>
 		<script src="js/helpers.js" type="text/javascript"></script>
 		<script src="js/items.js" type="text/javascript"></script>
 		<script src="js/entities.js" type="text/javascript"></script>
@@ -503,11 +504,27 @@
 							// Crear instancia temporal del mundo para generar y guardar todos los chunks base
 							var tempWorld = new World( worldData.sizeX, worldData.sizeY, worldData.sizeZ );
 							tempWorld.worldId = worldData.id;
-							tempWorld.flatHeight = worldData.flatHeight || 4;
-							tempWorld.spawn = new Vector( worldData.spawn.x, worldData.spawn.y, worldData.spawn.z );
+							
+							// Usar terreno Perlin por defecto (puedes cambiar esto a createFlatWorld para terreno plano)
+							// Opciones de terreno Perlin:
+							// - baseHeight: Altura base (default: 64)
+							// - heightVariation: Variación de altura (default: 32)
+							// - noiseScale: Escala del ruido, menor = más suave (default: 0.05)
+							// - octaves: Número de capas de detalle (default: 6)
+							// - persistence: Persistencia del ruido (default: 0.5)
+							tempWorld.createPerlinWorld(null, {
+								baseHeight: 64,
+								heightVariation: 32,
+								noiseScale: 0.05,
+								octaves: 6,
+								persistence: 0.5
+							});
+							
+							// Alternativa: usar terreno plano (descomentar para activar)
+							// tempWorld.createFlatWorld( flatHeight );
 							
 							// Generar y guardar todos los chunks base en IndexedDB
-							console.log("Generating and saving all base chunks for new world...");
+							console.log("Generating and saving all base chunks for new world with Perlin terrain...");
 							await tempWorld.generateAndSaveAllChunks();
 							console.log("World created and all chunks saved!");
 							

@@ -44,6 +44,10 @@ function World( sx, sy, sz )
 	this.worldId = null; // Set when world is loaded/created
 	this.flatHeight = 4; // Default flat world height (can be set from world metadata)
 	
+	// Terrain generator (Perlin noise)
+	this.terrainGenerator = null; // Se inicializa cuando se crea el mundo
+	this.usePerlinTerrain = false; // Flag para usar terreno Perlin o plano
+	
 	// Cache for chunks loaded from IndexedDB (since readChunkFromStorage is synchronous)
 	// Key: chunk key, Value: chunk data string or null (if checked and not found)
 	this.indexedDBCache = {};
@@ -69,6 +73,45 @@ World.prototype.createFlatWorld = function( height )
 	// Terrain will be generated on-demand when chunks are loaded via ensureChunkLoaded
 	// This prevents loading huge worlds (e.g., 256x256x256 = 16M blocks) into RAM
 	this.flatHeight = height;
+	this.usePerlinTerrain = false;
+	this.terrainGenerator = null;
+}
+
+// createPerlinWorld()
+//
+// Configura el mundo para usar generación de terreno con ruido Perlin
+//
+// seed - Semilla para el generador (opcional, se genera aleatoria si no se proporciona)
+// options - Opciones de configuración del terreno:
+//   - baseHeight: Altura base del terreno (default: 64)
+//   - heightVariation: Variación de altura (default: 32)
+//   - noiseScale: Escala del ruido (default: 0.05)
+//   - octaves: Número de octavas (default: 6)
+//   - persistence: Persistencia del ruido (default: 0.5)
+
+World.prototype.createPerlinWorld = function( seed, options )
+{
+	// Crear generador de terreno con ruido Perlin
+	if (typeof TerrainGenerator === "undefined") {
+		console.error("TerrainGenerator no está disponible. Asegúrate de que perlin.js esté cargado.");
+		// Fallback a terreno plano
+		this.createFlatWorld(64);
+		return;
+	}
+	
+	// Usar semilla aleatoria si no se proporciona
+	if (seed === undefined || seed === null) {
+		seed = Math.floor(Math.random() * 2147483647);
+	}
+	
+	this.terrainGenerator = new TerrainGenerator(seed, options);
+	this.usePerlinTerrain = true;
+	
+	// Calcular altura de spawn basada en el centro del mapa
+	var spawnHeight = this.terrainGenerator.getHeightAt(this.sx / 2, this.sz / 2);
+	this.spawn = new Vector( this.sx / 2 + 0.5, spawnHeight + 2, this.sz / 2 + 0.5 );
+	
+	console.log("Mundo Perlin creado con semilla:", seed, "altura de spawn:", spawnHeight + 2);
 }
 
 // createFromString( str )
@@ -301,14 +344,21 @@ World.prototype.ensureChunkLoaded = function( chunk, chunkSize, chunkSizeY )
 						if ( !this.blocks[x][y] ) {
 							this.blocks[x][y] = new Array( this.sz );
 						}
-						// Generar terreno plano (misma lógica que generateAndSaveAllChunks)
+					// Generar terreno (Perlin o plano)
+					var blockType;
+					if (this.usePerlinTerrain && this.terrainGenerator) {
+						blockType = this.terrainGenerator.getBlockAt(x, y, z);
+					} else {
+						// Terreno plano
 						if ( y >= flatHeight ) {
-							this.blocks[x][y][z] = BLOCK.AIR;
+							blockType = BLOCK.AIR;
 						} else if ( y === flatHeight - 1 ) {
-							this.blocks[x][y][z] = BLOCK.GRASS;
+							blockType = BLOCK.GRASS;
 						} else {
-							this.blocks[x][y][z] = BLOCK.DIRT;
+							blockType = BLOCK.DIRT;
 						}
+					}
+					this.blocks[x][y][z] = blockType;
 					}
 				}
 			}
@@ -374,14 +424,21 @@ World.prototype.generateAndSaveAllChunks = function()
 					if ( !self.blocks[x][y] ) {
 						self.blocks[x][y] = new Array( self.sz );
 					}
-					// Generar terreno plano
-					if ( y >= flatHeight ) {
-						self.blocks[x][y][z] = BLOCK.AIR;
-					} else if ( y === flatHeight - 1 ) {
-						self.blocks[x][y][z] = BLOCK.GRASS;
+					// Generar terreno (Perlin o plano)
+					var blockType;
+					if (self.usePerlinTerrain && self.terrainGenerator) {
+						blockType = self.terrainGenerator.getBlockAt(x, y, z);
 					} else {
-						self.blocks[x][y][z] = BLOCK.DIRT;
+						// Terreno plano
+						if ( y >= flatHeight ) {
+							blockType = BLOCK.AIR;
+						} else if ( y === flatHeight - 1 ) {
+							blockType = BLOCK.GRASS;
+						} else {
+							blockType = BLOCK.DIRT;
+						}
 					}
+					self.blocks[x][y][z] = blockType;
 				}
 			}
 		}
