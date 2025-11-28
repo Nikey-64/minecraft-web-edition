@@ -281,6 +281,7 @@ function registerBlockItems() {
 // ==========================================
 // Tool Items
 // ==========================================
+//tool textures from items.png
 
 // Helper to create a tool item
 function createToolItem(id, name, toolType, material, textureCoords) {

@@ -6,12 +6,16 @@
 
 // Direction enumeration
 var DIRECTION = {};
+// Directions for block faces (outside the block)
 DIRECTION.UP = 1;
 DIRECTION.DOWN = 2;
 DIRECTION.LEFT = 3;
 DIRECTION.RIGHT = 4;
 DIRECTION.FORWARD = 5;
 DIRECTION.BACK = 6;
+// Direction for interior faces (inside the block) for only on block types that need it (like ladders)
+// This direction should be used only when rendering ladder faces against walls
+DIRECTION.INSIDE = 7;
 
 // Ensure BLOCK is global
 if ( typeof BLOCK === 'undefined' ) {
@@ -74,7 +78,12 @@ BLOCK.getPickingColor = function( x, y, z, faceId )
 BLOCK.AIR = {
 	id: 0,
 	spawnable: false,
-	transparent: true
+	transparent: true,
+	solid: false,
+	gravity: false,
+	fluid: false,
+	flammable: false,
+	explosive: false,
 };
 
 // Bedrock
@@ -176,7 +185,7 @@ BLOCK.BOOKCASE = {
 // Lava
 BLOCK.LAVA = {
 	id: 6,
-	spawnable: false,
+	spawnable: true,
 	transparent: true,
 	selflit: true,
 	gravity: true,
@@ -190,7 +199,7 @@ BLOCK.LAVA = {
 // Water
 BLOCK.WATER = {
 	id: 1,
-	spawnable: false,
+	spawnable: true,
 	transparent: true,
 	selflit: false,
 	gravity: true,
@@ -232,7 +241,7 @@ BLOCK.COBBLESTONE = {
 };
 
 // Concrete
-BLOCK.CONCRETE = {
+BLOCK.STONE = {
 	id: 9,
 	spawnable: true,
 	transparent: false,
@@ -429,15 +438,101 @@ BLOCK.PLANKS_STAIRS = {
 	toollevel: 1,
 	breaktime: 10000, /* 10 seconds to break */
 	// Stairs need orientation data (stored in block metadata)
-	// For now, use simple texture - can be enhanced later with orientation support
+	// Texture function returns different textures based on face direction (like Minecraft vanilla)
 	texture: function( world, lightmap, lit, x, y, z, dir ) { 
-		// Use plank texture for stairs
-		return [ 4/16, 0/16, 5/16, 1/16 ]; 
+		// Base plank texture coordinates
+		var plankTex = [ 4/16, 0/16, 5/16, 1/16 ];
+		
+		// For stairs, different faces use different parts of the texture
+		// In Minecraft vanilla, stairs have:
+		// - Top face: uses top texture (same as plank top)
+		// - Bottom face: uses bottom texture (same as plank bottom)
+		// - Side faces: use side texture (same as plank side)
+		if ( dir == DIRECTION.UP ) {
+			// Top face - uses plank top texture
+			return plankTex;
+		} else if ( dir == DIRECTION.DOWN ) {
+			// Bottom face - uses plank bottom texture
+			return plankTex;
+		} else {
+			// Side faces (LEFT, RIGHT, FORWARD, BACK) - uses plank side texture
+			return plankTex;
+		}
 	},
 	// Stairs are special blocks that need custom collision and rendering
 	// TODO: Add orientation support (facing direction)
 	// TODO: Add custom collision box (half block height on one side)
 	isStairs: true
+};
+
+// cobblestone.stairs
+// Cobblestone stairs block
+BLOCK.COBBLESTONE_STAIRS = {
+	id: 25,
+	spawnable: true,
+	transparent: false,
+	selflit: false,
+	gravity: false,
+	fluid: false,
+	solid: true,
+	flammable: false,
+	explosive: false,
+	bloctype: "stairs",
+	breakable: true,
+	requiredtool: "pickaxe",
+	tooltime: 5000,
+	toollevel: 1,
+	breaktime: 10000,
+	// Texture function returns different textures based on face direction (like Minecraft vanilla)
+	texture: function( world, lightmap, lit, x, y, z, dir ) { 
+		// Base cobblestone texture coordinates
+		var cobbleTex = [ 0/16, 1/16, 1/16, 2/16 ];
+		
+		// For stairs, different faces use different parts of the texture
+		if ( dir == DIRECTION.UP ) {
+			// Top face - uses cobblestone top texture
+			return cobbleTex;
+		} else if ( dir == DIRECTION.DOWN ) {
+			// Bottom face - uses cobblestone bottom texture
+			return cobbleTex;
+		} else {
+			// Side faces (LEFT, RIGHT, FORWARD, BACK) - uses cobblestone side texture
+			return cobbleTex;
+		}
+	},
+	isStairs: true
+};
+
+// .ladder
+// Ladder block (can be placed only on walls) onwall: true, onfloor:false,
+// Only renders the face against the block it's attached to (is not happening yet)
+// Acts as transparent block to avoid collision bugs
+BLOCK.LADDER = {
+	id: 28,
+	spawnable: true,
+	bloctype: "ladder",
+	onfloor: false, // it means that the ladder cannot be on the floor
+	onwall: true, // it means that the ladder cannot be on the wall
+	transparent: true, // Transparent to avoid collision bugs
+	selflit: false,
+	gravity: false,
+	fluid: false,
+	solid: false, // Not solid to avoid collision issues
+	flammable: false,
+	explosive: false,
+	breakable: true,
+	requiredtool: "none",
+	tooltime: 5000,
+	toollevel: 1,
+	breaktime: 10000,
+	texture: function( world, lightmap, lit, x, y, z, dir ) { 
+		// Ladder texture in terrain.png - based on thumbnails/ladder.png reference
+		// In Minecraft vanilla, ladder texture is typically at position (3, 5) in the 16x16 texture atlas
+		// Format: [u_min, v_min, u_max, v_max] in normalized coordinates [0-1]
+		// Position (3, 5) means: x = 3/16, y = 5/16, width = 1/16, height = 1/16
+		// This matches the wooden ladder texture with vertical stiles and horizontal rungs
+		return [ 3/16, 5/16, 4/16, 6/16 ]; 
+	},
 };
 
 BLOCK.WATER = {
@@ -722,7 +817,68 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	// 2. If two transparent blocks of the same type are adjacent, their adjacent faces are NOT rendered
 	// 3. If two transparent blocks of different types are adjacent, their adjacent faces are rendered based on viewing angle
 	// 4. If two solid non-transparent blocks are adjacent, their adjacent faces are NOT rendered
+	// 5. Special rule for wall stairs and ladders: render ONLY the face OPPOSITE to solid block
+	// Helper function to get ladder wall direction (which side has the solid block)
+	var getLadderWallDirection = function( currentX, currentY, currentZ, world ) {
+		// Check all 4 horizontal directions to find which side has a solid block
+		var blockLeft = world.getBlock( currentX - 1, currentY, currentZ );
+		var blockRight = world.getBlock( currentX + 1, currentY, currentZ );
+		var blockFront = world.getBlock( currentX, currentY, currentZ - 1 );
+		var blockBack = world.getBlock( currentX, currentY, currentZ + 1 );
+		
+		// Determine which side has the solid block (the wall)
+		if ( blockLeft && blockLeft != BLOCK.AIR && blockLeft.solid !== false ) {
+			return "left"; // Wall is on left (x-1)
+		} else if ( blockRight && blockRight != BLOCK.AIR && blockRight.solid !== false ) {
+			return "right"; // Wall is on right (x+1)
+		} else if ( blockFront && blockFront != BLOCK.AIR && blockFront.solid !== false ) {
+			return "front"; // Wall is on front (z-1)
+		} else if ( blockBack && blockBack != BLOCK.AIR && blockBack.solid !== false ) {
+			return "back"; // Wall is on back (z+1)
+		}
+		return null; // No solid wall found
+	};
+	
 	var shouldRenderFaceBetweenBlocks = function( currentBlock, adjacentBlock, currentX, currentY, currentZ, adjacentX, adjacentY, adjacentZ ) {
+		// Special rule for ladders: render ONLY the face that is AGAINST the solid block
+		if ( currentBlock.bloctype === "ladder" ) {
+			// Determine which face we're checking based on adjacent block position
+			var checkingFace = null;
+			if ( adjacentX < currentX ) {
+				checkingFace = "left"; // Checking left face (x-1)
+			} else if ( adjacentX > currentX ) {
+				checkingFace = "right"; // Checking right face (x+1)
+			} else if ( adjacentZ < currentZ ) {
+				checkingFace = "front"; // Checking front face (z-1)
+			} else if ( adjacentZ > currentZ ) {
+				checkingFace = "back"; // Checking back face (z+1)
+			} else {
+				// Vertical face (top or bottom) - never render for ladders
+				return false;
+			}
+			
+			// Check if the adjacent block (the one we're checking against) is solid
+			// For ladders, we render the face that is AGAINST a solid block
+			// So if adjacentBlock is solid, we should render this face
+			if ( adjacentBlock && adjacentBlock != BLOCK.AIR && adjacentBlock.solid !== false ) {
+				// The adjacent block is solid, so render this face (it's against the wall)
+				return true;
+			}
+			
+			// If adjacent block is not solid, don't render this face
+			return false;
+		}
+		
+		// Special rule for wall stairs (keep existing logic)
+		if ( currentBlock.isWallStairs ) {
+			// If adjacent block is solid (not transparent), don't render this face (it's against the wall)
+			if ( adjacentBlock && adjacentBlock != BLOCK.AIR && !adjacentBlock.transparent ) {
+				return false; // Don't render faces against solid blocks
+			}
+			// If adjacent block is air or transparent, render this face (it's visible to the player)
+			return true;
+		}
+		
 		// Rule 1: Always render faces adjacent to AIR
 		if ( !adjacentBlock || adjacentBlock == BLOCK.AIR ) {
 			return true;
@@ -827,13 +983,38 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
 		// Aplicar yOffset para animaciones
 		var renderY = y + yOffset;
-		pushQuad(
-			vertices,
-			[ x - OFFSET, z - OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY + bH, c[2], c[3], r, g, b, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET, renderY + bH, c[0], c[3], r, g, b, 1.0 ]
-		);
+		
+		// Special handling for stairs: top face is only half the block (like Minecraft vanilla)
+		// Stairs have the flat part on the top half of the block
+		var isStairs = (block && block.isStairs);
+		if ( isStairs ) {
+			// For stairs, render only the top half of the block (the flat part)
+			// The top face should be at y + 0.5 (half block height) instead of y + 1.0
+			// Default orientation: stairs face forward (Z-1), so the flat part is in the back half (Z+0.5 to Z+1.0)
+			// For now, use default orientation (facing forward/back)
+			// TODO: Use actual block orientation when metadata is implemented
+			var stairsTopHeight = 0.5; // Half block height for stairs top
+			var stairsTopZStart = 0.5; // Start at middle of block (default: back half)
+			var stairsTopZEnd = 1.0; // End at back edge
+			
+			// Render the top face of the stairs (only the flat part)
+			pushQuad(
+				vertices,
+				[ x - OFFSET, z + stairsTopZStart - OFFSET, renderY + stairsTopHeight, c[0], c[1], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET, z + stairsTopZStart - OFFSET, renderY + stairsTopHeight, c[2], c[1], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET, z + stairsTopZEnd + OFFSET, renderY + stairsTopHeight, c[2], c[3], r, g, b, 1.0 ],
+				[ x - OFFSET, z + stairsTopZEnd + OFFSET, renderY + stairsTopHeight, c[0], c[3], r, g, b, 1.0 ]
+			);
+		} else {
+			// Normal block: render full top face
+			pushQuad(
+				vertices,
+				[ x - OFFSET, z - OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET, z - OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY + bH, c[2], c[3], r, g, b, 1.0 ],
+				[ x - OFFSET, z + 1.0 + OFFSET, renderY + bH, c[0], c[3], r, g, b, 1.0 ]
+			);
+		}
 	}
 	
 	// Bottom - only render if adjacent block is transparent or doesn't exist (AIR)
@@ -878,11 +1059,18 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 	// Front - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Front es Z-1 (hacia -Z, horizontal)
 	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
+	// Exception: ladders render against solid blocks, so allow rendering even if adjacent block is solid
 	var shouldRenderFront = shouldRenderFaceBetweenBlocks( block, blockFront, x, y, z, x, y, z - 1 );
-	if ( shouldRenderFront && ( yOffset != 0 || z == 0 || !blockFront || blockFront == BLOCK.AIR || blockFront.transparent ) )
+	// For ladders: if shouldRenderFaceBetweenBlocks says to render, always render (even against solid blocks)
+	// This is a special case - ladders need to render against solid walls
+	var isLadder = (block && block.bloctype === "ladder");
+	var isLadderFace = (isLadder && shouldRenderFront);
+	if ( shouldRenderFront && ( yOffset != 0 || z == 0 || !blockFront || blockFront == BLOCK.AIR || blockFront.transparent || isLadderFace ) )
 	{
 		if ( !block || typeof block.texture !== 'function' ) return;
-		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.FORWARD );
+		// For ladders against walls, use DIRECTION.INSIDE instead of normal direction
+		var textureDir = (isLadderFace) ? DIRECTION.INSIDE : DIRECTION.FORWARD;
+		var c = block.texture( world, lightmap, blockLit, x, y, z, textureDir );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
 		// Verificar iluminación del bloque adyacente
@@ -908,23 +1096,56 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
 		// Aplicar yOffset para animaciones
 		var renderY = y + yOffset;
+		
+		// For ladders: apply offset to render face slightly away from wall (1/16 block = 1 pixel)
+		// Use variable direction to determine wall side and apply offset accordingly
+		var ladderOffsetX = 0;
+		var ladderOffsetZ = 0;
+		if ( block.bloctype === "ladder" ) {
+			var wallDir = getLadderWallDirection( x, y, z, world );
+			// Ladder face should be 1/16 block (0.0625) away from the wall, towards the inside
+			// If wall is on left (x-1), offset towards -X (inside)
+			// If wall is on right (x+1), offset towards +X (inside)
+			// If wall is on front (z-1), offset towards -Z (inside)
+			// If wall is on back (z+1), offset towards +Z (inside)
+			if ( wallDir === "left" ) {
+				// Wall at x-1, face at x - OFFSET, move to x - 1 + 1/16 = x - 15/16
+				ladderOffsetX = -(1.0 - 1.0/16.0) + OFFSET;
+			} else if ( wallDir === "right" ) {
+				// Wall at x+1, face at x + 1 + OFFSET, move to x + 1 - 1/16 = x + 15/16
+				ladderOffsetX = (1.0 - 1.0/16.0) - OFFSET;
+			} else if ( wallDir === "front" ) {
+				// Wall at z-1, face at z - OFFSET, move to z - 1 + 1/16 = z - 15/16
+				ladderOffsetZ = -(1.0 - 1.0/16.0) + OFFSET;
+			} else if ( wallDir === "back" ) {
+				// Wall at z+1, face at z + 1 + OFFSET, move to z + 1 - 1/16 = z + 15/16
+				ladderOffsetZ = (1.0 - 1.0/16.0) - OFFSET;
+			}
+		}
+		
 		pushQuad(
 			vertices,
-			[ x - OFFSET, z - OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
-			[ x - OFFSET, z - OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ]
+			[ x - OFFSET + ladderOffsetX, z - OFFSET + ladderOffsetZ, renderY, c[0], c[3], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET + ladderOffsetX, z - OFFSET + ladderOffsetZ, renderY, c[2], c[3], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET + ladderOffsetX, z - OFFSET + ladderOffsetZ, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x - OFFSET + ladderOffsetX, z - OFFSET + ladderOffsetZ, renderY + bH, c[0], c[1], r, g, b, 1.0 ]
 		);
 	}
 	
 	// Back - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Back es Z+1 (hacia +Z, horizontal)
 	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
+	// Exception: ladders render against solid blocks, so allow rendering even if adjacent block is solid
 	var shouldRenderBack = shouldRenderFaceBetweenBlocks( block, blockBack, x, y, z, x, y, z + 1 );
-	if ( shouldRenderBack && ( yOffset != 0 || z == world.sz - 1 || !blockBack || blockBack == BLOCK.AIR || blockBack.transparent ) )
+	// For ladders: if shouldRenderFaceBetweenBlocks says to render, always render (even against solid blocks)
+	var isLadder = (block && block.bloctype === "ladder");
+	var isLadderFace = (isLadder && shouldRenderBack);
+	if ( shouldRenderBack && ( yOffset != 0 || z == world.sz - 1 || !blockBack || blockBack == BLOCK.AIR || blockBack.transparent || isLadderFace ) )
 	{
 		if ( !block || typeof block.texture !== 'function' ) return;
-		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.BACK );
+		// For ladders against walls, use DIRECTION.INSIDE instead of normal direction
+		var textureDir = (isLadderFace) ? DIRECTION.INSIDE : DIRECTION.BACK;
+		var c = block.texture( world, lightmap, blockLit, x, y, z, textureDir );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
@@ -947,23 +1168,46 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
 		// Aplicar yOffset para animaciones
 		var renderY = y + yOffset;
+		
+		// For ladders: apply offset to render face slightly away from wall (1/16 block = 1 pixel)
+		var ladderOffset = 0;
+		if ( block.bloctype === "ladder" ) {
+			// Ladder face should be offset 1/16 block (0.0625) away from the wall
+			// Back face (z+1) - wall is at z+1, we want ladder face 1/16 away from wall
+			// Position: z + 1 - 1/16 = z + 15/16 = z + 0.9375
+			// Current face position: z + 1.0 + OFFSET (where OFFSET ≈ 0.001, so ≈ z + 1.001)
+			// We need: z + 1.001 + ladderOffset = z + 0.9375
+			// Therefore: ladderOffset = 0.9375 - 1.001 = -0.0635
+			// But we want: z + 1.0 + OFFSET + ladderOffset = z + 1 - 1/16 = z + 15/16
+			// So: ladderOffset = 15/16 - 1 - OFFSET = -1/16 - OFFSET ≈ -1/16
+			// Actually simpler: we want face at z + 15/16, current is z + 1 + OFFSET
+			// So: ladderOffset = 15/16 - 1 - OFFSET = -1/16 - OFFSET
+			ladderOffset = -(1.0/16.0) - OFFSET; // Move towards +Z (towards wall, but 1/16 away from it)
+		}
+		
 		pushQuad(
 			vertices,
-			[ x - OFFSET, z + 1.0 + OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ]
+			[ x - OFFSET, z + 1.0 + OFFSET + ladderOffset, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET + ladderOffset, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET + ladderOffset, renderY, c[0], c[3], r, g, b, 1.0 ],
+			[ x - OFFSET, z + 1.0 + OFFSET + ladderOffset, renderY, c[2], c[3], r, g, b, 1.0 ]
 		);
 	}
 	
 	// Left - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Left es X-1
 	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
+	// Exception: ladders render against solid blocks, so allow rendering even if adjacent block is solid
 	var shouldRenderLeft = shouldRenderFaceBetweenBlocks( block, blockLeft, x, y, z, x - 1, y, z );
-	if ( shouldRenderLeft && ( yOffset != 0 || x == 0 || !blockLeft || blockLeft == BLOCK.AIR || blockLeft.transparent ) )
+	// For ladders: if shouldRenderFaceBetweenBlocks says to render, always render (even against solid blocks)
+	var isLadder = (block && block.bloctype === "ladder");
+	var isLadderFace = (isLadder && shouldRenderLeft);
+	if ( shouldRenderLeft && ( yOffset != 0 || x == 0 || !blockLeft || blockLeft == BLOCK.AIR || blockLeft.transparent || isLadderFace ) )
 	{
 		if ( !block || typeof block.texture !== 'function' ) return;
-		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.LEFT );
+		// For ladders against walls, use DIRECTION.INSIDE instead of normal direction
+		var textureDir = (isLadderFace) ? DIRECTION.INSIDE : DIRECTION.LEFT;
+		var c = block.texture( world, lightmap, blockLit, x, y, z, textureDir );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
 		var lightMultiplier = block.selflit ? 1.0 : 0.6;
@@ -986,23 +1230,44 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
 		// Aplicar yOffset para animaciones
 		var renderY = y + yOffset;
+		
+		// For ladders: apply offset to render face slightly away from wall (1/16 block = 1 pixel)
+		var ladderOffset = 0;
+		if ( block.bloctype === "ladder" ) {
+			// Ladder face should be offset 1/16 block (0.0625) away from the wall
+			// Left face (x-1) - wall is at x-1, we want ladder face 1/16 away from wall
+			// Position: x - 1 + 1/16 = x - 15/16 = x - 0.9375
+			// Current face position: x - OFFSET (where OFFSET ≈ 0.001, so ≈ x - 0.001)
+			// We need: x - 0.001 + ladderOffset = x - 0.9375
+			// Therefore: ladderOffset = -0.9375 + 0.001 = -0.9365
+			// Actually, we want the face to be 1/16 away from x-1, so at x - 1 + 1/16 = x - 15/16
+			// Since face is at x - OFFSET, we need: ladderOffset = -(1 - 1/16) + OFFSET ≈ -(1 - 1/16)
+			ladderOffset = -(1.0 - 1.0/16.0) + OFFSET; // = -15/16 + 0.001 = -0.9365
+		}
+		
 		pushQuad(
 			vertices,
-			[ x - OFFSET, z - OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
-			[ x - OFFSET, z - OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ]
+			[ x - OFFSET + ladderOffset, z - OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x - OFFSET + ladderOffset, z + 1.0 + OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
+			[ x - OFFSET + ladderOffset, z + 1.0 + OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
+			[ x - OFFSET + ladderOffset, z - OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ]
 		);
 	}
 	
 	// Right - only render if adjacent block is transparent or doesn't exist (AIR)
 	// Right es X+1
 	// Si el bloque está animado, siempre mostrar las caras laterales (está en el aire)
+	// Exception: ladders render against solid blocks, so allow rendering even if adjacent block is solid
 	var shouldRenderRight = shouldRenderFaceBetweenBlocks( block, blockRight, x, y, z, x + 1, y, z );
-	if ( shouldRenderRight && ( yOffset != 0 || x == world.sx - 1 || !blockRight || blockRight == BLOCK.AIR || blockRight.transparent ) )
+	// For ladders: if shouldRenderFaceBetweenBlocks says to render, always render (even against solid blocks)
+	var isLadder = (block && block.bloctype === "ladder");
+	var isLadderFace = (isLadder && shouldRenderRight);
+	if ( shouldRenderRight && ( yOffset != 0 || x == world.sx - 1 || !blockRight || blockRight == BLOCK.AIR || blockRight.transparent || isLadderFace ) )
 	{
 		if ( !block || typeof block.texture !== 'function' ) return;
-		var c = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.RIGHT );
+		// For ladders against walls, use DIRECTION.INSIDE instead of normal direction
+		var textureDir = (isLadderFace) ? DIRECTION.INSIDE : DIRECTION.RIGHT;
+		var c = block.texture( world, lightmap, blockLit, x, y, z, textureDir );
 		c = adjustTexCoords( c, blockDistance ); // Ajustar coordenadas de textura para evitar bleeding (solo a distancia)
 		
 		// Verificar iluminación del bloque adyacente
@@ -1028,13 +1293,128 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		// Por lo tanto, intercambiamos y y z: [x, z, y]
 		// Aplicar yOffset para animaciones
 		var renderY = y + yOffset;
+		
+		// For ladders: apply offset to render face slightly away from wall (1/16 block = 1 pixel)
+		var ladderOffset = 0;
+		if ( block.bloctype === "ladder" ) {
+			// Ladder face should be offset 1/16 block (0.0625) away from the wall
+			// Right face (x+1) - wall is at x+1, we want ladder face 1/16 away from wall
+			// Position: x + 1 - 1/16 = x + 15/16 = x + 0.9375
+			// Current face position: x + 1.0 + OFFSET (where OFFSET ≈ 0.001, so ≈ x + 1.001)
+			// We need: x + 1.001 + ladderOffset = x + 0.9375
+			// Therefore: ladderOffset = 0.9375 - 1.001 = -0.0635
+			// But we want: x + 1.0 + OFFSET + ladderOffset = x + 1 - 1/16 = x + 15/16
+			// So: ladderOffset = 15/16 - 1 - OFFSET = -1/16 - OFFSET ≈ -1/16
+			ladderOffset = -(1.0/16.0) - OFFSET; // Move towards +X (towards wall, but 1/16 away from it)
+		}
+		
 		pushQuad(
 			vertices,
-			[ x + 1.0 + OFFSET, z - OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z - OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ]
+			[ x + 1.0 + OFFSET + ladderOffset, z - OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET + ladderOffset, z + 1.0 + OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET + ladderOffset, z + 1.0 + OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+			[ x + 1.0 + OFFSET + ladderOffset, z - OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ]
 		);
+	}
+	
+	// Inner face for stairs - vertical face opposite to the stairs orientation
+	// This is the face that connects the flat top part (y+0.5) with the bottom (y+0.0)
+	// In Minecraft vanilla, this is a vertical face, not sloped
+	var isStairs = (block && block.isStairs);
+	if ( isStairs ) {
+		// Default orientation: stairs face forward (Z-1), so inner face is on the opposite side (FORWARD/Z-1)
+		// The inner face is a vertical face that goes from y=0 to y=0.5
+		// It covers the full width (x=0 to x=1) and is on the front side (Z-1) where the stairs face
+		// TODO: Use actual block orientation when metadata is implemented
+		var stairsInnerZ = -1.0; // Inner face is on the front side (Z-1), opposite to where flat part is
+		var stairsInnerYBottom = 0.0; // Bottom of inner face
+		var stairsInnerYTop = 0.5; // Top of inner face (where flat part ends)
+		
+		// Check if inner face should be rendered (only if adjacent block is transparent or AIR)
+		// Inner face is on front side (Z-1), so check blockFront
+		var shouldRenderInnerFace = shouldRenderFaceBetweenBlocks( block, blockFront, x, y, z, x, y, z - 1 );
+		
+		if ( shouldRenderInnerFace && ( yOffset != 0 || z == 0 || !blockFront || blockFront == BLOCK.AIR || blockFront.transparent ) ) {
+			// Get texture for inner face (forward direction, opposite to back where flat part is)
+			if ( !block || typeof block.texture !== 'function' ) return;
+			var cInner = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.FORWARD );
+			cInner = adjustTexCoords( cInner, blockDistance );
+			
+			// Light multiplier for inner face
+			var lightMultiplierInner = block.selflit ? 1.0 : 0.6;
+			
+			// Apply foliage color if needed
+			var foliageColorInner = [ 1.0, 1.0, 1.0 ];
+			if ( block.useFoliageColor && world.renderer ) {
+				foliageColorInner = world.renderer.getFoliageColor( x, z );
+			}
+			
+			var useFoliageInner = block.useFoliageColor;
+			var colorInner = useFoliageInner ? foliageColorInner : [1.0, 1.0, 1.0];
+			var rInner = colorInner[0] * lightMultiplierInner;
+			var gInner = colorInner[1] * lightMultiplierInner;
+			var bInner = colorInner[2] * lightMultiplierInner;
+			
+			// Render the inner face (vertical, from y=0 to y=0.5, on front side z-1.0)
+			// The face is at the edge of the block (z-1.0), opposite to where the flat part is
+			// It connects the flat top part (y+0.5) with the bottom (y+0.0)
+			// Coordenadas: x, y (altura), z (horizontal)
+			// El shader espera: x, y (horizontal), z (altura)
+			var renderY = y + yOffset;
+			// Inner face is at z-1.0 (the front edge), use +OFFSET to keep it at the block edge, not inside adjacent block
+			// Face faces outward (away from the center of the block)
+			// Use same vertex order as FRONT face (bottom-left → bottom-right → top-right → top-left) for correct front-facing
+			// This ensures the face is front-facing (CCW) and visible from outside the block
+			pushQuad(
+				vertices,
+				[ x - OFFSET, z + stairsInnerZ + OFFSET, renderY + stairsInnerYBottom, cInner[0], cInner[3], rInner, gInner, bInner, 1.0 ],
+				[ x + 1.0 + OFFSET, z + stairsInnerZ + OFFSET, renderY + stairsInnerYBottom, cInner[2], cInner[3], rInner, gInner, bInner, 1.0 ],
+				[ x + 1.0 + OFFSET, z + stairsInnerZ + OFFSET, renderY + stairsInnerYTop, cInner[2], cInner[1], rInner, gInner, bInner, 1.0 ],
+				[ x - OFFSET, z + stairsInnerZ + OFFSET, renderY + stairsInnerYTop, cInner[0], cInner[1], rInner, gInner, bInner, 1.0 ]
+			);
+			
+			// Render the sloped face (inclined face) - this is the key face that makes stairs look like stairs
+			// In Minecraft vanilla, stairs have a sloped face that connects:
+			// - The flat top part (y+0.5, from z+0.5 to z+1.0) 
+			// - With the bottom (y+0.0, from z+0.0 to z+0.5)
+			// This creates the characteristic "step" appearance
+			// The sloped face is a quadrilateral that slopes from high to low
+			var stairsSlopeZStart = 0.0; // Start at front edge (where bottom is)
+			var stairsSlopeZEnd = 0.5; // End at middle (where flat part starts)
+			var stairsSlopeYBottom = 0.0; // Bottom height
+			var stairsSlopeYTop = 0.5; // Top height (where flat part is)
+			
+			// Get texture for sloped face (use UP direction for the sloped surface)
+			var cSlope = block.texture( world, lightmap, blockLit, x, y, z, DIRECTION.UP );
+			cSlope = adjustTexCoords( cSlope, blockDistance );
+			
+			// Light multiplier for sloped face
+			var lightMultiplierSlope = block.selflit ? 1.0 : 0.6;
+			
+			// Apply foliage color if needed
+			var foliageColorSlope = [ 1.0, 1.0, 1.0 ];
+			if ( block.useFoliageColor && world.renderer ) {
+				foliageColorSlope = world.renderer.getFoliageColor( x, z );
+			}
+			
+			var useFoliageSlope = block.useFoliageColor;
+			var colorSlope = useFoliageSlope ? foliageColorSlope : [1.0, 1.0, 1.0];
+			var rSlope = colorSlope[0] * lightMultiplierSlope;
+			var gSlope = colorSlope[1] * lightMultiplierSlope;
+			var bSlope = colorSlope[2] * lightMultiplierSlope;
+			
+			// Render the sloped face (inclined quadrilateral)
+			// Bottom edge: from (z+0.0, y+0.0) to (z+0.5, y+0.0)
+			// Top edge: from (z+0.0, y+0.5) to (z+0.5, y+0.5)
+			// This creates a sloped surface that connects the bottom with the flat top part
+			pushQuad(
+				vertices,
+				[ x - OFFSET, z + stairsSlopeZStart - OFFSET, renderY + stairsSlopeYBottom, cSlope[0], cSlope[3], rSlope, gSlope, bSlope, 1.0 ],
+				[ x + 1.0 + OFFSET, z + stairsSlopeZStart - OFFSET, renderY + stairsSlopeYBottom, cSlope[2], cSlope[3], rSlope, gSlope, bSlope, 1.0 ],
+				[ x + 1.0 + OFFSET, z + stairsSlopeZEnd - OFFSET, renderY + stairsSlopeYTop, cSlope[2], cSlope[1], rSlope, gSlope, bSlope, 1.0 ],
+				[ x - OFFSET, z + stairsSlopeZEnd - OFFSET, renderY + stairsSlopeYTop, cSlope[0], cSlope[1], rSlope, gSlope, bSlope, 1.0 ]
+			);
+		}
 	}
 }
 

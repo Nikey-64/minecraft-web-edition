@@ -46,8 +46,15 @@ Player.prototype.setWorld = function( world )
 	this.gameMode = GAME_MODE.SURVIVAL; // Default: Survival mode
 	this.health = 20; // Health (0-20, like Minecraft)
 	this.maxHealth = 20;
-	this.hunger = 20; // Hunger (0-20, like Minecraft)
+	this.hunger = 20; // Hunger (0-20, like Minecraft) - visible hunger bar
 	this.maxHunger = 20;
+	this.saturation = 2; // Saturation (hidden hunger points) - starts with 1 drumstick extra (2 points)
+	this.maxSaturation = 20; // Maximum saturation (can store up to 20 extra points)
+	
+	// Bonus Energy System (hunger x2)
+	this.bonusEnergyActive = false; // Whether bonus energy is currently active
+	this.bonusEnergyHungerThreshold = 20; // Hunger level needed to activate bonus (full hunger)
+	this.effectiveHunger = 20; // Effective hunger (hunger + saturation, can be doubled with bonus)
 	
 	// Inventory system
 	this.hotbar = new Array(9).fill(null); // 9 slots del hotbar (can be Block or ItemStack)
@@ -352,6 +359,8 @@ Player.prototype.updateFallDamage = function()
 
 // onDeath()
 //
+// esto deberia mostrar un menu de game over con el boton de respawn
+// y el boton de volver al menu principal
 // Called when player health reaches 0.
 
 Player.prototype.onDeath = function()
@@ -361,6 +370,7 @@ Player.prototype.onDeath = function()
 	// Reset health and hunger
 	this.health = this.maxHealth;
 	this.hunger = this.maxHunger;
+	this.saturation = 2; // Reset to default (1 drumstick extra = 2 points)
 	
 	// Respawn at world spawn
 	if (this.world && this.world.spawn) {
@@ -397,27 +407,43 @@ Player.prototype.updateHealthRegeneration = function()
 	
 	var now = Date.now();
 	
+	// Update bonus energy system (hunger x2)
+	this.updateBonusEnergy();
+	
+	// Use effective hunger for regeneration checks (can be doubled with bonus)
+	var effectiveHunger = this.effectiveHunger;
+	
 	// Check for health regeneration (hunger >= 18)
-	if (this.hunger >= this.regenHungerThreshold && this.health < this.maxHealth) {
+	if (effectiveHunger >= this.regenHungerThreshold && this.health < this.maxHealth) {
 		// Check if enough time has passed since last regen
 		if (now - this.lastRegenTime >= this.regenInterval) {
 			// Regenerate health
 			var healAmount = 1;
 			var hungerCost = this.regenHungerCost;
 			
-			// Fast regeneration when hunger is full (20)
-			if (this.hunger >= this.maxHunger) {
+			// Fast regeneration when hunger is full (20) or bonus energy is active
+			if (this.hunger >= this.maxHunger || this.bonusEnergyActive) {
 				healAmount = 1; // Still 1 health point
-				// Slightly less hunger cost when full
+				// With bonus energy, regeneration is faster (half the interval)
+				if (this.bonusEnergyActive) {
+					// Regenerate twice as fast when bonus energy is active
+					if (now - this.lastRegenTime >= this.regenInterval / 2) {
+						healAmount = 1;
+					} else {
+						return; // Wait for next tick
+					}
+				}
 			}
 			
-			// Check if we have enough hunger to pay the cost
-			if (this.hunger >= hungerCost) {
+			// Check if we have enough effective hunger to pay the cost
+			if (effectiveHunger >= hungerCost) {
 				// Apply healing
 				this.health = Math.min(this.maxHealth, this.health + healAmount);
 				
-				// Consume hunger
-				this.hunger = Math.max(0, this.hunger - hungerCost);
+				// Consume hunger (first from saturation, then from visible hunger)
+				// With bonus energy, consume at half rate
+				var actualHungerCost = this.bonusEnergyActive ? hungerCost / 2 : hungerCost;
+				this.consumeHunger(actualHungerCost);
 				
 				// Update UI
 				this.updateHealthHungerIcons();
@@ -449,16 +475,60 @@ Player.prototype.updateHealthRegeneration = function()
 	}
 }
 
+// updateBonusEnergy()
+//
+// Updates the bonus energy system (hunger x2).
+// When hunger is full (20/20), effective hunger is doubled (40).
+// This provides benefits like faster regeneration and reduced hunger consumption.
+
+Player.prototype.updateBonusEnergy = function()
+{
+	// Only in survival mode
+	if (this.gameMode !== GAME_MODE.SURVIVAL) {
+		this.bonusEnergyActive = false;
+		this.effectiveHunger = this.hunger + this.saturation;
+		return;
+	}
+	
+	// Effective hunger = visible hunger + saturation (hidden hunger points)
+	var totalHunger = this.hunger + this.saturation;
+	this.effectiveHunger = totalHunger;
+	
+	// Check if visible hunger is at maximum (full hunger = 20/20)
+	// Bonus energy activates when visible hunger bar is full, regardless of saturation
+	if (this.hunger >= this.bonusEnergyHungerThreshold) {
+		// Activate bonus energy (double effective hunger)
+		this.bonusEnergyActive = true;
+		this.effectiveHunger = totalHunger * 2; // Double the effective hunger
+	} else {
+		// Deactivate bonus energy
+		this.bonusEnergyActive = false;
+		this.effectiveHunger = totalHunger; // Normal effective hunger (hunger + saturation)
+	}
+}
+
 // consumeHunger( amount )
 //
 // Reduces player's hunger by the specified amount.
 // Used for actions like sprinting, jumping, etc.
+// Like Minecraft vanilla: first consumes saturation (hidden), then visible hunger bar.
 
 Player.prototype.consumeHunger = function(amount)
 {
 	if (this.gameMode !== GAME_MODE.SURVIVAL) return;
 	
-	this.hunger = Math.max(0, this.hunger - amount);
+	// First, consume from saturation (hidden hunger points)
+	if (this.saturation > 0) {
+		var saturationToConsume = Math.min(this.saturation, amount);
+		this.saturation = Math.max(0, this.saturation - saturationToConsume);
+		amount -= saturationToConsume;
+	}
+	
+	// Remaining amount consumes from visible hunger bar
+	if (amount > 0) {
+		this.hunger = Math.max(0, this.hunger - amount);
+	}
+	
 	this.updateHealthHungerIcons();
 }
 
@@ -466,10 +536,24 @@ Player.prototype.consumeHunger = function(amount)
 //
 // Increases player's hunger by the specified amount.
 // Used when eating food.
+// Like Minecraft vanilla: first fills visible hunger bar, then stores excess in saturation (hidden).
 
 Player.prototype.restoreHunger = function(amount)
 {
-	this.hunger = Math.min(this.maxHunger, this.hunger + amount);
+	if (this.gameMode !== GAME_MODE.SURVIVAL) return;
+	
+	// First, fill visible hunger bar
+	var hungerNeeded = this.maxHunger - this.hunger;
+	var hungerToAdd = Math.min(hungerNeeded, amount);
+	this.hunger = Math.min(this.maxHunger, this.hunger + hungerToAdd);
+	
+	// Remaining amount goes to saturation (hidden hunger points)
+	var remainingAmount = amount - hungerToAdd;
+	if (remainingAmount > 0) {
+		// Store excess in saturation (up to maxSaturation)
+		this.saturation = Math.min(this.maxSaturation, this.saturation + remainingAmount);
+	}
+	
 	this.updateHealthHungerIcons();
 }
 
@@ -678,6 +762,7 @@ Player.prototype.serializePlayerData = function()
 		// Health and hunger
 		health: this.health,
 		hunger: this.hunger,
+		saturation: this.saturation, // Hidden hunger points (saturation)
 		// Selected hotbar slot
 		selectedHotbarSlot: this.selectedHotbarSlot,
 		// Hotbar items (serialize ItemStacks)
@@ -763,9 +848,21 @@ Player.prototype.loadPlayerData = function(playerData)
 	// Load health and hunger
 	if (playerData.health !== undefined) {
 		this.health = Math.max(0, Math.min(this.maxHealth, playerData.health));
+	} else {
+		// Default: full health
+		this.health = this.maxHealth;
 	}
 	if (playerData.hunger !== undefined) {
 		this.hunger = Math.max(0, Math.min(this.maxHunger, playerData.hunger));
+	} else {
+		// Default: full hunger bar (20/20)
+		this.hunger = this.maxHunger;
+	}
+	if (playerData.saturation !== undefined) {
+		this.saturation = Math.max(0, Math.min(this.maxSaturation, playerData.saturation));
+	} else {
+		// Default: 1 drumstick bonus (2 points) - starts with full bar + bonus
+		this.saturation = 2;
 	}
 	
 	// Load selected hotbar slot
@@ -3552,6 +3649,23 @@ Player.prototype.doBlockAction = function( x, y, destroy )
 				return; // No block to place
 			}
 			
+			// Special placement rules for LADDER: can only be placed on solid blocks (walls)
+			if ( blockToPlace.bloctype === "ladder" ) {
+				// LADDER can only be placed if there's a solid block adjacent to it (on the face being clicked)
+				// The ladder is placed in the block space next to the clicked face
+				// So we need to check if the clicked block (the one we're clicking on) is solid
+				// The clicked block should be solid for the ladder to attach to it
+				var clickedBlock = world.getBlock( block.x, block.y, block.z );
+				if ( !clickedBlock || clickedBlock === BLOCK.AIR ) {
+					return; // Cannot place ladder if clicking on air
+				}
+				// Check if clicked block is solid (default to true if not explicitly false)
+				var isSolid = (clickedBlock.solid !== false);
+				if ( !isSolid || clickedBlock.transparent === true ) {
+					return; // LADDER can only be placed on solid, non-transparent blocks
+				}
+			}
+			
 			// Colocar el bloque
 			obj.setBlock( placeX, placeY, placeZ, blockToPlace );
 			
@@ -3969,6 +4083,10 @@ Player.prototype.update = function()
 		// Update health regeneration (heal when hunger is high, damage when starving)
 		this.updateHealthRegeneration();
 		
+		// Check for ladders BEFORE movement calculation
+		// This allows movement to be modified based on ladder state
+		this.checkLadderContact(pos, world);
+		
 		// Modo espectador: volar libremente sin colisiones ni gravedad
 		if ( this.spectatorMode || this.gameMode === GAME_MODE.SPECTATOR )
 		{
@@ -4026,7 +4144,8 @@ Player.prototype.update = function()
 			// Modo normal: con gravedad y colisiones
 			// Ejes: X y Z = horizontal, Y = vertical (altura)
 			// Gravity
-			if ( this.falling )
+			// Don't apply gravity if player is on a ladder (ladder prevents falling)
+			if ( this.falling && !this.onLadder )
 				velocity.y += -0.5; // Y es altura
 
 			// Jumping
@@ -4041,8 +4160,29 @@ Player.prototype.update = function()
 			// Walking
 			// Ejes: X y Z = horizontal, Y = vertical (altura)
 			var walkVelocity = new Vector( 0, 0, 0 );
-			if ( !this.falling )
-			{
+			
+			// If player is on a ladder, W/S move vertically instead of horizontally
+			if ( this.onLadder ) {
+				// On ladder: W/S move vertically, A/D move horizontally along the wall
+				if ( this.keys["w"] ) {
+					// Climb up (handled in ladder logic, but also allow here for consistency)
+					walkVelocity.y = 2.0; // Vertical movement up
+				}
+				if ( this.keys["s"] ) {
+					// Climb down (handled in ladder logic, but also allow here for consistency)
+					walkVelocity.y = -2.0; // Vertical movement down
+				}
+				// A/D can still move horizontally along the wall
+				if ( this.keys["a"] ) {
+					walkVelocity.x += Math.cos( Math.PI / 2 + Math.PI / 2 - this.angles[1] );
+					walkVelocity.z += Math.sin( Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
+				}
+				if ( this.keys["d"] ) {
+					walkVelocity.x += Math.cos( -Math.PI / 2 + Math.PI / 2 - this.angles[1] );
+					walkVelocity.z += Math.sin( -Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
+				}
+			} else if ( !this.falling ) {
+				// Normal walking (not on ladder)
 				if ( this.keys["w"] ) {
 					walkVelocity.x += Math.cos( Math.PI / 2 - this.angles[1] );
 					walkVelocity.z += Math.sin( Math.PI / 2 - this.angles[1] ); // Z es horizontal
@@ -4061,6 +4201,32 @@ Player.prototype.update = function()
 				}
 			}
 			if ( walkVelocity.length() > 0 ) {
+				if ( this.onLadder ) {
+					// On ladder: apply vertical movement directly, horizontal movement reduced
+					// Vertical movement (W/S) should be continuous while key is pressed
+					if ( walkVelocity.y != 0 ) {
+						velocity.y = walkVelocity.y; // Vertical movement for climbing (2.0 up or -2.0 down)
+					} else {
+						// If no vertical input, prevent falling (stay in place)
+						if ( velocity.y < 0 ) {
+							velocity.y = 0; // Prevent falling
+						}
+					}
+					// Horizontal movement (A/D) along the wall
+					if ( walkVelocity.x != 0 || walkVelocity.z != 0 ) {
+						var horizontalVel = new Vector( walkVelocity.x, 0, walkVelocity.z );
+						if ( horizontalVel.length() > 0 ) {
+							horizontalVel = horizontalVel.normal();
+							velocity.x = horizontalVel.x * 2; // Reduced horizontal speed on ladder
+							velocity.z = horizontalVel.z * 2;
+						}
+					} else {
+						// No horizontal input - reduce horizontal velocity
+						velocity.x *= 0.8;
+						velocity.z *= 0.8;
+					}
+				} else {
+					// Normal walking
 					walkVelocity = walkVelocity.normal();
 					velocity.x = walkVelocity.x * 4; // X horizontal
 					velocity.z = walkVelocity.z * 4; // Z horizontal
@@ -4070,11 +4236,15 @@ Player.prototype.update = function()
 					if (this.gameMode === GAME_MODE.SURVIVAL && !this.falling) {
 						this.consumeHunger(0.001 * delta); // Gradual hunger drain while walking
 					}
+				}
 			} else {
 				velocity.x /= this.falling ? 1.01 : 1.5;
 				velocity.z /= this.falling ? 1.01 : 1.5;
 			}
 
+			// Apply ladder physics (pull player to wall, restrict movement)
+			this.applyLadderPhysics( pos, velocity, world );
+			
 			// Resolve collision
 			this.pos = this.resolveCollision( pos, bPos, velocity.mul( delta ) );
 		}
@@ -4356,7 +4526,16 @@ Player.prototype.resolveCollision = function( pos, bPos, velocity )
 		{
 			for ( var z = bPos.z - 1; z <= bPos.z + 1; z++ ) // Z es horizontal
 			{
-				if ( world.getBlock( x, y, z ) != BLOCK.AIR )
+				var block = world.getBlock( x, y, z );
+				// Default: blocks are solid unless explicitly set to solid: false
+				// Non-solid blocks act as AIR (except LADDER which acts as climbable surface)
+				// LADDER does NOT block horizontal movement - player can walk through it
+				var isSolid = (block.solid !== false); // Default to true if not explicitly false
+				var isLadder = (block && block.bloctype === "ladder");
+				
+				// Ladders don't block horizontal movement (player can walk through them)
+				// Only solid blocks block horizontal movement
+				if ( block != BLOCK.AIR && isSolid && !isLadder )
 				{
 					if ( world.getBlock( x - 1, y, z ) == BLOCK.AIR ) collisionCandidates.push( { x: x, dir: -1, y1: z, y2: z + 1 } );
 					if ( world.getBlock( x + 1, y, z ) == BLOCK.AIR ) collisionCandidates.push( { x: x + 1, dir: 1, y1: z, y2: z + 1 } );
@@ -4396,10 +4575,37 @@ Player.prototype.resolveCollision = function( pos, bPos, velocity )
 	{
 		for ( var z = bPos.z - 1; z <= bPos.z + 1; z++ ) // Z es horizontal
 		{
-			if ( world.getBlock( x, newBYLower, z ) != BLOCK.AIR )
-				collisionCandidates.push( { z: newBYLower + 1, dir: 1, x1: x, y1: z, x2: x + 1, y2: z + 1 } );
-			if ( world.getBlock( x, newBYUpper, z ) != BLOCK.AIR )
-				collisionCandidates.push( { z: newBYUpper, dir: -1, x1: x, y1: z, x2: x + 1, y2: z + 1 } );
+			var blockBelow = world.getBlock( x, newBYLower, z );
+			var blockAbove = world.getBlock( x, newBYUpper, z );
+			
+			// Check for blocks below (only solid blocks or LADDER act as surfaces)
+			// Default: blocks are solid unless explicitly set to solid: false
+			// Non-solid blocks act as AIR (except LADDER which acts as climbable surface)
+			if ( blockBelow != BLOCK.AIR ) {
+				var isSolidBelow = (blockBelow.solid !== false); // Default to true if not explicitly false
+				var isLadderBelow = (blockBelow.bloctype === "ladder");
+				
+				if ( isSolidBelow || isLadderBelow ) {
+					// Stairs allow the player to stand on them (full block height for collision)
+					// But they also allow easier climbing
+					if ( blockBelow.isStairs ) {
+						// Stairs: player can stand on them at full height
+						collisionCandidates.push( { z: newBYLower + 1, dir: 1, x1: x, y1: z, x2: x + 1, y2: z + 1, isStairs: true } );
+					} else {
+						// Normal solid block or LADDER
+						collisionCandidates.push( { z: newBYLower + 1, dir: 1, x1: x, y1: z, x2: x + 1, y2: z + 1 } );
+					}
+				}
+			}
+			
+			// Check for blocks above (only solid blocks block movement)
+			// Default: blocks are solid unless explicitly set to solid: false
+			if ( blockAbove != BLOCK.AIR ) {
+				var isSolidAbove = (blockAbove.solid !== false); // Default to true if not explicitly false
+				if ( isSolidAbove ) {
+					collisionCandidates.push( { z: newBYUpper, dir: -1, x1: x, y1: z, x2: x + 1, y2: z + 1 } );
+				}
+			}
 		}
 	}
 
@@ -4425,7 +4631,262 @@ Player.prototype.resolveCollision = function( pos, bPos, velocity )
 			break;
 		}
 	}
+	
+	
+	// Stairs climbing logic: allow player to climb stairs more easily
+	// This makes stairs functional - player can walk up stairs without jumping
+	if ( !this.falling && (Math.abs(velocity.x) > 0.1 || Math.abs(velocity.z) > 0.1) ) {
+		// Check the block the player is moving towards
+		var moveDirX = velocity.x > 0 ? 1 : (velocity.x < 0 ? -1 : 0);
+		var moveDirZ = velocity.z > 0 ? 1 : (velocity.z < 0 ? -1 : 0);
+		
+		if ( moveDirX != 0 || moveDirZ != 0 ) {
+			// Check block ahead at player's current Y level
+			var aheadX = Math.floor(pos.x + moveDirX * 0.3);
+			var aheadZ = Math.floor(pos.z + moveDirZ * 0.3);
+			var currentY = Math.floor(pos.y);
+			
+			// Check if there's a stair ahead at the same level or one level up
+			var blockAhead = world.getBlock(aheadX, currentY, aheadZ);
+			var blockAheadUp = world.getBlock(aheadX, currentY + 1, aheadZ);
+			
+			// If there's a stair ahead and space above it, allow climbing
+			if ( blockAhead && blockAhead.isStairs ) {
+				// Check if there's space above the stair for the player to move into
+				var spaceAbove = world.getBlock(aheadX, currentY + 1, aheadZ);
+				var spaceAbove2 = world.getBlock(aheadX, currentY + 2, aheadZ);
+				
+				if ( (spaceAbove == BLOCK.AIR || (spaceAbove && spaceAbove.transparent)) &&
+				     (spaceAbove2 == BLOCK.AIR || (spaceAbove2 && spaceAbove2.transparent)) ) {
+					// Player can climb up this stair
+					// Give upward velocity to climb the stair
+					if ( velocity.y <= 0 && pos.y < currentY + 1.1 ) {
+						velocity.y = Math.max(velocity.y, 0.4); // Upward boost to climb stairs
+					}
+				}
+			}
+			
+			// Also check if player is currently on a stair and moving forward
+			var blockBelow = world.getBlock(Math.floor(pos.x), Math.floor(pos.y - 0.1), Math.floor(pos.z));
+			if ( blockBelow && blockBelow.isStairs ) {
+				// Player is standing on a stair
+				// Check if there's another stair or air ahead at a higher level
+				if ( blockAheadUp && blockAheadUp.isStairs ) {
+					// There's a stair ahead at a higher level - allow climbing
+					var spaceAboveStair = world.getBlock(aheadX, currentY + 2, aheadZ);
+					if ( spaceAboveStair == BLOCK.AIR || (spaceAboveStair && spaceAboveStair.transparent) ) {
+						if ( velocity.y <= 0 && pos.y < currentY + 1.1 ) {
+							velocity.y = Math.max(velocity.y, 0.5); // Stronger boost for consecutive stairs
+						}
+					}
+				} else if ( blockAheadUp == BLOCK.AIR || (blockAheadUp && blockAheadUp.transparent) ) {
+					// There's air ahead at a higher level - allow climbing onto it
+					if ( velocity.y <= 0 && pos.y < currentY + 1.1 ) {
+						velocity.y = Math.max(velocity.y, 0.3); // Moderate boost
+					}
+				}
+			}
+		}
+	}
 
 	// Return solution
 	return pos.add( velocity );
+}
+
+// checkLadderContact( pos, world )
+//
+// Checks if player is in contact with a ladder and sets this.onLadder flag.
+// This must be called BEFORE movement calculation so movement can be modified.
+
+Player.prototype.checkLadderContact = function( pos, world )
+{
+	var playerBlockX = Math.floor(pos.x);
+	var playerBlockY = Math.floor(pos.y);
+	var playerBlockZ = Math.floor(pos.z);
+	
+	// Check blocks around player for ladders
+	// Only allow climbing if player is touching the face that's against a solid block
+	var ladderFound = false;
+	var ladderFace = null; // Direction of the face that's against a solid block
+	
+	for ( var checkX = playerBlockX - 1; checkX <= playerBlockX + 1; checkX++ ) {
+		for ( var checkY = playerBlockY; checkY <= playerBlockY + 1; checkY++ ) {
+			for ( var checkZ = playerBlockZ - 1; checkZ <= playerBlockZ + 1; checkZ++ ) {
+				var checkBlock = world.getBlock( checkX, checkY, checkZ );
+				if ( checkBlock && checkBlock.bloctype === "ladder" ) {
+					// Check which face of the ladder is against a solid block
+					// The ladder only renders faces against solid blocks (same logic as shouldRenderFaceBetweenBlocks)
+					// Check all 4 horizontal directions to find which face has a solid block
+					var blockLeft = world.getBlock( checkX - 1, checkY, checkZ );
+					var blockRight = world.getBlock( checkX + 1, checkY, checkZ );
+					var blockFront = world.getBlock( checkX, checkY, checkZ - 1 );
+					var blockBack = world.getBlock( checkX, checkY, checkZ + 1 );
+					
+					// Find which face is against a solid block (same logic as shouldRenderFaceBetweenBlocks for wall stairs)
+					// Only render face if adjacent block is solid (not transparent)
+					var solidFace = null;
+					if ( blockLeft && blockLeft !== BLOCK.AIR && !blockLeft.transparent ) {
+						solidFace = "left"; // Face at x-1
+					} else if ( blockRight && blockRight !== BLOCK.AIR && !blockRight.transparent ) {
+						solidFace = "right"; // Face at x+1
+					} else if ( blockFront && blockFront !== BLOCK.AIR && !blockFront.transparent ) {
+						solidFace = "front"; // Face at z-1
+					} else if ( blockBack && blockBack !== BLOCK.AIR && !blockBack.transparent ) {
+						solidFace = "back"; // Face at z+1
+					}
+					
+					if ( solidFace ) {
+						// Check if player is inside or touching the ladder block
+						// In Minecraft vanilla, ladders work when player is inside the block space
+						// Player position relative to ladder block center
+						var playerRelX = pos.x - (checkX + 0.5);
+						var playerRelZ = pos.z - (checkZ + 0.5);
+						
+						// Player is inside the ladder block if they're within the block bounds
+						// Check if player's X and Z are within the block boundaries (with some margin)
+						var playerBlockX = Math.floor(pos.x);
+						var playerBlockZ = Math.floor(pos.z);
+						var isInsideBlock = (playerBlockX === checkX && playerBlockZ === checkZ);
+						
+						// Also check if player is very close to the block center (within 0.6 blocks)
+						var distanceFromCenter = Math.sqrt(playerRelX * playerRelX + playerRelZ * playerRelZ);
+						var isNearBlock = distanceFromCenter < 0.6;
+						
+						// Determine if player is on the correct side of the ladder (towards the rendered face)
+						// The face is rendered on the side opposite to the solid block
+						// So if solid block is on left (x-1), the face is on the right side (towards x+1)
+						var isOnCorrectSide = false;
+						if ( solidFace === "left" && playerRelX >= -0.3 ) {
+							// Solid block is on left, face is on right - player should be on right side or center
+							isOnCorrectSide = true;
+						} else if ( solidFace === "right" && playerRelX <= 0.3 ) {
+							// Solid block is on right, face is on left - player should be on left side or center
+							isOnCorrectSide = true;
+						} else if ( solidFace === "front" && playerRelZ >= -0.3 ) {
+							// Solid block is on front (z-1), face is on back - player should be on back side or center
+							isOnCorrectSide = true;
+						} else if ( solidFace === "back" && playerRelZ <= 0.3 ) {
+							// Solid block is on back (z+1), face is on front - player should be on front side or center
+							isOnCorrectSide = true;
+						}
+						
+						// Player is on ladder if they're inside the block OR very close to it on the correct side
+						if ( isInsideBlock || (isNearBlock && isOnCorrectSide) ) {
+							ladderFound = true;
+							ladderFace = solidFace;
+							this.ladderBlockX = checkX;
+							this.ladderBlockY = checkY;
+							this.ladderBlockZ = checkZ;
+							break;
+						}
+					}
+				}
+			}
+			if ( ladderFound ) break;
+		}
+		if ( ladderFound ) break;
+	}
+	
+	// Set ladder state
+	this.onLadder = ladderFound;
+	this.ladderFace = ladderFace;
+	
+	// Clear ladder block position if not on ladder
+	if ( !ladderFound ) {
+		this.ladderBlockX = undefined;
+		this.ladderBlockY = undefined;
+		this.ladderBlockZ = undefined;
+	}
+};
+
+// applyLadderPhysics( pos, velocity, world )
+//
+// Applies ladder physics: keeps player attached to wall, allows vertical movement only.
+// Called AFTER movement calculation to modify velocity based on ladder state.
+
+Player.prototype.applyLadderPhysics = function( pos, velocity, world )
+{
+	// If player is on a ladder, apply ladder-specific physics
+	if ( !this.onLadder || !this.ladderFace ) {
+		return; // Not on ladder, no special physics needed
+	}
+	
+	// Get ladder block position (stored in checkLadderContact)
+	var ladderBlockX = this.ladderBlockX;
+	var ladderBlockY = this.ladderBlockY;
+	var ladderBlockZ = this.ladderBlockZ;
+	
+	if ( ladderBlockX === undefined || ladderBlockY === undefined || ladderBlockZ === undefined ) {
+		return; // Ladder block position not set
+	}
+	
+	// Determine wall direction based on ladder face
+	var wallDirX = 0;
+	var wallDirZ = 0;
+	
+	if ( this.ladderFace === "left" ) {
+		wallDirX = -1; // Wall is on the left (x-1)
+	} else if ( this.ladderFace === "right" ) {
+		wallDirX = 1; // Wall is on the right (x+1)
+	} else if ( this.ladderFace === "front" ) {
+		wallDirZ = -1; // Wall is on the front (z-1)
+	} else if ( this.ladderFace === "back" ) {
+		wallDirZ = 1; // Wall is on the back (z+1)
+	}
+	
+	// Keep player attached to the ladder face (which is opposite to the wall)
+	// The ladder face is on the OPPOSITE side of the solid block
+	// So if wall is on left (x-1), ladder face is on right (x+1)
+	// Target position: ladder block center + small offset AWAY from wall (towards ladder face)
+	var targetX = ladderBlockX + 0.5 + wallDirX * 0.25; // 0.25 blocks from center, AWAY from wall
+	var targetZ = ladderBlockZ + 0.5 + wallDirZ * 0.25;
+	
+	// Calculate distance from target position
+	var distX = targetX - pos.x;
+	var distZ = targetZ - pos.z;
+	var dist = Math.sqrt(distX * distX + distZ * distZ);
+	
+	// Only apply pull force if player is actively moving
+	// This prevents unwanted movement when player is stationary
+	var isMoving = Math.abs(velocity.x) > 0.01 || Math.abs(velocity.z) > 0.01;
+	var hasInput = this.keys["a"] || this.keys["d"] || this.keys["w"] || this.keys["s"];
+	
+	// Only apply pull force if player has input AND is moving AND is too far from ladder
+	// This prevents the player from being pushed into blocks when stationary
+	if ( hasInput && isMoving && dist > 0.2 ) {
+		var pullStrength = Math.min(dist * 1.0, 0.3); // Weak pull, only when player is moving
+		velocity.x += distX * pullStrength * 0.01; // Very reduced force
+		velocity.z += distZ * pullStrength * 0.01;
+	}
+	
+	// Restrict horizontal movement away from the wall
+	// Player can move along the wall, but not away from it
+	// Only apply restriction if player is actively trying to move
+	var hasHorizontalInput = this.keys["a"] || this.keys["d"] || this.keys["w"] || this.keys["s"];
+	
+	if ( hasHorizontalInput ) {
+		if ( wallDirX != 0 ) {
+			// Wall is on X axis, restrict Z movement away from wall
+			// Calculate movement direction relative to wall
+			var moveDirZ = velocity.z;
+			// If moving away from wall (in wrong direction), reduce it more
+			if ( Math.abs(moveDirZ) > 0.1 ) {
+				velocity.z *= 0.3; // Stronger restriction when moving away
+			}
+		} else if ( wallDirZ != 0 ) {
+			// Wall is on Z axis, restrict X movement away from wall
+			var moveDirX = velocity.x;
+			// If moving away from wall (in wrong direction), reduce it more
+			if ( Math.abs(moveDirX) > 0.1 ) {
+				velocity.x *= 0.3; // Stronger restriction when moving away
+			}
+		}
+	} else {
+		// No input - stop horizontal movement completely to prevent drift
+		velocity.x *= 0.8;
+		velocity.z *= 0.8;
+	}
+	
+	// Vertical movement is handled in the walking section (W/S move vertically on ladder)
+	// The walking section already handles preventing falling when no input
 }
