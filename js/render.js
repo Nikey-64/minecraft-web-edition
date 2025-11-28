@@ -59,7 +59,10 @@ function Renderer( id )
 	var gl;
 	try
 	{
-		gl = this.gl = canvas.getContext( "experimental-webgl" );
+		// Intentar obtener contexto WebGL compatible con XR primero
+		gl = this.gl = canvas.getContext( "webgl", { xrCompatible: true } ) || 
+		                canvas.getContext( "experimental-webgl", { xrCompatible: true } ) ||
+		                canvas.getContext( "experimental-webgl" );
 	} catch ( e ) {
 		throw "Your browser doesn't support WebGL!";
 	}
@@ -88,6 +91,10 @@ function Renderer( id )
 	var modelMatrix = this.modelMatrix = mat4.create();
 	mat4.identity( modelMatrix );
 	gl.uniformMatrix4fv( this.uModelMat, false, modelMatrix );
+	
+	// Inicializar VR Manager (si está disponible)
+	this.vrManager = null;
+	this._isVRActive = false;
 	
 	// Create 1px white texture for pure vertex color operations (e.g. picking)
 	var whiteTexture = this.texWhite = gl.createTexture();
@@ -200,6 +207,11 @@ function Renderer( id )
 
 Renderer.prototype.draw = function()
 {
+	// Si estamos en modo VR, el renderizado se maneja en VRManager
+	if (this._isVRActive && this.vrManager && this.vrManager.isVRActive) {
+		return; // El renderizado VR se hace en el loop de VR
+	}
+	
 	var gl = this.gl;
 
 	// Initialise view

@@ -475,11 +475,14 @@ BLOCK.CRAFTING_TABLE = {
 	tooltime: 3000,
 	breaktime: 7500,
 	texture: function( world, lightmap, lit, x, y, z, dir ) {
-		// Crafting table texture - top/bottom use planks, sides use crafting table texture
-		if ( dir == DIRECTION.UP || dir == DIRECTION.DOWN ) {
-			return [ 11/16, 4/16, 12/16, 5/16 ]; // Top/bottom texture
+		// Crafting table texture - top uses crafting table texture, bottom uses planks, sides use crafting table texture
+		// En terrain.png: top = crafting table (11,3), bottom = planks (4,0), sides = crafting table (11,3)
+		if ( dir == DIRECTION.UP ) {
+			return [ 11/16, 3/16, 12/16, 4/16 ]; // Top texture (crafting table with tools pattern)
+		} else if ( dir == DIRECTION.DOWN ) {
+			return [ 4/16, 0/16, 5/16, 1/16 ]; // Bottom texture (planks)
 		} else {
-			return [ 12/16, 4/16, 13/16, 5/16 ]; // Side texture
+			return [ 11/16, 3/16, 12/16, 4/16 ]; // Side texture (crafting table)
 		}
 	}
 };

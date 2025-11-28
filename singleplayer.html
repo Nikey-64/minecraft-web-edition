@@ -23,6 +23,7 @@
 		<script src="js/render.js" type="text/javascript"></script>
 		<script src="js/physics.js" type="text/javascript"></script>
 		<script src="js/player.js" type="text/javascript"></script>
+		<script src="js/vr.js" type="text/javascript"></script>
 	</head>
 	
 	<body oncontextmenu="return false">
@@ -33,6 +34,11 @@
 
 		<img id="cursor" class="cursor" src="media/gui/cursor.png" />
 		<img id="crosshair" class="crosshair" src="media/gui/cursor.png" />
+
+		<!-- VR Button -->
+		<button id="vr-button" class="vr-button">
+			🎮 Verificando VR...
+		</button>
 
 		<!-- FPS Display -->
 		<div id="fpsDisplay" style="position: absolute; top: 10px; left: 10px; color: white; font-family: Minecraftia; display: none;"></div>
@@ -452,6 +458,17 @@
 					document.body.classList.add("world-selection-active");
 				}
 				
+				// Inicializar VR Manager si está disponible (en la pantalla de selección de mundos)
+				if (typeof VRManager !== "undefined") {
+					console.log("VR: Inicializando VRManager en pantalla de selección de mundos...");
+					// Crear un renderer temporal solo para VR (no se usará hasta que se cargue un mundo)
+					var tempRenderer = { vrManager: null };
+					tempRenderer.vrManager = new VRManager(tempRenderer);
+					tempRenderer.vrManager.createVRButton("body");
+					// Guardar referencia global para usar después
+					window.tempVRManager = tempRenderer.vrManager;
+				}
+				
 				// Create world button
 				var createButton = document.getElementById("createWorldButton");
 				if ( createButton ) {
@@ -548,6 +565,12 @@
 					// Start game
 					setupGameSystems();
 					initialisePauseSettings();
+					
+					// Ocultar botón VR durante el gameplay
+					var vrButton = document.getElementById('vr-button');
+					if (vrButton) {
+						vrButton.style.display = 'none';
+					}
 					
 					// Load player data after player is created
 					try {
@@ -708,6 +731,33 @@
 				render = new Renderer( "renderSurface" );
 				render.setWorld( world, 8, 256 ); // Chunks de 8x8x256 para optimizar aire
 				render.setPerspective( 60, 0.01, 200 );
+				
+				// Inicializar VR Manager si está disponible (usar el que ya se creó en setupWorldManagerUI)
+				console.log("VR: Verificando si VRManager está disponible...", typeof VRManager);
+				if (typeof VRManager !== "undefined") {
+					// Si ya existe un VRManager temporal, reutilizarlo y actualizar su renderer
+					if (window.tempVRManager) {
+						console.log("VR: Reutilizando VRManager existente...");
+						window.tempVRManager.renderer = render;
+						// Actualizar las matrices originales ahora que el renderer está completo
+						if (render.projMatrix && render.viewMatrix) {
+							window.tempVRManager.originalProjMatrix = render.projMatrix;
+							window.tempVRManager.originalViewMatrix = render.viewMatrix;
+						}
+						render.vrManager = window.tempVRManager;
+						window.tempVRManager = null; // Limpiar referencia temporal
+					} else {
+						console.log("VR: Creando nuevo VRManager...");
+						render.vrManager = new VRManager(render);
+						// El botón ya debería estar creado, solo actualizar la referencia
+						var button = document.getElementById('vr-button');
+						if (button && render.vrManager) {
+							render.vrManager.vrButton = button;
+						}
+					}
+				} else {
+					console.warn("VR: VRManager no está definido. ¿Se cargó js/vr.js?");
+				}
 
 				physics = new Physics();
 				physics.setWorld( world );
@@ -1613,6 +1663,11 @@
 					// Reset lastUpdate when pausing to prevent large delta on resume
 					player.lastUpdate = new Date().getTime();
 				}
+				// Mostrar botón VR en el menú de pausa
+				var vrButton = document.getElementById('vr-button');
+				if (vrButton) {
+					vrButton.style.display = 'block';
+				}
 			}
 
 			// Function to resume the game
@@ -1621,6 +1676,11 @@
 				document.getElementById('pauseOverlay').style.display = 'none';
 				document.getElementById('pauseMenu').style.display = 'none';
 				document.getElementById('pauseSettingsMenu').style.display = 'none';
+				// Ocultar botón VR al reanudar el juego
+				var vrButton = document.getElementById('vr-button');
+				if (vrButton) {
+					vrButton.style.display = 'none';
+				}
 				
 				// Reset lastFrameTime BEFORE requesting pointer lock to prevent huge delta
 				// This prevents the game from trying to catch up with all the paused time
@@ -1669,6 +1729,11 @@
 			document.getElementById('pauseSettingsButton').onclick = function() {
 				document.getElementById('pauseMenu').style.display = 'none';
 				document.getElementById('pauseSettingsMenu').style.display = 'flex';
+				// Mantener botón VR visible en el menú de ajustes
+				var vrButton = document.getElementById('vr-button');
+				if (vrButton) {
+					vrButton.style.display = 'block';
+				}
 			};
 
 			document.getElementById('exitButton').onclick = async function() {
@@ -1703,6 +1768,11 @@
 			document.getElementById('pauseSettingsBackButton').onclick = function() {
 				document.getElementById('pauseSettingsMenu').style.display = 'none';
 				document.getElementById('pauseMenu').style.display = 'flex';
+				// Mantener botón VR visible al volver al menú de pausa
+				var vrButton = document.getElementById('vr-button');
+				if (vrButton) {
+					vrButton.style.display = 'block';
+				}
 			};
 
 			pauseRenderDistanceSlider.oninput = function() {

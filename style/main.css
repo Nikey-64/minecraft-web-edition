@@ -1218,3 +1218,26 @@ body:has(#createWorldMenu[style*="flex"]) #renderSurface {
 	pointer-events: none;
 	z-index: 2;
 }
+
+/* VR Button */
+.vr-button {
+	position: fixed;
+	bottom: 20px;
+	right: 20px;
+	z-index: 10000;
+	padding: 10px 20px;
+	font-size: 16px;
+	background: #888;
+	color: white;
+	border: none;
+	border-radius: 5px;
+	cursor: pointer;
+	font-family: Arial, sans-serif;
+	box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+	display: none;
+}
+
+.vr-button:disabled {
+	cursor: wait;
+	opacity: 0.7;
+}
