@@ -185,9 +185,21 @@ VRManager.prototype.requestVRSession = function()
 		console.log("VR: Sesión VR iniciada correctamente para Oculus Quest");
 		return session;
 	}).catch(function(err) {
-		console.error("Error al iniciar sesión VR:", err);
+		console.error("VR: Error al iniciar sesión VR:", err);
 		self.isVRActive = false;
-		return Promise.reject(err);
+		
+		// Proporcionar mensaje de error más descriptivo
+		var errorMessage = "Error al iniciar VR";
+		if (err.name === 'SecurityError') {
+			errorMessage = "Error de seguridad. Asegúrate de que la página se cargue con HTTPS o localhost.";
+		} else if (err.name === 'NotSupportedError') {
+			errorMessage = "VR no está soportado. Si estás en Oculus Quest, asegúrate de usar Oculus Browser.";
+		} else if (err.message) {
+			errorMessage = err.message;
+		}
+		
+		console.error("VR: Mensaje de error:", errorMessage);
+		return Promise.reject(errorMessage);
 	});
 };
 
@@ -350,26 +362,52 @@ VRManager.prototype.createVRButton = function(containerId)
 	// Verificación rápida inicial: si navigator.xr no existe, mostrar instrucciones
 	if (typeof navigator === "undefined" || !navigator.xr) {
 		console.log("VR: WebXR API no disponible en el navegador");
+		
+		// Detectar si estamos en un Quest
+		var isQuest = navigator.userAgent.includes('Quest') || 
+		              navigator.userAgent.includes('OculusBrowser') ||
+		              navigator.userAgent.includes('Oculus');
+		
 		button.style.display = 'block';
-		button.textContent = '🎮 Conectar VR';
 		button.disabled = false;
-		button.style.background = '#FF9800';
 		button.style.cursor = 'pointer';
-		button.title = 'WebXR no está disponible en este navegador. Usa Chrome o Edge para soporte VR.';
-		button.onclick = function() {
-			var message = "Para usar VR en este juego:\n\n" +
-				"1. Usa un navegador compatible con WebXR:\n" +
-				"   - Google Chrome (recomendado)\n" +
-				"   - Microsoft Edge\n\n" +
-				"2. Conecta un dispositivo VR compatible:\n" +
-				"   - Oculus Quest/Quest 2\n" +
-				"   - HTC Vive\n" +
-				"   - Windows Mixed Reality\n" +
-				"   - Otros dispositivos compatibles con WebXR\n\n" +
-				"3. Asegúrate de que el dispositivo esté encendido y configurado\n\n" +
-				"4. Recarga esta página después de conectar el dispositivo";
-			alert(message);
-		};
+		
+		if (isQuest) {
+			button.textContent = '🎮 Usa Oculus Browser';
+			button.style.background = '#f44336';
+			button.title = 'WebXR no está disponible. Debes usar el navegador Oculus Browser (predeterminado del Quest).';
+			button.onclick = function() {
+				var message = "Para usar VR en Oculus Quest:\n\n" +
+					"⚠️ IMPORTANTE: Debes usar el navegador Oculus Browser\n\n" +
+					"1. Sal de esta página\n" +
+					"2. Abre el navegador Oculus Browser (el navegador predeterminado del Quest)\n" +
+					"3. Navega a esta página desde Oculus Browser\n\n" +
+					"❌ NO uses Chrome ni Firefox - solo Oculus Browser soporta WebXR en Quest\n\n" +
+					"El navegador Oculus Browser es el que aparece por defecto cuando abres el navegador en el Quest.\n" +
+					"Si estás usando otro navegador, cámbialo a Oculus Browser.";
+				alert(message);
+			};
+		} else {
+			button.textContent = '🎮 Conectar VR';
+			button.style.background = '#FF9800';
+			button.title = 'WebXR no está disponible en este navegador. Usa Chrome, Edge, o Oculus Browser en Quest.';
+			button.onclick = function() {
+				var message = "Para usar VR en este juego:\n\n" +
+					"1. En Oculus Quest:\n" +
+					"   - Usa el navegador Oculus Browser (predeterminado)\n" +
+					"   - NO uses Chrome o Firefox\n\n" +
+					"2. En otros dispositivos:\n" +
+					"   - Google Chrome (recomendado)\n" +
+					"   - Microsoft Edge\n\n" +
+					"3. Dispositivos compatibles:\n" +
+					"   - Oculus Quest/Quest 2 (con Oculus Browser)\n" +
+					"   - HTC Vive\n" +
+					"   - Windows Mixed Reality\n" +
+					"   - Otros dispositivos compatibles con WebXR\n\n" +
+					"4. Asegúrate de que el dispositivo esté encendido y configurado";
+				alert(message);
+			};
+		}
 		return;
 	}
 	
@@ -394,29 +432,52 @@ VRManager.prototype.createVRButton = function(containerId)
 			console.log("VR: Resultado de verificación WebXR:", isSupported);
 			
 			if (!isSupported) {
-				console.log("VR: WebXR no está soportado o el navegador no puede generar canvas de 360°");
-				// Mostrar mensaje informativo sobre cómo habilitar VR
-				button.textContent = '🎮 Conectar VR';
-				button.disabled = false;
-				button.style.background = '#FF9800';
-				button.style.cursor = 'pointer';
-				button.title = 'El navegador no puede generar un canvas de 360°. Conecta un dispositivo VR compatible y recarga la página.';
+				console.log("VR: WebXR no está soportado en este navegador/dispositivo");
+				// Detectar si estamos en un Quest pero el navegador no soporta WebXR
+				var isQuest = navigator.userAgent.includes('Quest') || 
+				              navigator.userAgent.includes('OculusBrowser') ||
+				              navigator.userAgent.includes('Oculus');
 				
-				button.onclick = function() {
-					var message = "Para usar VR en este juego:\n\n" +
-						"1. Verifica que estés usando un navegador compatible:\n" +
-						"   - Google Chrome (recomendado)\n" +
-						"   - Microsoft Edge\n\n" +
-						"2. Conecta un dispositivo VR compatible:\n" +
-						"   - Oculus Quest/Quest 2\n" +
-						"   - HTC Vive\n" +
-						"   - Windows Mixed Reality\n" +
-						"   - Otros dispositivos compatibles con WebXR\n\n" +
-						"3. Asegúrate de que el dispositivo esté encendido y configurado\n\n" +
-						"4. Recarga esta página después de conectar el dispositivo\n\n" +
-						"El botón se activará automáticamente cuando el navegador pueda generar un entorno inmersivo y se detecte el dispositivo VR.";
-					alert(message);
-				};
+				if (isQuest) {
+					button.textContent = '🎮 VR no disponible';
+					button.disabled = false;
+					button.style.background = '#f44336';
+					button.style.cursor = 'pointer';
+					button.title = 'WebXR no está disponible. Asegúrate de usar el navegador Oculus Browser.';
+					
+					button.onclick = function() {
+						var message = "Para usar VR en Oculus Quest:\n\n" +
+							"1. Asegúrate de usar el navegador Oculus Browser (navegador predeterminado del Quest)\n\n" +
+							"2. NO uses Chrome o Firefox - solo Oculus Browser soporta WebXR en Quest\n\n" +
+							"3. Verifica que el Quest esté actualizado\n\n" +
+							"4. Reinicia el Quest si es necesario\n\n" +
+							"5. Asegúrate de estar en el menú principal del Quest antes de abrir el navegador";
+						alert(message);
+					};
+				} else {
+					button.textContent = '🎮 Conectar VR';
+					button.disabled = false;
+					button.style.background = '#FF9800';
+					button.style.cursor = 'pointer';
+					button.title = 'WebXR no está disponible. Usa un navegador compatible o conecta un dispositivo VR.';
+					
+					button.onclick = function() {
+						var message = "Para usar VR en este juego:\n\n" +
+							"1. En Oculus Quest:\n" +
+							"   - Usa el navegador Oculus Browser (predeterminado)\n" +
+							"   - NO uses Chrome o Firefox\n\n" +
+							"2. En otros dispositivos:\n" +
+							"   - Google Chrome (recomendado)\n" +
+							"   - Microsoft Edge\n\n" +
+							"3. Dispositivos compatibles:\n" +
+							"   - Oculus Quest/Quest 2 (con Oculus Browser)\n" +
+							"   - HTC Vive\n" +
+							"   - Windows Mixed Reality\n" +
+							"   - Otros dispositivos compatibles con WebXR\n\n" +
+							"4. Asegúrate de que el dispositivo esté encendido y configurado";
+						alert(message);
+					};
+				}
 				return;
 			}
 			
@@ -435,9 +496,27 @@ VRManager.prototype.createVRButton = function(containerId)
 					if (typeof self.requestVRSession === 'function') {
 						self.requestVRSession().then(function() {
 							button.textContent = '🚫 Salir de VR';
+							console.log("VR: Sesión VR activada correctamente");
 						}).catch(function(err) {
 							console.error("VR: Error al activar VR:", err);
-							alert("No se pudo activar VR. Asegúrate de que tu dispositivo y navegador soporten WebXR.");
+							var errorMsg = typeof err === 'string' ? err : "No se pudo activar VR.";
+							if (err.message) {
+								errorMsg = err.message;
+							}
+							
+							var fullMessage = "No se pudo activar VR:\n\n" + errorMsg;
+							var isQuest = navigator.userAgent.includes('Quest') || 
+							              navigator.userAgent.includes('OculusBrowser') ||
+							              navigator.userAgent.includes('Oculus');
+							
+							if (isQuest && errorMsg.includes('soportado')) {
+								fullMessage += "\n\nSi estás en Oculus Quest, asegúrate de:\n" +
+								              "1. Usar Oculus Browser (no Chrome ni Firefox)\n" +
+								              "2. Estar en el menú principal del Quest\n" +
+								              "3. Tener el Quest actualizado";
+							}
+							
+							alert(fullMessage);
 						});
 					} else {
 						console.error("VR: requestVRSession no está definida");
@@ -481,94 +560,82 @@ VRManager.prototype.createVRButton = function(containerId)
 VRManager.prototype.checkVRSupportAsync = function()
 {
 	return new Promise(function(resolve, reject) {
-		console.log("VR: Iniciando verificación en 3 pasos...");
+		console.log("VR: Iniciando verificación de soporte WebXR para Oculus Quest...");
 		
-		// PASO 1: Verificar que el navegador puede generar un canvas de 360°
-		console.log("VR: Paso 1 - Verificando capacidad de generar canvas de 360°...");
-		var canCreateXRCanvas = false;
-		try {
-			// Intentar crear un canvas temporal para verificar compatibilidad
-			var testCanvas = document.createElement('canvas');
-			var testGl = testCanvas.getContext('webgl', { xrCompatible: true });
-			if (testGl) {
-				// Verificar si el contexto puede ser compatible con XR
-				if (testGl.makeXRCompatible) {
-					canCreateXRCanvas = true;
-					console.log("VR: ✓ Paso 1 completado - Canvas compatible con 360° detectado");
-				} else {
-					console.log("VR: ✗ Paso 1 fallido - makeXRCompatible no disponible");
-				}
-			} else {
-				console.log("VR: ✗ Paso 1 fallido - No se pudo crear contexto WebGL compatible con XR");
-			}
-		} catch (e) {
-			console.warn("VR: ✗ Paso 1 fallido - Error al verificar compatibilidad de canvas:", e);
-		}
-		
-		if (!canCreateXRCanvas) {
-			console.log("VR: El navegador no puede generar un canvas de 360°");
-			resolve(false);
-			return;
-		}
-		
-		// PASO 2: Verificar que la API WebXR carga correctamente
-		console.log("VR: Paso 2 - Verificando que la API WebXR carga correctamente...");
+		// PASO 1: Verificar que navigator.xr existe (lo más importante)
+		console.log("VR: Paso 1 - Verificando API WebXR (navigator.xr)...");
 		if (typeof navigator === "undefined") {
-			console.log("VR: ✗ Paso 2 fallido - navigator no está disponible");
+			console.log("VR: ✗ Paso 1 fallido - navigator no está disponible");
 			resolve(false);
 			return;
 		}
 		
 		if (!navigator.xr) {
-			console.log("VR: ✗ Paso 2 fallido - navigator.xr no está disponible");
+			console.log("VR: ✗ Paso 1 fallido - navigator.xr no está disponible");
+			console.log("VR: Este navegador no soporta WebXR. Usa el navegador Oculus Browser en Quest.");
 			resolve(false);
 			return;
 		}
 		
-		// Verificar que la API WebXR tiene las funciones básicas
-		if (typeof navigator.xr !== 'object') {
-			console.log("VR: ✗ Paso 2 fallido - navigator.xr no es un objeto válido");
-			resolve(false);
-			return;
-		}
+		console.log("VR: ✓ Paso 1 completado - navigator.xr encontrado");
 		
-		console.log("VR: ✓ Paso 2 completado - API WebXR cargada correctamente");
+		// PASO 2: Verificar soporte de sesión VR usando isSessionSupported
+		// Esta es la forma correcta y más confiable de verificar soporte VR
+		console.log("VR: Paso 2 - Verificando soporte de sesión immersive-vr...");
 		
-		// PASO 3: Detectar VR/AR
-		console.log("VR: Paso 3 - Detectando soporte VR/AR...");
-		
-		// Verificar si isSessionSupported está disponible (WebXR estándar)
 		if (navigator.xr.isSessionSupported) {
-			// Verificar soporte VR
 			navigator.xr.isSessionSupported('immersive-vr').then(function(vrSupported) {
-				console.log("VR: immersive-vr soportado:", vrSupported);
-				
-				// También verificar soporte AR (opcional, para información)
-				if (navigator.xr.isSessionSupported('immersive-ar')) {
-					navigator.xr.isSessionSupported('immersive-ar').then(function(arSupported) {
-						console.log("VR: immersive-ar soportado:", arSupported);
-						// Resolver con el soporte VR (AR es opcional)
-						resolve(vrSupported);
-					}).catch(function(err) {
-						console.warn("VR: Error al verificar soporte AR:", err);
-						// Resolver con el soporte VR aunque AR falle
-						resolve(vrSupported);
-					});
+				if (vrSupported) {
+					console.log("VR: ✓ Paso 2 completado - immersive-vr está soportado");
+					resolve(true);
 				} else {
-					// Si no hay soporte para verificar AR, solo resolver con VR
-					resolve(vrSupported);
+					console.log("VR: ✗ Paso 2 fallido - immersive-vr NO está soportado");
+					console.log("VR: El dispositivo puede no estar en modo VR o el navegador no está configurado correctamente");
+					resolve(false);
 				}
 			}).catch(function(err) {
-				console.warn("VR: ✗ Paso 3 fallido - Error al verificar soporte VR:", err);
-				// Si falla la verificación, asumir que no está soportado
-				resolve(false);
+				console.warn("VR: ✗ Paso 2 fallido - Error al verificar soporte VR:", err);
+				console.log("VR: Intentando verificación alternativa...");
+				
+				// Fallback: Si isSessionSupported falla, verificar si el contexto WebGL puede ser compatible
+				// En algunos casos, Oculus Quest puede tener WebXR pero la verificación puede fallar
+				try {
+					var testCanvas = document.createElement('canvas');
+					var testGl = testCanvas.getContext('webgl', { xrCompatible: true }) || 
+					             testCanvas.getContext('experimental-webgl', { xrCompatible: true });
+					
+					if (testGl) {
+						console.log("VR: ✓ Verificación alternativa exitosa - WebGL con xrCompatible disponible");
+						// Si tenemos WebGL con xrCompatible, asumir que WebXR puede funcionar
+						resolve(true);
+					} else {
+						console.log("VR: ✗ Verificación alternativa fallida - No se pudo crear contexto WebGL compatible");
+						resolve(false);
+					}
+				} catch (e) {
+					console.warn("VR: ✗ Error en verificación alternativa:", e);
+					resolve(false);
+				}
 			});
 		} else {
-			// Fallback: si navigator.xr existe pero no tiene isSessionSupported,
-			// verificar si puede crear sesiones directamente
-			console.log("VR: ⚠ Paso 3 - isSessionSupported no disponible, usando fallback");
-			// Si el canvas es compatible y la API está cargada, asumir que puede funcionar
-			resolve(canCreateXRCanvas);
+			// Fallback: Si isSessionSupported no está disponible, verificar contexto WebGL
+			console.log("VR: ⚠ isSessionSupported no disponible, usando verificación alternativa...");
+			try {
+				var testCanvas = document.createElement('canvas');
+				var testGl = testCanvas.getContext('webgl', { xrCompatible: true }) || 
+				             testCanvas.getContext('experimental-webgl', { xrCompatible: true });
+				
+				if (testGl && navigator.xr) {
+					console.log("VR: ✓ Verificación alternativa exitosa - WebGL compatible y navigator.xr disponible");
+					resolve(true);
+				} else {
+					console.log("VR: ✗ Verificación alternativa fallida");
+					resolve(false);
+				}
+			} catch (e) {
+				console.warn("VR: ✗ Error en verificación alternativa:", e);
+				resolve(false);
+			}
 		}
 	});
 };
