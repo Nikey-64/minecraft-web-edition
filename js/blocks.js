@@ -1101,7 +1101,34 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		// Use variable direction to determine wall side and apply offset accordingly
 		var ladderOffsetX = 0;
 		var ladderOffsetZ = 0;
-		if ( block.bloctype === "ladder" ) {
+		var renderSideX = x - OFFSET;
+		var renderSideZ = z - OFFSET;
+		var renderSideX2 = x + 1.0 + OFFSET;
+		var renderSideZ2 = z - OFFSET;
+		
+		if ( block.bloctype === "ladder" && isLadderFace ) {
+			// Si usamos DIRECTION.INSIDE, determinar en qué lado está la pared y renderizar en ese lado
+			var wallDir = getLadderWallDirection( x, y, z, world );
+			// En Minecraft vanilla, las escaleras están a 1/16 de bloque (1 pixel) de distancia de la pared hacia adentro
+			if ( wallDir === "front" ) {
+				// Pared en Front (z-1), renderizar en el mismo lado
+				// Borde del bloque Front: z - OFFSET
+				// Para ir hacia adentro desde el borde, necesitamos aumentar z (offset positivo)
+				// Posición deseada: z - OFFSET + 1/16 (1 pixel desde el borde hacia adentro)
+				renderSideZ = z - OFFSET;
+				renderSideZ2 = z - OFFSET;
+				ladderOffsetZ = (1.0/16.0); // A 1 pixel hacia adentro (offset positivo)
+			} else if ( wallDir === "left" ) {
+				// Pared en Left (x-1), necesitamos renderizar en Left face, pero estamos en Front face
+				// No hacer nada aquí, se renderizará en Left face más adelante
+			} else if ( wallDir === "right" ) {
+				// Pared en Right (x+1), necesitamos renderizar en Right face, pero estamos en Front face
+				// No hacer nada aquí, se renderizará en Right face más adelante
+			} else if ( wallDir === "back" ) {
+				// Pared en Back (z+1), necesitamos renderizar en Back face, pero estamos en Front face
+				// No hacer nada aquí, se renderizará en Back face más adelante
+			}
+		} else if ( block.bloctype === "ladder" ) {
 			var wallDir = getLadderWallDirection( x, y, z, world );
 			// Ladder face should be 1/16 block (0.0625) away from the wall, towards the inside
 			// If wall is on left (x-1), offset towards -X (inside)
@@ -1123,13 +1150,27 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 			}
 		}
 		
-		pushQuad(
-			vertices,
-			[ x - OFFSET + ladderOffsetX, z - OFFSET + ladderOffsetZ, renderY, c[0], c[3], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET + ladderOffsetX, z - OFFSET + ladderOffsetZ, renderY, c[2], c[3], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET + ladderOffsetX, z - OFFSET + ladderOffsetZ, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
-			[ x - OFFSET + ladderOffsetX, z - OFFSET + ladderOffsetZ, renderY + bH, c[0], c[1], r, g, b, 1.0 ]
-		);
+		// Usar orden normal de vértices para que las escaleras se vean de forma normal
+		// DIRECTION.INSIDE solo afecta la textura, no el orden de renderizado
+		// Rotar las coordenadas de textura 180 grados para escaleras con DIRECTION.INSIDE
+		if ( isLadderFace ) {
+			// Rotación 180°: intercambiar esquinas opuestas de textura
+			pushQuad(
+				vertices,
+				[ x - OFFSET + ladderOffsetX, renderSideZ + ladderOffsetZ, renderY, c[2], c[1], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET + ladderOffsetX, renderSideZ2 + ladderOffsetZ, renderY, c[0], c[1], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET + ladderOffsetX, renderSideZ2 + ladderOffsetZ, renderY + bH, c[0], c[3], r, g, b, 1.0 ],
+				[ x - OFFSET + ladderOffsetX, renderSideZ + ladderOffsetZ, renderY + bH, c[2], c[3], r, g, b, 1.0 ]
+			);
+		} else {
+			pushQuad(
+				vertices,
+				[ x - OFFSET + ladderOffsetX, renderSideZ + ladderOffsetZ, renderY, c[0], c[3], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET + ladderOffsetX, renderSideZ2 + ladderOffsetZ, renderY, c[2], c[3], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET + ladderOffsetX, renderSideZ2 + ladderOffsetZ, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+				[ x - OFFSET + ladderOffsetX, renderSideZ + ladderOffsetZ, renderY + bH, c[0], c[1], r, g, b, 1.0 ]
+			);
+		}
 	}
 	
 	// Back - only render if adjacent block is transparent or doesn't exist (AIR)
@@ -1171,7 +1212,17 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		
 		// For ladders: apply offset to render face slightly away from wall (1/16 block = 1 pixel)
 		var ladderOffset = 0;
-		if ( block.bloctype === "ladder" ) {
+		var renderSideZ = z + 1.0 + OFFSET; // Back face normalmente
+		
+		if ( block.bloctype === "ladder" && isLadderFace ) {
+			// Si usamos DIRECTION.INSIDE, la pared está en Back (z+1), la escalera se renderiza en el mismo lado
+			// En Minecraft vanilla, las escaleras están a 1/16 de bloque (1 pixel) de distancia de la pared hacia adentro
+			// Borde del bloque Back: z + 1.0 + OFFSET
+			// Para ir hacia adentro desde el borde, necesitamos disminuir z (offset negativo)
+			// Posición deseada: z + 1.0 + OFFSET - 1/16 (1 pixel desde el borde hacia adentro)
+			renderSideZ = z + 1.0 + OFFSET; // Mismo lado donde está la pared (Back)
+			ladderOffset = -(1.0/16.0); // A 1 pixel hacia adentro (offset negativo)
+		} else if ( block.bloctype === "ladder" ) {
 			// Ladder face should be offset 1/16 block (0.0625) away from the wall
 			// Back face (z+1) - wall is at z+1, we want ladder face 1/16 away from wall
 			// Position: z + 1 - 1/16 = z + 15/16 = z + 0.9375
@@ -1185,13 +1236,27 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 			ladderOffset = -(1.0/16.0) - OFFSET; // Move towards +Z (towards wall, but 1/16 away from it)
 		}
 		
-		pushQuad(
-			vertices,
-			[ x - OFFSET, z + 1.0 + OFFSET + ladderOffset, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET + ladderOffset, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET, z + 1.0 + OFFSET + ladderOffset, renderY, c[0], c[3], r, g, b, 1.0 ],
-			[ x - OFFSET, z + 1.0 + OFFSET + ladderOffset, renderY, c[2], c[3], r, g, b, 1.0 ]
-		);
+		// Usar orden normal de vértices para que las escaleras se vean de forma normal
+		// DIRECTION.INSIDE solo afecta la textura, no el orden de renderizado
+		// Rotar las coordenadas de textura 180 grados para escaleras con DIRECTION.INSIDE
+		if ( isLadderFace ) {
+			// Rotación 180°: intercambiar esquinas opuestas de textura
+			pushQuad(
+				vertices,
+				[ x - OFFSET, renderSideZ + ladderOffset, renderY + bH, c[0], c[3], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET, renderSideZ + ladderOffset, renderY + bH, c[2], c[3], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET, renderSideZ + ladderOffset, renderY, c[2], c[1], r, g, b, 1.0 ],
+				[ x - OFFSET, renderSideZ + ladderOffset, renderY, c[0], c[1], r, g, b, 1.0 ]
+			);
+		} else {
+			pushQuad(
+				vertices,
+				[ x - OFFSET, renderSideZ + ladderOffset, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET, renderSideZ + ladderOffset, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
+				[ x + 1.0 + OFFSET, renderSideZ + ladderOffset, renderY, c[0], c[3], r, g, b, 1.0 ],
+				[ x - OFFSET, renderSideZ + ladderOffset, renderY, c[2], c[3], r, g, b, 1.0 ]
+			);
+		}
 	}
 	
 	// Left - only render if adjacent block is transparent or doesn't exist (AIR)
@@ -1233,7 +1298,17 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		
 		// For ladders: apply offset to render face slightly away from wall (1/16 block = 1 pixel)
 		var ladderOffset = 0;
-		if ( block.bloctype === "ladder" ) {
+		var renderSideX = x - OFFSET; // Left face normalmente
+		
+		if ( block.bloctype === "ladder" && isLadderFace ) {
+			// Si usamos DIRECTION.INSIDE, la pared está en Left (x-1), la escalera se renderiza en el mismo lado
+			// En Minecraft vanilla, las escaleras están a 1/16 de bloque (1 pixel) de distancia de la pared hacia adentro
+			// Borde del bloque Left: x - OFFSET
+			// Para ir hacia adentro desde el borde, necesitamos aumentar x (offset positivo)
+			// Posición deseada: x - OFFSET + 1/16 (1 pixel desde el borde hacia adentro)
+			renderSideX = x - OFFSET; // Mismo lado donde está la pared (Left)
+			ladderOffset = (1.0/16.0); // A 1 pixel hacia adentro (offset positivo)
+		} else if ( block.bloctype === "ladder" ) {
 			// Ladder face should be offset 1/16 block (0.0625) away from the wall
 			// Left face (x-1) - wall is at x-1, we want ladder face 1/16 away from wall
 			// Position: x - 1 + 1/16 = x - 15/16 = x - 0.9375
@@ -1245,13 +1320,27 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 			ladderOffset = -(1.0 - 1.0/16.0) + OFFSET; // = -15/16 + 0.001 = -0.9365
 		}
 		
-		pushQuad(
-			vertices,
-			[ x - OFFSET + ladderOffset, z - OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
-			[ x - OFFSET + ladderOffset, z + 1.0 + OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
-			[ x - OFFSET + ladderOffset, z + 1.0 + OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
-			[ x - OFFSET + ladderOffset, z - OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ]
-		);
+		// Usar orden normal de vértices para que las escaleras se vean de forma normal
+		// DIRECTION.INSIDE solo afecta la textura, no el orden de renderizado
+		// Rotar las coordenadas de textura 180 grados para escaleras con DIRECTION.INSIDE
+		if ( isLadderFace ) {
+			// Rotación 180°: intercambiar esquinas opuestas de textura
+			pushQuad(
+				vertices,
+				[ renderSideX + ladderOffset, z - OFFSET, renderY + bH, c[0], c[3], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z + 1.0 + OFFSET, renderY + bH, c[2], c[3], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z + 1.0 + OFFSET, renderY, c[2], c[1], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z - OFFSET, renderY, c[0], c[1], r, g, b, 1.0 ]
+			);
+		} else {
+			pushQuad(
+				vertices,
+				[ renderSideX + ladderOffset, z - OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z + 1.0 + OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z + 1.0 + OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z - OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ]
+			);
+		}
 	}
 	
 	// Right - only render if adjacent block is transparent or doesn't exist (AIR)
@@ -1296,7 +1385,17 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 		
 		// For ladders: apply offset to render face slightly away from wall (1/16 block = 1 pixel)
 		var ladderOffset = 0;
-		if ( block.bloctype === "ladder" ) {
+		var renderSideX = x + 1.0 + OFFSET; // Right face normalmente
+		
+		if ( block.bloctype === "ladder" && isLadderFace ) {
+			// Si usamos DIRECTION.INSIDE, la pared está en Right (x+1), la escalera se renderiza en el mismo lado
+			// En Minecraft vanilla, las escaleras están a 1/16 de bloque (1 pixel) de distancia de la pared hacia adentro
+			// Borde del bloque Right: x + 1.0 + OFFSET
+			// Para ir hacia adentro desde el borde, necesitamos disminuir x (offset negativo)
+			// Posición deseada: x + 1.0 + OFFSET - 1/16 (1 pixel desde el borde hacia adentro)
+			renderSideX = x + 1.0 + OFFSET; // Mismo lado donde está la pared (Right)
+			ladderOffset = -(1.0/16.0); // A 1 pixel hacia adentro (offset negativo)
+		} else if ( block.bloctype === "ladder" ) {
 			// Ladder face should be offset 1/16 block (0.0625) away from the wall
 			// Right face (x+1) - wall is at x+1, we want ladder face 1/16 away from wall
 			// Position: x + 1 - 1/16 = x + 15/16 = x + 0.9375
@@ -1308,13 +1407,27 @@ BLOCK.pushVertices = function( vertices, world, lightmap, x, y, z, yOffset, anim
 			ladderOffset = -(1.0/16.0) - OFFSET; // Move towards +X (towards wall, but 1/16 away from it)
 		}
 		
-		pushQuad(
-			vertices,
-			[ x + 1.0 + OFFSET + ladderOffset, z - OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET + ladderOffset, z + 1.0 + OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET + ladderOffset, z + 1.0 + OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
-			[ x + 1.0 + OFFSET + ladderOffset, z - OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ]
-		);
+		// Usar orden normal de vértices para que las escaleras se vean de forma normal
+		// DIRECTION.INSIDE solo afecta la textura, no el orden de renderizado
+		// Rotar las coordenadas de textura 180 grados para escaleras con DIRECTION.INSIDE
+		if ( isLadderFace ) {
+			// Rotación 180°: intercambiar esquinas opuestas de textura
+			pushQuad(
+				vertices,
+				[ renderSideX + ladderOffset, z - OFFSET, renderY, c[2], c[1], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z + 1.0 + OFFSET, renderY, c[0], c[1], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z + 1.0 + OFFSET, renderY + bH, c[0], c[3], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z - OFFSET, renderY + bH, c[2], c[3], r, g, b, 1.0 ]
+			);
+		} else {
+			pushQuad(
+				vertices,
+				[ renderSideX + ladderOffset, z - OFFSET, renderY, c[0], c[3], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z + 1.0 + OFFSET, renderY, c[2], c[3], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z + 1.0 + OFFSET, renderY + bH, c[2], c[1], r, g, b, 1.0 ],
+				[ renderSideX + ladderOffset, z - OFFSET, renderY + bH, c[0], c[1], r, g, b, 1.0 ]
+			);
+		}
 	}
 	
 	// Inner face for stairs - vertical face opposite to the stairs orientation

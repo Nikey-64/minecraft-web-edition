@@ -92,8 +92,10 @@ VRManager.prototype.requestVRSession = function()
 		self.isVRActive = true;
 		
 		// Obtener el espacio de referencia
-		// Intentar 'local-floor' primero, luego 'local' como fallback
-		return session.requestReferenceSpace('local-floor').catch(function() {
+		// Para Oculus Quest, intentar 'local-floor' primero (mejor para tracking del suelo)
+		// Luego 'local' como fallback
+		return session.requestReferenceSpace('local-floor').catch(function(err) {
+			console.log("VR: local-floor no disponible, usando local:", err);
 			// Si 'local-floor' no está disponible, usar 'local'
 			return session.requestReferenceSpace('local');
 		});
@@ -104,41 +106,60 @@ VRManager.prototype.requestVRSession = function()
 		var canvas = self.renderer.canvas;
 		var gl = self.renderer.gl;
 		
-		// Hacer el contexto WebGL compatible con XR
-		// Nota: makeXRCompatible puede no estar disponible en todos los contextos
-		if (gl.makeXRCompatible) {
-			gl.makeXRCompatible().then(function() {
-				// Configurar el layer de renderizado
-				// XRWebGLLayer requiere que el contexto sea compatible con XR
-				var xrLayer = new XRWebGLLayer(self.xrSession, gl);
+		// Para Oculus Quest, el contexto WebGL debe ser compatible con XR
+		// Hacer el contexto WebGL compatible con XR antes de crear el layer
+		var setupXRLayer = function() {
+			try {
+				// Crear el layer de renderizado XR
+				// Para Oculus Quest, usar opciones específicas si están disponibles
+				var layerOptions = {
+					antialias: true, // Mejor calidad visual en Quest
+					ignoreDepthValues: false,
+					framebufferScaleFactor: 1.0 // Usar resolución nativa del Quest
+				};
+				
+				var xrLayer = new XRWebGLLayer(self.xrSession, gl, layerOptions);
+				
+				// Configurar el estado de renderizado
 				self.xrSession.updateRenderState({
-					baseLayer: xrLayer
+					baseLayer: xrLayer,
+					depthNear: 0.1,
+					depthFar: 1000.0
 				});
-				console.log("VR: Contexto WebGL hecho compatible con XR");
-			}).catch(function(err) {
-				console.error("Error al hacer WebGL compatible con XR:", err);
-				// Intentar de todas formas
+				
+				console.log("VR: XRWebGLLayer creado correctamente para Oculus Quest");
+			} catch (e) {
+				console.error("VR: Error al crear XRWebGLLayer:", e);
+				// Intentar sin opciones como fallback
 				try {
 					var xrLayer = new XRWebGLLayer(self.xrSession, gl);
 					self.xrSession.updateRenderState({
 						baseLayer: xrLayer
 					});
-					console.log("VR: XRWebGLLayer creado sin makeXRCompatible");
-				} catch (e) {
-					console.error("Error al crear XRWebGLLayer:", e);
+					console.log("VR: XRWebGLLayer creado sin opciones avanzadas");
+				} catch (e2) {
+					console.error("VR: Error crítico al crear XRWebGLLayer:", e2);
+					throw e2;
 				}
+			}
+		};
+		
+		// Hacer el contexto WebGL compatible con XR
+		// Nota: makeXRCompatible puede no estar disponible en todos los contextos
+		if (gl.makeXRCompatible) {
+			gl.makeXRCompatible().then(function() {
+				console.log("VR: Contexto WebGL hecho compatible con XR");
+				setupXRLayer();
+			}).catch(function(err) {
+				console.warn("VR: Error al hacer WebGL compatible con XR (puede que ya lo sea):", err);
+				// Intentar de todas formas - el contexto puede ya ser compatible
+				setupXRLayer();
 			});
 		} else {
 			// Si makeXRCompatible no está disponible, intentar crear el layer directamente
-			try {
-				var xrLayer = new XRWebGLLayer(self.xrSession, gl);
-				self.xrSession.updateRenderState({
-					baseLayer: xrLayer
-				});
-				console.log("VR: XRWebGLLayer creado (makeXRCompatible no disponible)");
-			} catch (e) {
-				console.error("Error al crear XRWebGLLayer:", e);
-			}
+			// Esto puede funcionar si el contexto ya fue creado con xrCompatible: true
+			console.log("VR: makeXRCompatible no disponible, intentando crear layer directamente");
+			setupXRLayer();
 		}
 		
 		// Escuchar eventos de la sesión
@@ -146,10 +167,22 @@ VRManager.prototype.requestVRSession = function()
 			self.onVRSessionEnd();
 		});
 		
-		// Iniciar el loop de renderizado VR
-		self.startVRRenderLoop();
+		session.addEventListener('visibilitychange', function() {
+			console.log("VR: Visibilidad de sesión cambió");
+		});
 		
-		console.log("Sesión VR iniciada correctamente");
+		session.addEventListener('inputsourceschange', function() {
+			console.log("VR: Input sources cambiaron");
+		});
+		
+		// Iniciar el loop de renderizado VR
+		// Esperar un frame para asegurar que el layer esté configurado
+		setTimeout(function() {
+			self.startVRRenderLoop();
+			console.log("VR: Loop de renderizado iniciado");
+		}, 100);
+		
+		console.log("VR: Sesión VR iniciada correctamente para Oculus Quest");
 		return session;
 	}).catch(function(err) {
 		console.error("Error al iniciar sesión VR:", err);
@@ -203,44 +236,64 @@ VRManager.prototype.startVRRenderLoop = function()
 		
 		// Obtener el pose del viewer (headset)
 		var pose = frame.getViewerPose(self.xrSpace);
-		if (!pose) return;
+		if (!pose) {
+			// Si no hay pose, continuar el loop de todas formas
+			self.xrSession.requestAnimationFrame(onXRFrame);
+			return;
+		}
 		
 		// Renderizar para cada ojo
 		var gl = renderer.gl;
 		var layer = self.xrSession.renderState.baseLayer;
 		
+		if (!layer) {
+			console.warn("VR: Layer no disponible, saltando frame");
+			self.xrSession.requestAnimationFrame(onXRFrame);
+			return;
+		}
+		
 		// Limpiar el framebuffer
 		gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
 		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 		
-		// Renderizar para cada vista (ojo)
+		// Renderizar para cada vista (ojo) - Oculus Quest tiene 2 vistas (izquierda y derecha)
 		for (var i = 0; i < pose.views.length; i++) {
 			var view = pose.views[i];
 			
 			// Configurar viewport para esta vista
 			var viewport = layer.getViewport(view);
+			if (!viewport) {
+				console.warn("VR: Viewport no disponible para vista", i);
+				continue;
+			}
 			gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
 			
 			// Configurar matriz de proyección para esta vista
 			// view.projectionMatrix es un Float32Array de 16 elementos
 			var projMatrix = (i === 0) ? self.leftProjMatrix : self.rightProjMatrix;
-			for (var j = 0; j < 16; j++) {
-				projMatrix[j] = view.projectionMatrix[j];
+			if (view.projectionMatrix) {
+				for (var j = 0; j < 16; j++) {
+					projMatrix[j] = view.projectionMatrix[j];
+				}
+				renderer.projMatrix = projMatrix;
 			}
-			renderer.projMatrix = projMatrix;
 			
 			// Configurar matriz de vista (view) para esta vista
 			// view.transform.inverse.matrix es un Float32Array de 16 elementos
 			var viewMatrix = (i === 0) ? self.leftEyeMatrix : self.rightEyeMatrix;
-			var transformMatrix = view.transform.inverse.matrix;
-			for (var j = 0; j < 16; j++) {
-				viewMatrix[j] = transformMatrix[j];
+			if (view.transform && view.transform.inverse && view.transform.inverse.matrix) {
+				var transformMatrix = view.transform.inverse.matrix;
+				for (var j = 0; j < 16; j++) {
+					viewMatrix[j] = transformMatrix[j];
+				}
+				renderer.viewMatrix = viewMatrix;
 			}
-			renderer.viewMatrix = viewMatrix;
 			
 			// Actualizar matrices en el shader
-			gl.uniformMatrix4fv(renderer.uProjMat, false, renderer.projMatrix);
-			gl.uniformMatrix4fv(renderer.uViewMat, false, renderer.viewMatrix);
+			if (renderer.uProjMat && renderer.uViewMat) {
+				gl.uniformMatrix4fv(renderer.uProjMat, false, renderer.projMatrix);
+				gl.uniformMatrix4fv(renderer.uViewMat, false, renderer.viewMatrix);
+			}
 			
 			// Renderizar la escena
 			self.renderVRFrame(view);

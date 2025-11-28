@@ -317,17 +317,29 @@ Renderer.prototype.draw = function()
 	{
 		// Iterar sobre chunks cargados en lugar de todos los chunks
 		var loadedChunksArray = [];
+		var chunksWithInsideFaces = [];
 		this.loadedChunks.forEach(function(chunkKey) {
 			var chunk = this.chunkLookup && this.chunkLookup[chunkKey];
 			if ( chunk && chunk.loaded && chunk.buffer != null ) {
 				loadedChunksArray.push(chunk);
+				// Verificar si el chunk tiene un buffer separado para caras interiores
+				if ( chunk.bufferInside != null ) {
+					chunksWithInsideFaces.push(chunk);
+				}
 			}
 		}.bind(this));
 		
-		// Renderizar chunks cargados
+		// Renderizar chunks cargados (caras normales)
 		for ( var i = 0; i < loadedChunksArray.length; i++ )
 		{
 			this.drawBuffer( loadedChunksArray[i].buffer );
+		}
+		
+		// Renderizar caras interiores (DIRECTION.INSIDE = 7) con culling invertido
+		// Esto permite ver las caras desde dentro del bloque (como escaleras contra paredes)
+		for ( var i = 0; i < chunksWithInsideFaces.length; i++ )
+		{
+			this.drawBufferInside( chunksWithInsideFaces[i].bufferInside );
 		}
 	}
 
@@ -485,6 +497,212 @@ Renderer.prototype.draw = function()
 		}
 		
 		// Calculate angle so that the nametag always faces the local player
+		var ang = -Math.PI/2 + Math.atan2( this.camPos[1] - player.y, this.camPos[0] - player.x );
+		
+		mat4.identity( this.modelMatrix );
+		mat4.translate( this.modelMatrix, [ player.x, player.y, player.z + 2.05 ] );
+		mat4.rotateZ( this.modelMatrix, ang );
+		mat4.scale( this.modelMatrix, [ 0.005, 1, 0.005 ] );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		
+		gl.bindTexture( gl.TEXTURE_2D, player.nametag.texture );
+		this.drawBuffer( player.nametag.model );
+	}
+	
+	gl.disable( gl.BLEND );
+	
+	mat4.identity( this.modelMatrix );
+	gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+}
+
+// drawVRView()
+//
+// Renderiza un frame para VR (una vista/ojo específico)
+// Las matrices de proyección y vista ya están configuradas por VRManager
+// No actualiza la cámara ni verifica si está en modo VR
+
+Renderer.prototype.drawVRView = function()
+{
+	var gl = this.gl;
+	
+	// No actualizar viewport ni limpiar - eso se hace en VRManager
+	// No actualizar chunks - eso se hace en el loop principal
+	// Solo renderizar la escena con las matrices ya configuradas
+	
+	// Draw level chunks
+	var chunks = this.chunks;
+	
+	gl.bindTexture( gl.TEXTURE_2D, this.texTerrain );
+	
+	// Renderizar chunks cargados
+	if ( chunks != null && this.loadedChunks )
+	{
+		var loadedChunksArray = [];
+		var chunksWithInsideFaces = [];
+		this.loadedChunks.forEach(function(chunkKey) {
+			var chunk = this.chunkLookup && this.chunkLookup[chunkKey];
+			if ( chunk && chunk.loaded && chunk.buffer != null ) {
+				loadedChunksArray.push(chunk);
+				if ( chunk.bufferInside != null ) {
+					chunksWithInsideFaces.push(chunk);
+				}
+			}
+		}.bind(this));
+		
+		// Renderizar chunks cargados (caras normales)
+		for ( var i = 0; i < loadedChunksArray.length; i++ )
+		{
+			this.drawBuffer( loadedChunksArray[i].buffer );
+		}
+		
+		// Renderizar caras interiores (DIRECTION.INSIDE = 7) con culling invertido
+		for ( var i = 0; i < chunksWithInsideFaces.length; i++ )
+		{
+			this.drawBufferInside( chunksWithInsideFaces[i].bufferInside );
+		}
+	}
+	
+	// Draw chunk grid if debug mode is enabled
+	if ( this.showChunkGrid && this.world && this.world.localPlayer )
+	{
+		this.drawChunkGrid();
+	}
+	
+	// Draw block breaking overlay (survival mode)
+	if ( this.world && this.world.localPlayer )
+	{
+		var player = this.world.localPlayer;
+		if ( player.breakingBlock && player.breakingProgress > 0 )
+		{
+			this.drawBreakingOverlay(
+				player.breakingBlock.x,
+				player.breakingBlock.y,
+				player.breakingBlock.z,
+				player.breakingProgress
+			);
+		}
+	}
+	
+	// Draw item entities (dropped items)
+	this.drawItemEntities();
+	
+	// Draw players
+	var world = this.world;
+	if ( !world ) return;
+	
+	var players = world.players;
+	var localPlayer = world.localPlayer;
+	
+	gl.enable( gl.BLEND );
+	
+	// Renderizar jugador local si no está en primera persona
+	if ( localPlayer && localPlayer.cameraMode !== 1 ) {
+		var player = localPlayer;
+		var pitch = player.angles[0];
+		if ( pitch < -0.32 ) pitch = -0.32;
+		if ( pitch > 0.32 ) pitch = 0.32;
+		
+		var aniangle = 0;
+		if ( player.velocity && (Math.abs(player.velocity.x) > 0.1 || Math.abs(player.velocity.z) > 0.1) ) {
+			aniangle = Math.sin( Date.now() / 200 ) * 0.3;
+		}
+		
+		mat4.identity( this.modelMatrix );
+		mat4.translate( this.modelMatrix, [ player.pos.x, player.pos.z, player.pos.y + 1.7 ] );
+		mat4.rotateZ( this.modelMatrix, Math.PI - player.angles[1] );
+		mat4.rotateX( this.modelMatrix, -pitch );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		
+		gl.bindTexture( gl.TEXTURE_2D, this.texPlayer );
+		this.drawBuffer( this.playerHead );
+		
+		mat4.identity( this.modelMatrix );
+		mat4.translate( this.modelMatrix, [ player.pos.x, player.pos.z, player.pos.y + 0.01 ] );
+		mat4.rotateZ( this.modelMatrix, Math.PI - player.angles[1] );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerBody );
+		
+		mat4.translate( this.modelMatrix, [ 0, 0, 1.4 ] );
+		mat4.rotateX( this.modelMatrix, 0.75 * aniangle );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerLeftArm );
+		
+		mat4.rotateX( this.modelMatrix, -1.5 * aniangle );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerRightArm );
+		mat4.rotateX( this.modelMatrix, 0.75 * aniangle );
+		
+		mat4.translate( this.modelMatrix, [ 0, 0, -0.67 ] );
+		
+		mat4.rotateX( this.modelMatrix, 0.5 * aniangle );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerRightLeg );
+		
+		mat4.rotateX( this.modelMatrix, -aniangle );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerLeftLeg );
+	}
+	
+	// Renderizar otros jugadores (multiplayer)
+	for ( var p in players )
+	{
+		var player = players[p];
+		if ( player === localPlayer ) continue;
+		
+		if(player.moving || Math.abs(player.aniframe) > 0.1){
+			player.aniframe += 0.15;
+			if(player.aniframe > Math.PI)
+				player.aniframe  = -Math.PI;
+			aniangle = Math.PI/2 * Math.sin(player.aniframe);
+			if(!player.moving && Math.abs(aniangle) < 0.1 )
+				player.aniframe = 0;
+		}
+		else
+			aniangle = 0;
+		
+		var pitch = player.pitch;
+		if ( pitch < -0.32 ) pitch = -0.32;
+		if ( pitch > 0.32 ) pitch = 0.32;
+		
+		mat4.identity( this.modelMatrix );
+		mat4.translate( this.modelMatrix, [ player.x, player.z, player.y + 1.7 ] );
+		mat4.rotateZ( this.modelMatrix, Math.PI - player.yaw );
+		mat4.rotateX( this.modelMatrix, -pitch );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		
+		gl.bindTexture( gl.TEXTURE_2D, this.texPlayer );
+		this.drawBuffer( this.playerHead );
+		
+		mat4.identity( this.modelMatrix );
+		mat4.translate( this.modelMatrix, [ player.x, player.z, player.y + 0.01 ] );
+		mat4.rotateZ( this.modelMatrix, Math.PI - player.yaw );
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerBody );
+		
+		mat4.translate( this.modelMatrix, [ 0, 0, 1.4 ] );
+		mat4.rotateX( this.modelMatrix, 0.75* aniangle);
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerLeftArm );
+		
+		mat4.rotateX( this.modelMatrix, -1.5*aniangle);
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerRightArm );
+		mat4.rotateX( this.modelMatrix, 0.75*aniangle);
+		
+		mat4.translate( this.modelMatrix, [ 0, 0, -0.67 ] );
+		
+		mat4.rotateX( this.modelMatrix, 0.5*aniangle);
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerRightLeg );
+		
+		mat4.rotateX( this.modelMatrix, -aniangle);
+		gl.uniformMatrix4fv( this.uModelMat, false, this.modelMatrix );
+		this.drawBuffer( this.playerLeftLeg );
+		
+		if ( !player.nametag ) {
+			player.nametag = this.buildPlayerName( player.nick );
+		}
+		
 		var ang = -Math.PI/2 + Math.atan2( this.camPos[1] - player.y, this.camPos[0] - player.x );
 		
 		mat4.identity( this.modelMatrix );
@@ -1656,6 +1874,50 @@ Renderer.prototype.drawBuffer = function( buffer )
 	gl.vertexAttribPointer( this.aTexCoord, 2, gl.FLOAT, false, 9*4, 3*4 );
 	
 	gl.drawArrays( gl.TRIANGLES, 0, buffer.vertices );
+}
+
+// drawBufferInside( buffer )
+//
+// Renders a buffer with inverted face culling to allow rendering from inside the block.
+// This is used for blocks that use DIRECTION.INSIDE (direction 7) in blocks.js.
+// The function temporarily disables or inverts face culling, renders the buffer, then restores the original state.
+
+Renderer.prototype.drawBufferInside = function( buffer )
+{
+	var gl = this.gl;
+	
+	// Guardar el estado actual de culling
+	var wasCullFaceEnabled = gl.isEnabled( gl.CULL_FACE );
+	var cullFaceMode = gl.getParameter( gl.CULL_FACE_MODE );
+	
+	// Invertir el culling: cambiar de BACK a FRONT para renderizar caras interiores
+	// Esto hace que las caras que normalmente se ocultan (traseras) sean visibles desde dentro
+	if ( wasCullFaceEnabled ) {
+		// Cambiar a cull front faces (las caras frontales se ocultan, las traseras se muestran)
+		gl.cullFace( gl.FRONT );
+	} else {
+		// Si el culling estaba deshabilitado, habilitarlo con FRONT
+		gl.enable( gl.CULL_FACE );
+		gl.cullFace( gl.FRONT );
+	}
+	
+	// Renderizar el buffer
+	gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
+	
+	gl.vertexAttribPointer( this.aPos, 3, gl.FLOAT, false, 9*4, 0 );
+	gl.vertexAttribPointer( this.aColor, 4, gl.FLOAT, false, 9*4, 5*4 );
+	gl.vertexAttribPointer( this.aTexCoord, 2, gl.FLOAT, false, 9*4, 3*4 );
+	
+	gl.drawArrays( gl.TRIANGLES, 0, buffer.vertices );
+	
+	// Restaurar el estado original de culling
+	if ( wasCullFaceEnabled ) {
+		// Restaurar el modo original
+		gl.cullFace( cullFaceMode );
+	} else {
+		// Deshabilitar culling si estaba deshabilitado originalmente
+		gl.disable( gl.CULL_FACE );
+	}
 }
 
 // getGrassColor( x, y )
