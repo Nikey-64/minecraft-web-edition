@@ -318,16 +318,22 @@ VRManager.prototype.requestVRSession = function()
 		return setupPromise.then(function(xrLayer) {
 			console.log("VR: XRWebGLLayer configurado correctamente, continuando con la inicialización");
 			
+			// Usar self.xrSession en lugar de session (la variable session solo está disponible en el scope anterior)
+			if (!self.xrSession) {
+				console.error("VR: ERROR - xrSession no está disponible en setupPromise.then");
+				return Promise.reject("xrSession no está disponible");
+			}
+			
 			// Escuchar eventos de la sesión (después de que el layer esté configurado)
-			session.addEventListener('end', function() {
+			self.xrSession.addEventListener('end', function() {
 				self.onVRSessionEnd();
 			});
 			
-			session.addEventListener('visibilitychange', function() {
+			self.xrSession.addEventListener('visibilitychange', function() {
 				console.log("VR: Visibilidad de sesión cambió");
 			});
 			
-			session.addEventListener('inputsourceschange', function() {
+			self.xrSession.addEventListener('inputsourceschange', function() {
 				console.log("VR: Input sources cambiaron");
 			});
 			
@@ -362,7 +368,7 @@ VRManager.prototype.requestVRSession = function()
 					self.startVRRenderLoop();
 					console.log("VR: Loop de renderizado iniciado");
 					console.log("VR: Sesión VR iniciada correctamente para Oculus Quest");
-					resolve(session);
+					resolve(self.xrSession);
 				});
 			});
 		});
