@@ -119,6 +119,16 @@ body.world-selection-active #hotbar {
 	display: none !important;
 }
 
+/* Hotbar en VR - más grande y posicionada correctamente */
+#hotbar.vr-active {
+	display: flex !important;
+	transform: translateX(-50%) scale(2.0);
+	transform-origin: center bottom;
+	z-index: 9999;
+	image-rendering: pixelated;
+	pointer-events: auto;
+}
+
 .hotbar-slot {
 	width: 20px;
 	height: 20px;
@@ -308,6 +318,18 @@ body.creative-mode .hunger-icons {
 	align-items: center;
 	justify-content: center;
 	pointer-events: auto;
+}
+
+/* Creative Inventory en VR - más grande y visible */
+.creative-inventory.vr-active {
+	z-index: 10000;
+	transform: scale(1.3);
+	transform-origin: center center;
+}
+
+.creative-inventory.vr-active .creative-inventory-container {
+	max-width: 90%;
+	max-height: 85%;
 }
 
 .creative-inventory-overlay {

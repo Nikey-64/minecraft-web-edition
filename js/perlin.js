@@ -178,11 +178,12 @@ function TerrainGenerator(seed, options)
 	this.options = options || {};
 	
 	// Configuración por defecto
+	// Ajustado para terreno menos montañoso (más suave y plano)
 	this.baseHeight = this.options.baseHeight || 64;
-	this.heightVariation = this.options.heightVariation || 32;
-	this.noiseScale = this.options.noiseScale || 0.05;
-	this.octaves = this.options.octaves || 6;
-	this.persistence = this.options.persistence || 0.5;
+	this.heightVariation = this.options.heightVariation || 12; // Reducido de 32 a 12 para menos montañas
+	this.noiseScale = this.options.noiseScale || 0.04; // Aumentado ligeramente para terreno más suave
+	this.octaves = this.options.octaves || 4; // Reducido de 6 a 4 para menos detalle/montañas
+	this.persistence = this.options.persistence || 0.35; // Reducido de 0.5 a 0.35 para terreno más suave
 	
 	// Configuración de biomas (opcional)
 	this.useBiomes = this.options.useBiomes || false;

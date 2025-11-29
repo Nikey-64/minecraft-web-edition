@@ -508,28 +508,28 @@
 							// Usar terreno Perlin por defecto (puedes cambiar esto a createFlatWorld para terreno plano)
 							// Opciones de terreno Perlin:
 							// - baseHeight: Altura base (default: 64)
-							// - heightVariation: Variación de altura (default: 32)
-							// - noiseScale: Escala del ruido, menor = más suave (default: 0.05)
-							// - octaves: Número de capas de detalle (default: 6)
-							// - persistence: Persistencia del ruido (default: 0.5)
+							// - heightVariation: Variación de altura (default: 12) - menor = menos montañoso
+							// - noiseScale: Escala del ruido, menor = más suave (default: 0.04)
+							// - octaves: Número de capas de detalle (default: 4) - menor = menos detalle
+							// - persistence: Persistencia del ruido (default: 0.35) - menor = más suave
 							try {
 								if (tempWorld.createPerlinWorld && typeof tempWorld.createPerlinWorld === "function") {
 									tempWorld.createPerlinWorld(null, {
 										baseHeight: 64,
-										heightVariation: 32,
-										noiseScale: 0.05,
-										octaves: 6,
-										persistence: 0.5
+										heightVariation: 12, // Reducido para terreno menos montañoso
+										noiseScale: 0.04, // Más suave
+										octaves: 4, // Menos detalle
+										persistence: 0.35 // Más suave
 									});
 									
 									// Guardar información de Perlin en worldData para poder cargarlo después
 									worldData.usePerlinTerrain = true;
 									worldData.perlinSeed = tempWorld.terrainGenerator ? tempWorld.terrainGenerator.perlin.seed : null;
 									worldData.perlinBaseHeight = 64;
-									worldData.perlinHeightVariation = 32;
-									worldData.perlinNoiseScale = 0.05;
-									worldData.perlinOctaves = 6;
-									worldData.perlinPersistence = 0.5;
+									worldData.perlinHeightVariation = 12;
+									worldData.perlinNoiseScale = 0.04;
+									worldData.perlinOctaves = 4;
+									worldData.perlinPersistence = 0.35;
 									
 									// Actualizar el spawn en worldData con el spawn correcto del terreno Perlin
 									if (tempWorld.spawn) {
@@ -707,14 +707,15 @@
 				
 				if (isPerlinWorld && typeof TerrainGenerator !== "undefined") {
 					try {
-						// Usar la misma configuración que al crear el mundo
-						w.createPerlinWorld(worldData.perlinSeed || null, {
-							baseHeight: worldData.perlinBaseHeight || 64,
-							heightVariation: worldData.perlinHeightVariation || 32,
-							noiseScale: worldData.perlinNoiseScale || 0.05,
-							octaves: worldData.perlinOctaves || 6,
-							persistence: worldData.perlinPersistence || 0.5
-						});
+					// Usar la misma configuración que al crear el mundo
+					// Valores por defecto ajustados para terreno menos montañoso
+					w.createPerlinWorld(worldData.perlinSeed || null, {
+						baseHeight: worldData.perlinBaseHeight || 64,
+						heightVariation: worldData.perlinHeightVariation || 12, // Reducido para menos montañas
+						noiseScale: worldData.perlinNoiseScale || 0.04, // Más suave
+						octaves: worldData.perlinOctaves || 4, // Menos detalle
+						persistence: worldData.perlinPersistence || 0.35 // Más suave
+					});
 						
 						// Recalcular spawn si es necesario para asegurar que esté sobre el terreno
 						if (w.terrainGenerator) {
