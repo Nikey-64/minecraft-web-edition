@@ -849,10 +849,48 @@
 				// Inicializar VR Manager si está disponible (usar el que ya se creó en setupWorldManagerUI)
 				console.log("VR: Verificando si VRManager está disponible...", typeof VRManager);
 				if (typeof VRManager !== "undefined") {
+					// Verificar que el renderer tenga canvas y gl antes de asignarlo al VRManager
+					if (!render.canvas) {
+						console.error("VR: Renderer no tiene canvas asignado");
+						var canvasElement = document.getElementById("renderSurface");
+						if (canvasElement) {
+							console.log("VR: Asignando canvas al renderer desde el DOM");
+							render.canvas = canvasElement;
+						}
+					}
+					
+					if (!render.gl && render.canvas) {
+						console.error("VR: Renderer no tiene contexto WebGL, intentando obtenerlo");
+						try {
+							render.gl = render.canvas.getContext("webgl", { xrCompatible: true }) || 
+							            render.canvas.getContext("experimental-webgl", { xrCompatible: true });
+							if (render.gl) {
+								console.log("VR: Contexto WebGL obtenido correctamente");
+							}
+						} catch (e) {
+							console.error("VR: Error al obtener contexto WebGL:", e);
+						}
+					}
+					
 					// Si ya existe un VRManager temporal, reutilizarlo y actualizar su renderer
 					if (window.tempVRManager) {
 						console.log("VR: Reutilizando VRManager existente...");
+						console.log("VR: Verificando renderer antes de asignar:", {
+							render: render,
+							hasCanvas: !!render.canvas,
+							hasGl: !!render.gl
+						});
+						
 						window.tempVRManager.renderer = render;
+						
+						// Verificar que el renderer asignado tenga canvas y gl
+						if (!window.tempVRManager.renderer.canvas) {
+							console.error("VR: ERROR: Renderer asignado no tiene canvas");
+						}
+						if (!window.tempVRManager.renderer.gl) {
+							console.error("VR: ERROR: Renderer asignado no tiene gl");
+						}
+						
 						// Actualizar las matrices originales ahora que el renderer está completo
 						if (render.projMatrix && render.viewMatrix) {
 							window.tempVRManager.originalProjMatrix = render.projMatrix;

@@ -93,20 +93,64 @@ VRManager.prototype.requestVRSession = function()
 	// Verificar que el renderer y canvas estén disponibles ANTES de solicitar la sesión
 	if (!this.renderer) {
 		console.error("VR: Renderer no está disponible");
+		console.error("VR: this.renderer =", this.renderer);
 		return Promise.reject("Renderer no está disponible");
 	}
 	
+	// Verificar que el renderer tenga un canvas válido
 	var canvas = this.renderer.canvas;
-	var gl = this.renderer.gl;
 	
 	if (!canvas) {
 		console.error("VR: Canvas no está disponible");
-		return Promise.reject("Canvas no está disponible");
+		console.error("VR: this.renderer =", this.renderer);
+		console.error("VR: this.renderer.canvas =", this.renderer.canvas);
+		
+		// Intentar obtener el canvas del DOM directamente como fallback
+		var canvasElement = document.getElementById("renderSurface");
+		if (canvasElement) {
+			console.log("VR: Canvas encontrado en el DOM, intentando asignarlo al renderer...");
+			this.renderer.canvas = canvasElement;
+			canvas = canvasElement;
+		} else {
+			return Promise.reject("Canvas no está disponible. El juego podría no estar completamente cargado.");
+		}
 	}
+	
+	// Verificar que el canvas sea un elemento válido del DOM
+	if (!(canvas instanceof HTMLCanvasElement)) {
+		console.error("VR: Canvas no es un elemento HTMLCanvasElement válido");
+		console.error("VR: canvas type =", typeof canvas, ", value =", canvas);
+		return Promise.reject("Canvas no es válido");
+	}
+	
+	// Verificar que el canvas esté en el DOM
+	if (!canvas.parentNode && !document.body.contains(canvas)) {
+		console.warn("VR: Canvas no está en el DOM, pero continuando...");
+	}
+	
+	var gl = this.renderer.gl;
 	
 	if (!gl) {
 		console.error("VR: Contexto WebGL no está disponible");
-		return Promise.reject("Contexto WebGL no está disponible");
+		console.error("VR: this.renderer.gl =", this.renderer.gl);
+		
+		// Intentar obtener el contexto WebGL del canvas si está disponible
+		if (canvas && typeof canvas.getContext === 'function') {
+			try {
+				gl = canvas.getContext("webgl", { xrCompatible: true }) || 
+				     canvas.getContext("experimental-webgl", { xrCompatible: true });
+				if (gl) {
+					console.log("VR: Contexto WebGL obtenido del canvas directamente");
+					this.renderer.gl = gl;
+				}
+			} catch (e) {
+				console.error("VR: Error al obtener contexto WebGL:", e);
+			}
+		}
+		
+		if (!gl) {
+			return Promise.reject("Contexto WebGL no está disponible. El renderer podría no estar completamente inicializado.");
+		}
 	}
 	
 	// Verificar soporte WebXR
