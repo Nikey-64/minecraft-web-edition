@@ -525,6 +525,12 @@ Renderer.prototype.drawVRView = function()
 {
 	var gl = this.gl;
 	
+	// Verificar que gl esté disponible
+	if (!gl) {
+		console.error("VR: Contexto WebGL no está disponible en drawVRView");
+		return;
+	}
+	
 	// No actualizar viewport ni limpiar - eso se hace en VRManager
 	// No actualizar chunks - eso se hace en el loop principal
 	// Solo renderizar la escena con las matrices ya configuradas
@@ -584,7 +590,16 @@ Renderer.prototype.drawVRView = function()
 	}
 	
 	// Draw item entities (dropped items)
-	this.drawItemEntities();
+	// Verificar que la función existe antes de llamarla
+	// Usar verificación simple y segura
+	if (this.drawItemEntities && typeof this.drawItemEntities === 'function') {
+		try {
+			this.drawItemEntities();
+		} catch (e) {
+			console.warn("VR: Error al llamar drawItemEntities:", e);
+		}
+	}
+	// Si no existe, simplemente no renderizar items (no es crítico para VR)
 	
 	// Draw players
 	var world = this.world;

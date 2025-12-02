@@ -38,6 +38,12 @@ function VRManager(renderer)
 	this.vrInventoryOffsetY = 0.0;
 	this.vrInventoryDistance = 1.5;
 	
+	// VR Menu System
+	this.vrMenuVisible = false;
+	this.vrMenuRaycasting = false;
+	this.vrMenuRayOrigin = [0, 0, 0];
+	this.vrMenuRayDirection = [0, 0, -1];
+	
 	// Referencias a las matrices del renderer (solo si el renderer está completo)
 	if (renderer && renderer.projMatrix && renderer.viewMatrix) {
 		this.originalProjMatrix = renderer.projMatrix;
@@ -89,6 +95,29 @@ VRManager.prototype.checkVRSupport = function()
 VRManager.prototype.requestVRSession = function()
 {
 	var self = this;
+	
+	// Verificar si ya hay una sesión VR activa y cerrarla primero
+	if (this.xrSession && this.isVRActive) {
+		console.log("VR: Ya hay una sesión VR activa, cerrándola primero...");
+		try {
+			this.xrSession.end().catch(function(err) {
+				console.warn("VR: Error al cerrar sesión previa:", err);
+			});
+		} catch (err) {
+			console.warn("VR: Error al cerrar sesión previa:", err);
+		}
+		// Limpiar el estado inmediatamente
+		this.xrSession = null;
+		this.xrSpace = null;
+		this.isVRActive = false;
+		// Esperar un momento para que la sesión se cierre completamente
+		return new Promise(function(resolve, reject) {
+			setTimeout(function() {
+				// Intentar solicitar la nueva sesión después de cerrar la anterior
+				self.requestVRSession().then(resolve).catch(reject);
+			}, 100);
+		});
+	}
 	
 	// Verificar que el renderer y canvas estén disponibles ANTES de solicitar la sesión
 	if (!this.renderer) {
@@ -192,6 +221,12 @@ VRManager.prototype.requestVRSession = function()
 	
 	// Preparar el contexto GL antes de solicitar la sesión
 	return prepareGLContext().then(function() {
+		// Verificar una vez más si hay una sesión activa (por si acaso)
+		if (self.xrSession && self.isVRActive) {
+			console.warn("VR: Detectada sesión activa antes de solicitar nueva, cerrando...");
+			return Promise.reject("Ya hay una sesión VR activa. Por favor, cierra la sesión actual primero.");
+		}
+		
 		// Solicitar sesión inmersiva (VR)
 		// Nota: 'local-floor' puede no estar disponible en todos los dispositivos
 		var sessionOptions = {
@@ -230,7 +265,57 @@ VRManager.prototype.requestVRSession = function()
 		// Verificar nuevamente que están disponibles
 		if (!canvas || !gl) {
 			console.error("VR: Canvas o gl no están disponibles después de obtener espacio de referencia");
-			return Promise.reject("Canvas o gl no están disponibles");
+			console.error("VR: canvas =", canvas, ", gl =", gl);
+			console.error("VR: renderer.canvas =", self.renderer.canvas, ", renderer.gl =", self.renderer.gl);
+			
+			// Intentar obtener gl del canvas directamente
+			if (canvas && !gl) {
+				try {
+					// Intentar obtener el contexto existente primero
+					gl = canvas.getContext("webgl") || 
+					     canvas.getContext("experimental-webgl") ||
+					     canvas.getContext("webgl", { xrCompatible: true }) || 
+					     canvas.getContext("experimental-webgl", { xrCompatible: true });
+					if (gl) {
+						console.log("VR: Contexto WebGL obtenido del canvas después de crear sesión");
+						self.renderer.gl = gl;
+					} else {
+						console.error("VR: No se pudo obtener contexto WebGL del canvas");
+					}
+				} catch (e) {
+					console.error("VR: Error al obtener contexto WebGL del canvas:", e);
+				}
+			}
+			
+			// Si aún no tenemos gl, intentar hacer el canvas compatible con XR
+			if (canvas && !gl && typeof canvas.getContext === 'function') {
+				try {
+					// Crear un nuevo contexto compatible con XR
+					gl = canvas.getContext("webgl", { xrCompatible: true });
+					if (gl) {
+						console.log("VR: Nuevo contexto WebGL XR-compatible creado");
+						self.renderer.gl = gl;
+						// Necesitamos reconfigurar el renderer con este nuevo contexto
+						// Por ahora, solo asignamos el contexto
+					}
+				} catch (e) {
+					console.error("VR: Error al crear contexto WebGL XR-compatible:", e);
+				}
+			}
+			
+			if (!canvas || !gl) {
+				var errorMsg = "Canvas o gl no están disponibles. ";
+				if (!canvas) errorMsg += "Canvas no encontrado. ";
+				if (!gl) errorMsg += "Contexto WebGL no disponible. ";
+				errorMsg += "Asegúrate de que el renderer esté completamente inicializado antes de activar VR.";
+				return Promise.reject(errorMsg);
+			}
+		}
+		
+		// Asegurar que el renderer tenga referencia al gl
+		if (self.renderer.gl !== gl) {
+			console.log("VR: Actualizando referencia gl en renderer");
+			self.renderer.gl = gl;
 		}
 		
 		// Para Oculus Quest, el contexto WebGL debe ser compatible con XR
@@ -335,7 +420,12 @@ VRManager.prototype.requestVRSession = function()
 			
 			self.xrSession.addEventListener('inputsourceschange', function() {
 				console.log("VR: Input sources cambiaron");
+				// Actualizar menús VR cuando cambian los controles
+				self.updateVRMenus();
 			});
+			
+			// Configurar menús para VR
+			self.setupVRMenus();
 			
 			// Sincronizar estado del inventario creativo cuando se cierra desde el código del jugador
 			// Esto asegura que la hotbar VR se muestre cuando el inventario se cierra
@@ -366,6 +456,10 @@ VRManager.prototype.requestVRSession = function()
 			return new Promise(function(resolve) {
 				requestAnimationFrame(function() {
 					self.startVRRenderLoop();
+					
+					// Asegurar que los menús visibles se configuren para VR
+					self.updateVRMenus();
+					
 					console.log("VR: Loop de renderizado iniciado");
 					console.log("VR: Sesión VR iniciada correctamente para Oculus Quest");
 					resolve(self.xrSession);
@@ -389,7 +483,29 @@ VRManager.prototype.requestVRSession = function()
 			navigator.userAgent.includes('Oculus')
 		);
 		
-		if (err.name === 'SecurityError') {
+		// Detectar específicamente el error de sesión activa
+		if (err.message && err.message.includes("already an active, immersive XRSession")) {
+			console.log("VR: Detectada sesión XR activa, intentando cerrarla...");
+			// Intentar cerrar cualquier sesión activa
+			if (self.xrSession) {
+				try {
+					self.xrSession.end().catch(function(closeErr) {
+						console.warn("VR: Error al cerrar sesión existente:", closeErr);
+					});
+				} catch (closeErr) {
+					console.warn("VR: Error al cerrar sesión existente:", closeErr);
+				}
+				self.xrSession = null;
+				self.xrSpace = null;
+			}
+			errorMessage = "Ya hay una sesión VR activa. Por favor, espera un momento y vuelve a intentar, o cierra la sesión actual usando el botón 'Salir de VR'.";
+			// Esperar un momento y sugerir reintentar
+			setTimeout(function() {
+				self.isVRActive = false;
+				self.xrSession = null;
+				self.xrSpace = null;
+			}, 500);
+		} else if (err.name === 'SecurityError') {
 			errorMessage = "Error de seguridad. Asegúrate de que la página se cargue con HTTPS o localhost.";
 		} else if (err.name === 'NotSupportedError') {
 			if (isQuest) {
@@ -417,6 +533,50 @@ VRManager.prototype.requestVRSession = function()
 	});
 };
 
+// handleVRError(err, button)
+//
+// Maneja los errores de VR y muestra mensajes apropiados al usuario
+
+VRManager.prototype.handleVRError = function(err, button)
+{
+	var errorMsg = typeof err === 'string' ? err : "No se pudo activar VR.";
+	if (err && err.message) {
+		errorMsg = err.message;
+	}
+	
+	var fullMessage = "No se pudo activar VR:\n\n" + errorMsg;
+	var isQuest = navigator.userAgent && (
+		navigator.userAgent.includes('Quest') || 
+		navigator.userAgent.includes('OculusBrowser') ||
+		navigator.userAgent.includes('Oculus')
+	);
+	
+	// Manejar error específico de sesión activa
+	if (errorMsg.includes("already an active, immersive XRSession")) {
+		fullMessage = "Ya hay una sesión VR activa.\n\n" +
+			"Por favor:\n" +
+			"1. Espera unos segundos\n" +
+			"2. Si el botón 'Salir de VR' está visible, úsalo primero\n" +
+			"3. Vuelve a intentar activar VR";
+		
+		// Intentar limpiar el estado automáticamente
+		this.exitVR();
+		setTimeout(function() {
+			if (button) {
+				button.textContent = '🎮 Activar VR';
+				button.disabled = false;
+			}
+		}, 1000);
+	} else if (isQuest && errorMsg.includes('soportado')) {
+		fullMessage += "\n\nSi estás en Oculus Quest, asegúrate de:\n" +
+			"1. Usar Oculus Browser (no Chrome ni Firefox)\n" +
+			"2. Estar en el menú principal del Quest\n" +
+			"3. Tener el Quest actualizado";
+	}
+	
+	alert(fullMessage);
+};
+
 // exitVR()
 //
 // Sale de la sesión VR
@@ -424,7 +584,26 @@ VRManager.prototype.requestVRSession = function()
 VRManager.prototype.exitVR = function()
 {
 	if (this.xrSession) {
-		this.xrSession.end();
+		try {
+			this.xrSession.end().catch(function(err) {
+				console.warn("VR: Error al cerrar sesión:", err);
+			});
+		} catch (err) {
+			console.warn("VR: Error al cerrar sesión:", err);
+		}
+		// Limpiar el estado inmediatamente
+		this.xrSession = null;
+		this.xrSpace = null;
+		this.isVRActive = false;
+		console.log("VR: Sesión VR cerrada y estado limpiado");
+	} else {
+		// Si no hay sesión pero el estado dice que está activa, limpiar el estado
+		if (this.isVRActive) {
+			this.isVRActive = false;
+			this.xrSession = null;
+			this.xrSpace = null;
+			console.log("VR: Estado VR limpiado (no había sesión activa)");
+		}
 	}
 };
 
@@ -437,11 +616,37 @@ VRManager.prototype.onVRSessionEnd = function()
 	this.xrSession = null;
 	this.xrSpace = null;
 	this.isVRActive = false;
+	this.vrMenuVisible = false;
+	
+	// Ocultar el contenedor de overlay VR
+	var vrOverlay = document.getElementById('vrOverlayContainer');
+	if (vrOverlay) {
+		vrOverlay.style.display = 'none';
+		vrOverlay.style.pointerEvents = 'none';
+	}
+	
+	// Remover clases VR de los menús
+	var menus = ['worldSelectionMenu', 'createWorldMenu', 'pauseMenu', 'pauseSettingsMenu'];
+	for (var i = 0; i < menus.length; i++) {
+		var menu = document.getElementById(menus[i]);
+		if (menu) {
+			menu.classList.remove('vr-active');
+			menu.style.pointerEvents = '';
+		}
+	}
 	
 	// Restaurar el viewport normal
 	var gl = this.renderer.gl;
 	var canvas = this.renderer.canvas;
-	gl.viewport(0, 0, canvas.width, canvas.height);
+	if (gl && canvas) {
+		gl.viewport(0, 0, canvas.width, canvas.height);
+	}
+	
+	// Actualizar el botón VR si existe
+	if (this.vrButton) {
+		this.vrButton.textContent = '🎮 Activar VR';
+		this.vrButton.disabled = false;
+	}
 	
 	console.log("Sesión VR finalizada");
 };
@@ -482,6 +687,20 @@ VRManager.prototype.startVRRenderLoop = function()
 		gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
 		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 		
+		// Obtener posición del jugador ANTES de configurar las matrices de vista
+		var player = renderer.world ? renderer.world.localPlayer : null;
+		var playerEyePos = null;
+		if (player) {
+			// Obtener posición del ojo del jugador en el mundo
+			// El sistema del juego usa: X y Z = horizontal, Y = vertical (altura)
+			if (player.getEyePos) {
+				playerEyePos = player.getEyePos();
+			} else if (player.pos) {
+				// Fallback: usar posición del jugador + altura de ojos (1.7 bloques)
+				playerEyePos = { x: player.pos.x, y: player.pos.y + 1.7, z: player.pos.z };
+			}
+		}
+		
 		// Renderizar para cada vista (ojo) - Oculus Quest tiene 2 vistas (izquierda y derecha)
 		for (var i = 0; i < pose.views.length; i++) {
 			var view = pose.views[i];
@@ -508,10 +727,35 @@ VRManager.prototype.startVRRenderLoop = function()
 			// view.transform.inverse.matrix es un Float32Array de 16 elementos
 			var viewMatrix = (i === 0) ? self.leftEyeMatrix : self.rightEyeMatrix;
 			if (view.transform && view.transform.inverse && view.transform.inverse.matrix) {
-				var transformMatrix = view.transform.inverse.matrix;
+				// La matriz del headset (view.transform.inverse.matrix) ya es una matriz de vista válida
+				// en el espacio de WebXR. Necesitamos combinarla con la posición del jugador.
+				
+				// Copiar la matriz del headset
+				var headsetViewMatrix = view.transform.inverse.matrix;
 				for (var j = 0; j < 16; j++) {
-					viewMatrix[j] = transformMatrix[j];
+					viewMatrix[j] = headsetViewMatrix[j];
 				}
+				
+				// Aplicar la posición del jugador en el mundo del juego
+				// El headset proporciona su posición relativa al espacio de referencia de WebXR
+				// Necesitamos aplicar la posición del jugador como una traslación adicional
+				if (playerEyePos) {
+					// El shader espera coordenadas donde: X y Y = horizontal, Z = vertical (altura)
+					// El mundo del juego usa: X y Z = horizontal, Y = vertical (altura)
+					// Necesitamos convertir: [x, y, z] (mundo) -> [x, z, y] (shader) para la traslación
+					
+					// Crear matriz de traslación para la posición del jugador
+					// La traslación debe ser negativa porque estamos moviendo el mundo, no la cámara
+					var playerTranslation = mat4.create();
+					// Shader: [x, y, z] donde z=altura
+					// Mundo: [x, y, z] donde y=altura -> Shader: [x, z, y] donde z=altura
+					mat4.translate(playerTranslation, [-playerEyePos.x, -playerEyePos.z, -playerEyePos.y]);
+					
+					// Multiplicar: primero aplicar la traslación del jugador, luego la transformación del headset
+					// Esto mueve el mundo a la posición del jugador, luego aplica la rotación/posición del headset
+					mat4.multiply(viewMatrix, headsetViewMatrix, playerTranslation);
+				}
+				
 				renderer.viewMatrix = viewMatrix;
 			}
 			
@@ -525,6 +769,27 @@ VRManager.prototype.startVRRenderLoop = function()
 		// Actualizar controles VR (movimiento, inventario, etc.) una vez por frame, no por ojo
 		if (renderer.world && renderer.world.localPlayer) {
 			self.updateVRControls();
+		}
+		
+		// Actualizar menús VR
+		self.updateVRMenus();
+		
+		// Manejar interacción con menús usando controles VR
+		if (self.vrMenuVisible && self.xrSession.inputSources) {
+			for (var i = 0; i < self.xrSession.inputSources.length; i++) {
+				var inputSource = self.xrSession.inputSources[i];
+				if (inputSource.targetRaySpace) {
+					self.handleVRMenuInteraction(inputSource, frame);
+				}
+			}
+		}
+		
+		// Actualizar posición de la cámara del renderer para que updateChunks funcione correctamente
+		if (player && playerEyePos) {
+			// Actualizar camPos del renderer para que updateChunks funcione correctamente
+			// El sistema del juego usa: X y Z = horizontal, Y = vertical (altura)
+			// camPos espera: [x, y, z] donde y es altura
+			renderer.camPos = [playerEyePos.x, playerEyePos.y, playerEyePos.z];
 		}
 		
 		// Renderizar para cada vista (ojo)
@@ -571,6 +836,11 @@ VRManager.prototype.startVRRenderLoop = function()
 VRManager.prototype.renderVRFrame = function(view)
 {
 	var renderer = this.renderer;
+	if (!renderer) {
+		console.error("VR: Renderer no está disponible en renderVRFrame");
+		return;
+	}
+	
 	var player = renderer.world ? renderer.world.localPlayer : null;
 	
 	// Marcar que estamos en modo VR para que draw() no llame a setCamera
@@ -578,7 +848,33 @@ VRManager.prototype.renderVRFrame = function(view)
 	
 	// Renderizar usando el método draw normal del renderer
 	// Las matrices ya están configuradas en startVRRenderLoop
-	renderer.drawVRView();
+	// Verificar si la función drawVRView existe en el renderer o en su prototipo
+	var drawVRViewFunc = null;
+	if (typeof renderer.drawVRView === 'function') {
+		drawVRViewFunc = renderer.drawVRView;
+	} else if (renderer.constructor && renderer.constructor.prototype && typeof renderer.constructor.prototype.drawVRView === 'function') {
+		drawVRViewFunc = renderer.constructor.prototype.drawVRView;
+	} else if (typeof Renderer !== 'undefined' && Renderer.prototype && typeof Renderer.prototype.drawVRView === 'function') {
+		drawVRViewFunc = Renderer.prototype.drawVRView;
+	}
+	
+	if (drawVRViewFunc) {
+		drawVRViewFunc.call(renderer);
+	} else {
+		// Fallback: intentar usar draw() pero sin actualizar la cámara
+		console.warn("VR: drawVRView no está disponible, intentando renderizar manualmente");
+		// Verificar si draw() existe y usarlo como último recurso
+		if (typeof renderer.draw === 'function') {
+			// Guardar el estado de _isVRActive para que draw() no actualice la cámara
+			var wasVRActive = renderer._isVRActive;
+			renderer._isVRActive = true;
+			// Llamar draw() pero no debería actualizar la cámara porque _isVRActive es true
+			renderer.draw();
+			renderer._isVRActive = wasVRActive;
+		} else {
+			console.error("VR: drawVRView y draw() no están disponibles. Asegúrate de que render.js esté cargado correctamente.");
+		}
+	}
 	
 	// Renderizar hotbar VR si está habilitada y estamos en modo creativo
 	if (player && player.gameMode === 1 && this.vrHotbarEnabled) {
@@ -744,34 +1040,43 @@ VRManager.prototype.createVRButton = function(containerId)
 			
 			// Configurar evento de clic
 			button.onclick = function() {
-				if (self.isVRActive) {
+				if (self.isVRActive || self.xrSession) {
+					// Cerrar VR
 					self.exitVR();
 					button.textContent = '🎮 Activar VR';
+					button.disabled = false;
 				} else {
+					// Activar VR - verificar estado primero
+					if (self.xrSession) {
+						console.warn("VR: Sesión detectada pero isVRActive es false, limpiando estado...");
+						self.exitVR();
+						// Esperar un momento antes de intentar activar
+						setTimeout(function() {
+							if (typeof self.requestVRSession === 'function') {
+								self.requestVRSession().then(function() {
+									button.textContent = '🚫 Salir de VR';
+									console.log("VR: Sesión VR activada correctamente");
+								}).catch(function(err) {
+									console.error("VR: Error al activar VR:", err);
+									self.handleVRError(err, button);
+								});
+							}
+						}, 200);
+						return;
+					}
+					
 					if (typeof self.requestVRSession === 'function') {
+						button.disabled = true;
+						button.textContent = '🎮 Activando VR...';
 						self.requestVRSession().then(function() {
 							button.textContent = '🚫 Salir de VR';
+							button.disabled = false;
 							console.log("VR: Sesión VR activada correctamente");
 						}).catch(function(err) {
 							console.error("VR: Error al activar VR:", err);
-							var errorMsg = typeof err === 'string' ? err : "No se pudo activar VR.";
-							if (err.message) {
-								errorMsg = err.message;
-							}
-							
-							var fullMessage = "No se pudo activar VR:\n\n" + errorMsg;
-							var isQuest = navigator.userAgent.includes('Quest') || 
-							              navigator.userAgent.includes('OculusBrowser') ||
-							              navigator.userAgent.includes('Oculus');
-							
-							if (isQuest && errorMsg.includes('soportado')) {
-								fullMessage += "\n\nSi estás en Oculus Quest, asegúrate de:\n" +
-								              "1. Usar Oculus Browser (no Chrome ni Firefox)\n" +
-								              "2. Estar en el menú principal del Quest\n" +
-								              "3. Tener el Quest actualizado";
-							}
-							
-							alert(fullMessage);
+							button.disabled = false;
+							button.textContent = '🎮 Activar VR';
+							self.handleVRError(err, button);
 						});
 					} else {
 						console.error("VR: requestVRSession no está definida");
@@ -1145,5 +1450,143 @@ VRManager.prototype.renderVRCreativeInventory = function(view, player)
 		
 		// El inventario ya tiene estilos adecuados para ser visible en VR
 		// Los clicks se manejarán con los controles VR (raycasting en el futuro)
+	}
+};
+
+// setupVRMenus()
+//
+// Configura los menús HTML para que sean visibles e interactuables en VR
+
+VRManager.prototype.setupVRMenus = function()
+{
+	var self = this;
+	
+	// Hacer que todos los menús sean visibles en VR
+	var menus = [
+		'worldSelectionMenu',
+		'createWorldMenu',
+		'pauseMenu',
+		'pauseSettingsMenu',
+		'inventory',
+		'craftingTable',
+		'creativeInventory'
+	];
+	
+	for (var i = 0; i < menus.length; i++) {
+		var menu = document.getElementById(menus[i]);
+		if (menu) {
+			// Agregar clase para estilos VR
+			menu.classList.add('vr-compatible');
+			
+			// Asegurar que tenga z-index alto para ser visible en VR
+			if (!menu.style.zIndex || parseInt(menu.style.zIndex) < 10000) {
+				menu.style.zIndex = "10000";
+			}
+			
+			// Observar cambios en la visibilidad del menú
+			var observer = new MutationObserver(function(mutations) {
+				mutations.forEach(function(mutation) {
+					if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+						// Cuando cambia el estilo, actualizar estado VR
+						if (self.isVRActive) {
+							self.updateVRMenus();
+						}
+					}
+				});
+			});
+			
+			observer.observe(menu, {
+				attributes: true,
+				attributeFilter: ['style', 'class']
+			});
+		}
+	}
+	
+	console.log("VR: Menús configurados para VR");
+};
+
+// updateVRMenus()
+//
+// Actualiza la visibilidad y estado de los menús en VR
+
+VRManager.prototype.updateVRMenus = function()
+{
+	if (!this.isVRActive) return;
+	
+	// Mostrar el contenedor de overlay VR
+	var vrOverlay = document.getElementById('vrOverlayContainer');
+	if (vrOverlay) {
+		vrOverlay.style.display = 'block';
+		vrOverlay.style.pointerEvents = 'auto'; // Permitir interacción
+	}
+	
+	// Verificar qué menús están visibles y asegurarse de que sean accesibles en VR
+	var worldSelectionMenu = document.getElementById('worldSelectionMenu');
+	var createWorldMenu = document.getElementById('createWorldMenu');
+	var pauseMenu = document.getElementById('pauseMenu');
+	var pauseSettingsMenu = document.getElementById('pauseSettingsMenu');
+	
+	// Si algún menú está visible, asegurarse de que sea visible en VR
+	if (worldSelectionMenu && worldSelectionMenu.style.display === 'flex') {
+		worldSelectionMenu.classList.add('vr-active');
+		worldSelectionMenu.style.zIndex = "100001";
+		worldSelectionMenu.style.pointerEvents = "auto";
+		this.vrMenuVisible = true;
+	} else if (createWorldMenu && createWorldMenu.style.display === 'flex') {
+		createWorldMenu.classList.add('vr-active');
+		createWorldMenu.style.zIndex = "100001";
+		createWorldMenu.style.pointerEvents = "auto";
+		this.vrMenuVisible = true;
+	} else if (pauseMenu && pauseMenu.style.display === 'flex') {
+		pauseMenu.classList.add('vr-active');
+		pauseMenu.style.zIndex = "100001";
+		pauseMenu.style.pointerEvents = "auto";
+		this.vrMenuVisible = true;
+	} else if (pauseSettingsMenu && pauseSettingsMenu.style.display === 'flex') {
+		pauseSettingsMenu.classList.add('vr-active');
+		pauseSettingsMenu.style.zIndex = "100001";
+		pauseSettingsMenu.style.pointerEvents = "auto";
+		this.vrMenuVisible = true;
+	} else {
+		this.vrMenuVisible = false;
+		// Si no hay menús visibles, ocultar el overlay pero mantenerlo disponible
+		if (vrOverlay) {
+			vrOverlay.style.pointerEvents = 'none';
+		}
+	}
+};
+
+// handleVRMenuInteraction(inputSource, frame)
+//
+// Maneja la interacción con los menús usando raycasting desde los controles VR
+
+VRManager.prototype.handleVRMenuInteraction = function(inputSource, frame)
+{
+	if (!this.vrMenuVisible || !this.xrSession || !this.xrSpace) return;
+	
+	// Obtener el pose del control VR
+	var inputPose = frame.getPose(inputSource.targetRaySpace, this.xrSpace);
+	if (!inputPose) return;
+	
+	// Obtener la posición y dirección del rayo
+	var transform = inputPose.transform;
+	var position = transform.position;
+	var orientation = transform.orientation;
+	
+	// Calcular dirección del rayo (hacia adelante desde el control)
+	// Por ahora, usamos un rayo simple hacia adelante
+	// En una implementación completa, usaríamos quaternions para calcular la dirección
+	
+	// Verificar si hay un botón presionado
+	if (inputSource.gamepad) {
+		var gamepad = inputSource.gamepad;
+		if (gamepad.buttons && gamepad.buttons.length > 0) {
+			// Botón trigger (índice 0) - click en menú
+			if (gamepad.buttons[0] && gamepad.buttons[0].pressed) {
+				// Simular click en el elemento del menú que está siendo apuntado
+				// Por ahora, simplemente permitimos que los eventos de click normales funcionen
+				// Los elementos HTML deberían ser clickeables directamente en VR
+			}
+		}
 	}
 };
