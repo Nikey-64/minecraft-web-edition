@@ -4048,7 +4048,7 @@ Player.prototype.update = function()
 	if ( this.lastUpdate != null )
 	{
 		var delta = ( new Date().getTime() - this.lastUpdate ) / 1000;
-		
+
 		// Limit delta to prevent large jumps when game is paused/resumed
 		// This prevents the player from falling through the world or moving too fast
 		var maxDelta = 0.1; // Maximum 100ms delta (10 FPS equivalent)
@@ -4056,7 +4056,17 @@ Player.prototype.update = function()
 			delta = maxDelta;
 		}
 
-		// View
+		// Initialize physics accumulator if not set
+		if (this.physicsAccumulator === undefined) this.physicsAccumulator = 0;
+
+		// Fixed time step for physics updates (120 Hz = ~8.33ms = 0.00833 seconds)
+		// Increased from 60 Hz for more responsive and accurate physics
+		var fixedTimeStep = 1/120; // 120 Hz physics updates
+
+		// Accumulate time for physics updates
+		this.physicsAccumulator += delta;
+
+		// View (update every frame for smooth camera movement)
 		if ( this.dragging )
 		{
 			this.angles[0] += ( this.targetPitch - this.angles[0] ) * 30 * delta;
@@ -4065,124 +4075,41 @@ Player.prototype.update = function()
 			if ( this.angles[0] > Math.PI/2 ) this.angles[0] = Math.PI/2;
 		}
 
-		// Modo creativo: no recibir daño ni hambre
-		if ( this.gameMode === GAME_MODE.CREATIVE ) {
-			this.health = this.maxHealth;
-			this.hunger = this.maxHunger;
-		}
-		
-		// Update block breaking progress
+		// Update block breaking progress (every frame)
 		this.updateBreakingProgress(delta);
-		
+
 		// Update step sounds (play footstep sounds while walking)
 		this.updateStepSounds();
-		
+
 		// Update fall damage (check if player landed from a fall)
 		this.updateFallDamage();
-		
+
 		// Update health regeneration (heal when hunger is high, damage when starving)
 		this.updateHealthRegeneration();
-		
+
 		// Check for ladders BEFORE movement calculation
 		// This allows movement to be modified based on ladder state
 		this.checkLadderContact(pos, world);
-		
-		// Modo espectador: volar libremente sin colisiones ni gravedad
-		if ( this.spectatorMode || this.gameMode === GAME_MODE.SPECTATOR )
-		{
-			// Velocidad de vuelo más rápida
-			var flySpeed = 12;
-			
-			// Movimiento horizontal (WASD)
-			// Ejes: X y Z = horizontal, Y = vertical (altura)
-			var walkVelocity = new Vector( 0, 0, 0 );
-			if ( this.keys["w"] ) {
-				walkVelocity.x += Math.cos( Math.PI / 2 - this.angles[1] );
-				walkVelocity.z += Math.sin( Math.PI / 2 - this.angles[1] ); // Z es horizontal
-			}
-			if ( this.keys["s"] ) {
-				walkVelocity.x += Math.cos( Math.PI + Math.PI / 2 - this.angles[1] );
-				walkVelocity.z += Math.sin( Math.PI + Math.PI / 2 - this.angles[1] ); // Z es horizontal
-			}
-			if ( this.keys["a"] ) {
-				walkVelocity.x += Math.cos( Math.PI / 2 + Math.PI / 2 - this.angles[1] );
-				walkVelocity.z += Math.sin( Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
-			}
-			if ( this.keys["d"] ) {
-				walkVelocity.x += Math.cos( -Math.PI / 2 + Math.PI / 2 - this.angles[1] );
-				walkVelocity.z += Math.sin( -Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
-			}
-			
-			// Movimiento vertical (Espacio para subir, Shift para bajar)
-			// Ejes: X y Z = horizontal, Y = vertical (altura)
-			if ( this.keys[" "] ) {
-				walkVelocity.y = 1; // Subir (Y es altura)
-			}
-			if ( this.keys["Shift"] || this.keys[16] ) {
-				walkVelocity.y = -1; // Bajar
-			}
-			
-			// Aplicar velocidad
-			// Ejes: X y Z = horizontal, Y = vertical (altura)
-			if ( walkVelocity.length() > 0 ) {
-				walkVelocity = walkVelocity.normal();
-				velocity.x = walkVelocity.x * flySpeed; // X horizontal
-				velocity.y = walkVelocity.y * flySpeed; // Y altura
-				velocity.z = walkVelocity.z * flySpeed; // Z horizontal
-			} else {
-				velocity.x /= 1.5;
-				velocity.y /= 1.5;
-				velocity.z /= 1.5;
-			}
-			
-			// En modo espectador, simplemente mover sin colisiones
-			this.pos = pos.add( velocity.mul( delta ) );
-			this.falling = false;
-		}
-		else
-		{
-			// Modo normal: con gravedad y colisiones
-			// Ejes: X y Z = horizontal, Y = vertical (altura)
-			// Gravity
-			// Don't apply gravity if player is on a ladder (ladder prevents falling)
-			if ( this.falling && !this.onLadder )
-				velocity.y += -0.5; // Y es altura
 
-			// Jumping
-			if ( this.keys[" "] && !this.falling ) {
-				velocity.y = 8; // Y es altura
-				// Consume hunger when jumping (survival mode)
-				if (this.gameMode === GAME_MODE.SURVIVAL) {
-					this.consumeHunger(0.05); // Small hunger cost per jump
-				}
+		// Fixed 120 Hz physics updates for consistent physics behavior
+		while (this.physicsAccumulator >= fixedTimeStep) {
+			this.physicsAccumulator -= fixedTimeStep;
+
+			// Modo creativo: no recibir daño ni hambre
+			if ( this.gameMode === GAME_MODE.CREATIVE ) {
+				this.health = this.maxHealth;
+				this.hunger = this.maxHunger;
 			}
 
-			// Walking
-			// Ejes: X y Z = horizontal, Y = vertical (altura)
-			var walkVelocity = new Vector( 0, 0, 0 );
-			
-			// If player is on a ladder, W/S move vertically instead of horizontally
-			if ( this.onLadder ) {
-				// On ladder: W/S move vertically, A/D move horizontally along the wall
-				if ( this.keys["w"] ) {
-					// Climb up (handled in ladder logic, but also allow here for consistency)
-					walkVelocity.y = 2.0; // Vertical movement up
-				}
-				if ( this.keys["s"] ) {
-					// Climb down (handled in ladder logic, but also allow here for consistency)
-					walkVelocity.y = -2.0; // Vertical movement down
-				}
-				// A/D can still move horizontally along the wall
-				if ( this.keys["a"] ) {
-					walkVelocity.x += Math.cos( Math.PI / 2 + Math.PI / 2 - this.angles[1] );
-					walkVelocity.z += Math.sin( Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
-				}
-				if ( this.keys["d"] ) {
-					walkVelocity.x += Math.cos( -Math.PI / 2 + Math.PI / 2 - this.angles[1] );
-					walkVelocity.z += Math.sin( -Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
-				}
-			} else if ( !this.falling ) {
-				// Normal walking (not on ladder)
+			// Modo espectador: volar libremente sin colisiones ni gravedad
+			if ( this.spectatorMode || this.gameMode === GAME_MODE.SPECTATOR )
+			{
+				// Velocidad de vuelo más rápida
+				var flySpeed = 12;
+
+				// Movimiento horizontal (WASD)
+				// Ejes: X y Z = horizontal, Y = vertical (altura)
+				var walkVelocity = new Vector( 0, 0, 0 );
 				if ( this.keys["w"] ) {
 					walkVelocity.x += Math.cos( Math.PI / 2 - this.angles[1] );
 					walkVelocity.z += Math.sin( Math.PI / 2 - this.angles[1] ); // Z es horizontal
@@ -4199,54 +4126,144 @@ Player.prototype.update = function()
 					walkVelocity.x += Math.cos( -Math.PI / 2 + Math.PI / 2 - this.angles[1] );
 					walkVelocity.z += Math.sin( -Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
 				}
-			}
-			if ( walkVelocity.length() > 0 ) {
-				if ( this.onLadder ) {
-					// On ladder: apply vertical movement directly, horizontal movement reduced
-					// Vertical movement (W/S) should be continuous while key is pressed
-					if ( walkVelocity.y != 0 ) {
-						velocity.y = walkVelocity.y; // Vertical movement for climbing (2.0 up or -2.0 down)
-					} else {
-						// If no vertical input, prevent falling (stay in place)
-						if ( velocity.y < 0 ) {
-							velocity.y = 0; // Prevent falling
-						}
-					}
-					// Horizontal movement (A/D) along the wall
-					if ( walkVelocity.x != 0 || walkVelocity.z != 0 ) {
-						var horizontalVel = new Vector( walkVelocity.x, 0, walkVelocity.z );
-						if ( horizontalVel.length() > 0 ) {
-							horizontalVel = horizontalVel.normal();
-							velocity.x = horizontalVel.x * 2; // Reduced horizontal speed on ladder
-							velocity.z = horizontalVel.z * 2;
-						}
-					} else {
-						// No horizontal input - reduce horizontal velocity
-						velocity.x *= 0.8;
-						velocity.z *= 0.8;
-					}
-				} else {
-					// Normal walking
+
+				// Movimiento vertical (Espacio para subir, Shift para bajar)
+				// Ejes: X y Z = horizontal, Y = vertical (altura)
+				if ( this.keys[" "] ) {
+					walkVelocity.y = 1; // Subir (Y es altura)
+				}
+				if ( this.keys["Shift"] || this.keys[16] ) {
+					walkVelocity.y = -1; // Bajar
+				}
+
+				// Aplicar velocidad
+				// Ejes: X y Z = horizontal, Y = vertical (altura)
+				if ( walkVelocity.length() > 0 ) {
 					walkVelocity = walkVelocity.normal();
-					velocity.x = walkVelocity.x * 4; // X horizontal
-					velocity.z = walkVelocity.z * 4; // Z horizontal
-					
-					// Consume hunger while walking (survival mode)
-					// Very small amount per frame, adds up over time
-					if (this.gameMode === GAME_MODE.SURVIVAL && !this.falling) {
-						this.consumeHunger(0.001 * delta); // Gradual hunger drain while walking
+					velocity.x = walkVelocity.x * flySpeed; // X horizontal
+					velocity.y = walkVelocity.y * flySpeed; // Y altura
+					velocity.z = walkVelocity.z * flySpeed; // Z horizontal
+				} else {
+					velocity.x /= 1.5;
+					velocity.y /= 1.5;
+					velocity.z /= 1.5;
+				}
+
+				// En modo espectador, simplemente mover sin colisiones
+				this.pos = pos.add( velocity.mul( fixedTimeStep ) );
+				this.falling = false;
+			}
+			else
+			{
+				// Modo normal: con gravedad y colisiones
+					// Ejes: X y Z = horizontal, Y = vertical (altura)
+					// Gravity (fixed 60 Hz updates)
+					// Don't apply gravity if player is on a ladder (ladder prevents falling)
+					if ( this.falling && !this.onLadder ) {
+						var gravity = 20; // blocks/second² (same as physics.js)
+						velocity.y += -gravity * fixedTimeStep; // Y es altura
+					}
+
+				// Jumping
+				if ( this.keys[" "] && !this.falling ) {
+					velocity.y = 8; // Y es altura
+					// Consume hunger when jumping (survival mode)
+					if (this.gameMode === GAME_MODE.SURVIVAL) {
+						this.consumeHunger(0.05); // Small hunger cost per jump
 					}
 				}
-			} else {
-				velocity.x /= this.falling ? 1.01 : 1.5;
-				velocity.z /= this.falling ? 1.01 : 1.5;
-			}
 
-			// Apply ladder physics (pull player to wall, restrict movement)
-			this.applyLadderPhysics( pos, velocity, world );
-			
-			// Resolve collision
-			this.pos = this.resolveCollision( pos, bPos, velocity.mul( delta ) );
+				// Walking
+				// Ejes: X y Z = horizontal, Y = vertical (altura)
+				var walkVelocity = new Vector( 0, 0, 0 );
+
+				// If player is on a ladder, W/S move vertically instead of horizontally
+				if ( this.onLadder ) {
+					// On ladder: W/S move vertically, A/D move horizontally along the wall
+					if ( this.keys["w"] ) {
+						// Climb up (handled in ladder logic, but also allow here for consistency)
+						walkVelocity.y = 2.0; // Vertical movement up
+					}
+					if ( this.keys["s"] ) {
+						// Climb down (handled in ladder logic, but also allow here for consistency)
+						walkVelocity.y = -2.0; // Vertical movement down
+					}
+					// A/D can still move horizontally along the wall
+					if ( this.keys["a"] ) {
+						walkVelocity.x += Math.cos( Math.PI / 2 + Math.PI / 2 - this.angles[1] );
+						walkVelocity.z += Math.sin( Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
+					}
+					if ( this.keys["d"] ) {
+						walkVelocity.x += Math.cos( -Math.PI / 2 + Math.PI / 2 - this.angles[1] );
+						walkVelocity.z += Math.sin( -Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
+					}
+				} else if ( !this.falling ) {
+					// Normal walking (not on ladder)
+					if ( this.keys["w"] ) {
+						walkVelocity.x += Math.cos( Math.PI / 2 - this.angles[1] );
+						walkVelocity.z += Math.sin( Math.PI / 2 - this.angles[1] ); // Z es horizontal
+					}
+					if ( this.keys["s"] ) {
+						walkVelocity.x += Math.cos( Math.PI + Math.PI / 2 - this.angles[1] );
+						walkVelocity.z += Math.sin( Math.PI + Math.PI / 2 - this.angles[1] ); // Z es horizontal
+					}
+					if ( this.keys["a"] ) {
+						walkVelocity.x += Math.cos( Math.PI / 2 + Math.PI / 2 - this.angles[1] );
+						walkVelocity.z += Math.sin( Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
+					}
+					if ( this.keys["d"] ) {
+						walkVelocity.x += Math.cos( -Math.PI / 2 + Math.PI / 2 - this.angles[1] );
+						walkVelocity.z += Math.sin( -Math.PI / 2 + Math.PI / 2 - this.angles[1] ); // Z es horizontal
+					}
+				}
+				if ( walkVelocity.length() > 0 ) {
+					if ( this.onLadder ) {
+						// On ladder: apply vertical movement directly, horizontal movement reduced
+						// Vertical movement (W/S) should be continuous while key is pressed
+						if ( walkVelocity.y != 0 ) {
+							velocity.y = walkVelocity.y; // Vertical movement for climbing (2.0 up or -2.0 down)
+						} else {
+							// If no vertical input, prevent falling (stay in place)
+							if ( velocity.y < 0 ) {
+								velocity.y = 0; // Prevent falling
+							}
+						}
+						// Horizontal movement (A/D) along the wall
+						if ( walkVelocity.x != 0 || walkVelocity.z != 0 ) {
+							var horizontalVel = new Vector( walkVelocity.x, 0, walkVelocity.z );
+							if ( horizontalVel.length() > 0 ) {
+								horizontalVel = horizontalVel.normal();
+								velocity.x = horizontalVel.x * 2; // Reduced horizontal speed on ladder
+								velocity.z = horizontalVel.z * 2;
+							}
+						} else {
+							// No horizontal input - reduce horizontal velocity
+							velocity.x *= 0.8;
+							velocity.z *= 0.8;
+						}
+					} else {
+						// Normal walking
+						walkVelocity = walkVelocity.normal();
+						velocity.x = walkVelocity.x * 4; // X horizontal
+						velocity.z = walkVelocity.z * 4; // Z horizontal
+
+						// Consume hunger while walking (survival mode)
+						// Very small amount per physics step, adds up over time
+						if (this.gameMode === GAME_MODE.SURVIVAL && !this.falling) {
+							this.consumeHunger(0.001 * fixedTimeStep); // Gradual hunger drain while walking
+						}
+					}
+				} else {
+					velocity.x /= this.falling ? 1.01 : 1.5;
+					velocity.z /= this.falling ? 1.01 : 1.5;
+				}
+
+				// Apply ladder physics (pull player to wall, restrict movement)
+				this.applyLadderPhysics( pos, velocity, world );
+
+				// Resolve collision
+				this.pos = this.resolveCollision( pos, bPos, velocity.mul( fixedTimeStep ) );
+			}
 		}
 		
 		// Clamp player position to world bounds to prevent falling through

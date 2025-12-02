@@ -25,6 +25,14 @@
 		<script src="js/physics.js" type="text/javascript"></script>
 		<script src="js/player.js" type="text/javascript"></script>
 		<script src="js/vr.js" type="text/javascript"></script>
+		<style>
+			body.mobile-mode #mobileControls {
+				display: block !important;
+				opacity: 1 !important;
+				pointer-events: all;
+				z-index: 99999;
+			}
+		</style>
 	</head>
 	
 	<body oncontextmenu="return false">
@@ -879,21 +887,31 @@
 
 			// Mobile controls setup
 			function setupMobileControls() {
-				// Detect if device is mobile
-				function isMobileDevice() {
-					return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-					       (window.innerWidth <= 768 && 'ontouchstart' in window);
+				// Detecta si el dispositivo es móvil O si el aspect ratio es vertical
+				function isMobileOrPortrait() {
+					const isUserAgentMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+					const hasTouch = ('ontouchstart' in window);
+					const ar = window.innerHeight / window.innerWidth;
+					return isUserAgentMobile || hasTouch || (ar > 1.1);
 				}
-				
-				if (!isMobileDevice()) {
-					return; // Not a mobile device, skip mobile controls
+
+				function updateMobileControlsVisibility() {
+					var mobileControls = document.getElementById('mobileControls');
+					if (!mobileControls) return;
+					const enable = isMobileOrPortrait();
+					console.log('Mobile controls visible?', enable, '| w:', window.innerWidth, 'h:', window.innerHeight, 'ar:', (window.innerHeight/window.innerWidth).toFixed(2));
+					if (enable) {
+						mobileControls.style.display = 'block';
+						document.body.classList.add('mobile-mode');
+					} else {
+						mobileControls.style.display = 'none';
+						document.body.classList.remove('mobile-mode');
+					}
 				}
-				
-				var mobileControls = document.getElementById('mobileControls');
-				if (!mobileControls) return;
-				
-				// Show mobile controls
-				mobileControls.style.display = 'block';
+
+				updateMobileControlsVisibility();
+				window.addEventListener('resize', updateMobileControlsVisibility);
+				window.addEventListener('orientationchange', updateMobileControlsVisibility);
 				
 				// Joystick setup
 				var joystickBase = document.getElementById('joystickBase');
@@ -1158,8 +1176,11 @@
 					canvas.addEventListener('touchstart', function(e) {
 						if (!player.pointerLocked && !player.inventoryOpen && !paused) {
 							canvas.requestPointerLock = canvas.requestPointerLock || canvas.mozRequestPointerLock || canvas.webkitRequestPointerLock;
-							if (canvas.requestPointerLock) {
+							// BLOQUEAR pointer lock si está en modo móvil
+							if (canvas.requestPointerLock && !document.body.classList.contains('mobile-mode')) {
 								canvas.requestPointerLock();
+							} else if (document.body.classList.contains('mobile-mode')) {
+								console.log('[MWEB] Pointer lock bloqueado en modo móvil.');
 							}
 						}
 					}, { passive: false });
@@ -1259,6 +1280,38 @@
 				
 				// Setup mobile controls (after player is initialized)
 				setupMobileControls();
+
+				// Override updateMobileControlsVisibility to handle pointer lock/drag
+				// This must be done after setupMobileControls() is called
+				const origUpdateMobileControlsVisibility = window.updateMobileControlsVisibility;
+				window.updateMobileControlsVisibility = function() {
+					// Call original function first
+					if (origUpdateMobileControlsVisibility) {
+						origUpdateMobileControlsVisibility();
+					}
+
+					var mobileControls = document.getElementById('mobileControls');
+					if (!mobileControls) return;
+					const enable = isMobileOrPortrait();
+					console.log('Mobile controls visible?', enable, '| w:', window.innerWidth, 'h:', window.innerHeight, 'ar:', (window.innerHeight/window.innerWidth).toFixed(2));
+					if (enable) {
+						mobileControls.style.display = 'block';
+						document.body.classList.add('mobile-mode');
+						isMobileActive = true;
+						attachDragListeners();
+						// Salir de pointer lock si está activo
+						if (document.pointerLockElement || document.mozPointerLockElement || document.webkitPointerLockElement) {
+							document.exitPointerLock = document.exitPointerLock || document.mozExitPointerLock || document.webkitExitPointerLock;
+							if (document.exitPointerLock) document.exitPointerLock();
+						}
+					} else {
+						mobileControls.style.display = 'none';
+						document.body.classList.remove('mobile-mode');
+						isMobileActive = false;
+						detachDragListeners();
+						// pointer lock se podrá volver a activar sólo si el usuario hace clic explícitamente
+					}
+				};
 			}
 			
 			function setupDebugKeys() {
@@ -1859,12 +1912,12 @@
 
 						// Simulate physics
 						measureTime('physics', function() {
-							physics.simulate();
+							physics.simulate(deltaTime);
 						});
 
 						// Update animations (debe llamarse cada frame para animaciones suaves)
 						if ( physics.updateAnimations ) {
-							physics.updateAnimations();
+							physics.updateAnimations(deltaTime);
 							// Marcar chunks como dirty solo si contienen bloques animados
 							if ( Object.keys( physics.fallingBlocks ).length > 0 ) {
 								// Marcar solo los chunks que contienen bloques animados
@@ -2347,6 +2400,105 @@
 					}
 				}
 			});
+
+			// ... dentro de setupMobileControls(), justo después del código de drag/touch existente ...
+			// Nueva versión reacondicionada de drag para móvil
+			let isMobileActive = false;
+			let draggingFingerId = null, lastDragX = null, lastDragY = null;
+
+			function dragStart(e) {
+				if (!isMobileActive) return;
+				if (e.touches && e.touches.length > 0) {
+					// Solo primer dedo
+					draggingFingerId = e.touches[0].identifier;
+					lastDragX = e.touches[0].clientX;
+					lastDragY = e.touches[0].clientY;
+				} else {
+					draggingFingerId = null;
+					lastDragX = e.clientX;
+					lastDragY = e.clientY;
+				}
+				dragActive = true;
+				e.preventDefault();
+			}
+
+			function dragMove(e) {
+				if (!isMobileActive || !dragActive) return;
+				let clientX, clientY;
+				if (e.touches) {
+					// Buscar el dedo correcto
+					let touch = null;
+					for (let i = 0; i < e.touches.length; i++) {
+						if (draggingFingerId === null || e.touches[i].identifier === draggingFingerId) {
+							touch = e.touches[i];
+							break;
+						}
+					}
+					if (!touch) return;
+					clientX = touch.clientX;
+					clientY = touch.clientY;
+				} else {
+					clientX = e.clientX;
+					clientY = e.clientY;
+				}
+				const deltaX = clientX - lastDragX;
+				const deltaY = clientY - lastDragY;
+				lastDragX = clientX;
+				lastDragY = clientY;
+				if (window.player) {
+					// Ajusta aquí la sensibilidad
+					let sensitivity = 0.0035; // Puedes subir o bajar
+					if (player.targetPitch !== undefined && player.targetYaw !== undefined) {
+						player.targetPitch -= deltaY * sensitivity;
+						player.targetYaw += deltaX * sensitivity;
+						// Limitar pitch vertical
+						if (player.targetPitch < -Math.PI/2) player.targetPitch = -Math.PI/2;
+						if (player.targetPitch > Math.PI/2) player.targetPitch = Math.PI/2;
+					}
+				}
+				e.preventDefault();
+			}
+
+			function dragEnd(e) {
+				dragActive = false;
+				draggingFingerId = null;
+				lastDragX = lastDragY = null;
+			}
+
+			function attachDragListeners() {
+				if (!renderSurface) return;
+				renderSurface.addEventListener('touchstart', dragStart, {passive:false});
+				renderSurface.addEventListener('touchmove', dragMove, {passive:false});
+				renderSurface.addEventListener('touchend', dragEnd, {passive:false});
+				renderSurface.addEventListener('touchcancel', dragEnd, {passive:false});
+				renderSurface.addEventListener('mousedown', dragStart);
+				renderSurface.addEventListener('mousemove', dragMove);
+				renderSurface.addEventListener('mouseup', dragEnd);
+				renderSurface.addEventListener('mouseleave', dragEnd);
+				renderSurface.style.cursor = 'grab';
+			}
+
+			function detachDragListeners() {
+				if (!renderSurface) return;
+				renderSurface.removeEventListener('touchstart', dragStart);
+				renderSurface.removeEventListener('touchmove', dragMove);
+				renderSurface.removeEventListener('touchend', dragEnd);
+				renderSurface.removeEventListener('touchcancel', dragEnd);
+				renderSurface.removeEventListener('mousedown', dragStart);
+				renderSurface.removeEventListener('mousemove', dragMove);
+				renderSurface.removeEventListener('mouseup', dragEnd);
+				renderSurface.removeEventListener('mouseleave', dragEnd);
+				renderSurface.style.cursor = '';
+				draggingFingerId = null;
+				lastDragX = lastDragY = null;
+				dragActive = false;
+			}
+
+			// Ejecuta la función original
+			updateMobileControlsVisibility();
+			window.addEventListener('resize', updateMobileControlsVisibility);
+			window.addEventListener('orientationchange', updateMobileControlsVisibility);
+			// ... resto igual ...
 		</script>
 	</body>
 </html lang="es">

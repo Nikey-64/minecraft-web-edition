@@ -27,31 +27,43 @@ Physics.prototype.setWorld = function( world )
 	this.world = world;
 }
 
-// simulate()
+// simulate(deltaTime)
 //
 // Perform one iteration of physics simulation.
-// Should be called about once every second.
+// deltaTime: time elapsed since last frame in seconds
 
-Physics.prototype.simulate = function()
+Physics.prototype.simulate = function(deltaTime)
 {
 	var world = this.world;
 	var blocks = world.blocks;
-	
-	var step = Math.floor( new Date().getTime() / 100 );
-	if ( step == this.lastStep ) return;
-	this.lastStep = step;
+
+	// Initialize accumulators if not set
+	if (this.gravityAccumulator === undefined) this.gravityAccumulator = 0;
+	if (this.fluidAccumulator === undefined) this.fluidAccumulator = 0;
+
+	// Fixed time step for physics updates (120 Hz = ~8.33ms = 0.00833 seconds)
+	// Increased from 60 Hz for more responsive and accurate physics
+	var fixedTimeStep = 1/120; // 120 Hz physics updates
 	
 	// Gravity con animación suave
 	// Ejes: X y Z = horizontal, Y = vertical (altura)
 	// blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
 	// Los bloques con gravedad caen hacia abajo (Y-1)
-	if ( step % 1 == 0 )
+	this.gravityAccumulator += deltaTime;
+	if (this.gravityAccumulator >= fixedTimeStep)
 	{
+		this.gravityAccumulator -= fixedTimeStep;
 		// Primero, limpiar animaciones completadas
-		var currentTime = new Date().getTime();
 		for ( var key in this.fallingBlocks ) {
 			var anim = this.fallingBlocks[key];
-			if ( currentTime >= anim.startTime + anim.duration ) {
+			// Initialize elapsedTime if not set
+			if (anim.elapsedTime === undefined) anim.elapsedTime = 0;
+
+			var gravity = 20;
+			var fallDistance = anim.startY - anim.targetY;
+			var currentFall = 0.5 * gravity * anim.elapsedTime * anim.elapsedTime;
+
+			if ( currentFall >= fallDistance ) {
 				// Animación completada, restaurar el bloque original en su nueva posición
 				// El bloque animado ya estaba en anim.x, anim.startY, anim.z, ahora lo reemplazamos con AIR
 				world.setBlock( anim.x, anim.startY, anim.z, BLOCK.AIR );
@@ -143,12 +155,12 @@ Physics.prototype.simulate = function()
 							}
 						}
 						
-						// Crear animación suave
-						// Duración basada en la distancia: más distancia = más tiempo, pero con límite
-						// Usar una función cuadrática para que caiga más rápido cuanto más distancia
-						var baseDuration = 150; // 150ms por bloque base (más rápido para realismo)
-						var duration = baseDuration * fallDistance;
-						// Limitar duración máxima a 1 segundo para caídas muy largas (más rápido)
+						// Crear animación suave con física realista
+						// Usar aceleración gravitacional constante: g = 20 bloques/seg²
+						// Tiempo de caída: t = sqrt(2 * h / g), donde h = fallDistance
+						var gravity = 20; // Aceleración gravitacional en bloques/seg²
+						var duration = Math.sqrt(2 * fallDistance / gravity) * 1000; // Convertir a ms
+						// Limitar duración máxima a 1 segundo para caídas muy largas
 						if ( duration > 1000 ) duration = 1000;
 						
 						// Crear un bloque animado con las propiedades del bloque original
@@ -166,8 +178,6 @@ Physics.prototype.simulate = function()
 							z: z,
 							startY: y,
 							targetY: y - fallDistance,
-							startTime: currentTime,
-							duration: duration,
 							block: block, // Bloque original (para recuperar propiedades después)
 							animatedBlock: animatedBlock // Bloque animado (ya está en el array del mundo)
 						};
@@ -176,13 +186,15 @@ Physics.prototype.simulate = function()
 			}
 		}
 	}
-	
+
 	// Fluids
 	// Ejes: X y Z = horizontal, Y = vertical (altura)
 	// blocks[x][y][z] donde x=X, y=Y(altura), z=Z(horizontal)
 	// Los fluidos caen hacia abajo (Y-1) y se extienden horizontalmente (X±1, Z±1)
-	if ( step % 10 == 0 )
+	this.fluidAccumulator += deltaTime;
+	if (this.fluidAccumulator >= fixedTimeStep * 60) // Update fluids every 60 physics steps (every 1 second at 60 Hz)
 	{
+		this.fluidAccumulator -= fixedTimeStep * 60;
 		// OPTIMIZACIÓN: Solo procesar fluidos en chunks cargados
 		var renderer = world.renderer;
 		var loadedChunks = renderer && renderer.loadedChunks;
@@ -268,34 +280,49 @@ Physics.prototype.simulate = function()
 	}
 };
 
-// updateAnimations()
+// updateAnimations(deltaTime)
 //
 // Actualiza las animaciones de bloques en caída cada frame.
 // Debe llamarse cada frame para obtener las posiciones interpoladas actuales.
+// deltaTime: tiempo transcurrido desde el último frame en segundos
 
-Physics.prototype.updateAnimations = function()
+Physics.prototype.updateAnimations = function(deltaTime)
 {
-	var currentTime = new Date().getTime();
+	// Initialize animation time accumulator if not set
+	if (this.animationTimeAccumulator === undefined) this.animationTimeAccumulator = 0;
+
+	// Accumulate time for smooth animations
+	this.animationTimeAccumulator += deltaTime;
+
 	var updatedAnimations = {};
-	
+
 	for ( var key in this.fallingBlocks ) {
 		var anim = this.fallingBlocks[key];
-		var elapsed = currentTime - anim.startTime;
-		var progress = Math.min( elapsed / anim.duration, 1.0 ); // 0.0 a 1.0
-		
-		// Usar una función de easing que simule aceleración por gravedad
-		// easeInQuad: t^2 - acelera hacia el final (como la gravedad real)
-		// Esto hace que el bloque caiga más rápido al final, como en la física real
-		var easedProgress = progress * progress;
-		
-		// Calcular posición Y interpolada
-		var currentY = anim.startY - ( anim.startY - anim.targetY ) * easedProgress;
-		
+
+		// Initialize animation elapsed time if not set
+		if (anim.elapsedTime === undefined) anim.elapsedTime = 0;
+
+		// Accumulate time for this animation
+		anim.elapsedTime += deltaTime;
+
+		// Usar física real: posición = 0.5 * g * t^2
+		var gravity = 20; // Aceleración gravitacional en bloques/seg²
+		var fallDistance = anim.startY - anim.targetY;
+		var currentFall = 0.5 * gravity * anim.elapsedTime * anim.elapsedTime;
+
+		// Asegurar que no exceda la distancia total
+		if (currentFall > fallDistance) {
+			currentFall = fallDistance;
+		}
+
+		// Calcular posición Y actual
+		var currentY = anim.startY - currentFall;
+
 		// Actualizar la posición Y en la animación
 		anim.currentY = currentY;
 		updatedAnimations[key] = anim;
 	}
-	
+
 	return updatedAnimations;
 }
 
