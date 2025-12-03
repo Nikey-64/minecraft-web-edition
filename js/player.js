@@ -22,6 +22,7 @@ GAME_MODE.SPECTATOR = 2;
 
 function Player()
 {	
+	this.jumpRequested = false; // <--- NUEVO (input buffer para salto)
 }
 
 // setWorld( world )
@@ -3313,6 +3314,11 @@ Player.prototype.onKeyEvent = function( keyCode, down )
 	if ( !down && (keyCode == 81 || key == "q") ) {
 		this.dropSelectedItem();
 	}
+	
+	// LATCH DEL SALTO: Si la tecla se presiona, activar el buffer de salto
+	if ((keyCode == 32 || key == " ") && down) {
+		this.jumpRequested = true;
+	}
 }
 
 // dropSelectedItem()
@@ -4141,9 +4147,9 @@ Player.prototype.updatePhysics = function(fixedTimeStep)
 					}
 
 				// Jumping: 0.42 blocks/tick = 8.4 blocks/second (Minecraft vanilla)
-				if ( this.keys[" "] && !this.falling ) {
+				if ( this.jumpRequested && !this.falling ) {
 					velocity.y = 8.4; // Y es altura (Minecraft vanilla jump speed)
-					// Consume hunger when jumping (survival mode)
+					this.jumpRequested = false;
 					if (this.gameMode === GAME_MODE.SURVIVAL) {
 						this.consumeHunger(0.05); // Small hunger cost per jump
 					}
