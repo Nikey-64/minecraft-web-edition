@@ -895,11 +895,26 @@
 					return isUserAgentMobile || hasTouch || (ar > 1.1);
 				}
 
+				// Detecta si hay gamepads conectados
+				function hasGamepadConnected() {
+					if (!navigator.getGamepads) return false;
+					var gamepads = navigator.getGamepads();
+					for (var i = 0; i < gamepads.length; i++) {
+						if (gamepads[i] !== null) {
+							return true;
+						}
+					}
+					return false;
+				}
+
 				function updateMobileControlsVisibility() {
 					var mobileControls = document.getElementById('mobileControls');
 					if (!mobileControls) return;
-					const enable = isMobileOrPortrait();
-					console.log('Mobile controls visible?', enable, '| w:', window.innerWidth, 'h:', window.innerHeight, 'ar:', (window.innerHeight/window.innerWidth).toFixed(2));
+					const shouldShowMobile = isMobileOrPortrait();
+					const hasGamepad = hasGamepadConnected();
+					// Si hay gamepad, ocultar GUI móvil incluso si está en modo móvil
+					const enable = shouldShowMobile && !hasGamepad;
+					console.log('Mobile controls visible?', enable, '| w:', window.innerWidth, 'h:', window.innerHeight, 'ar:', (window.innerHeight/window.innerWidth).toFixed(2), '| gamepad:', hasGamepad);
 					if (enable) {
 						mobileControls.style.display = 'block';
 						document.body.classList.add('mobile-mode');
@@ -912,6 +927,28 @@
 				updateMobileControlsVisibility();
 				window.addEventListener('resize', updateMobileControlsVisibility);
 				window.addEventListener('orientationchange', updateMobileControlsVisibility);
+				
+				// Escuchar eventos de gamepad conectado/desconectado
+				window.addEventListener('gamepadconnected', function(e) {
+					console.log('Gamepad conectado:', e.gamepad.id);
+					updateMobileControlsVisibility();
+				});
+				window.addEventListener('gamepaddisconnected', function(e) {
+					console.log('Gamepad desconectado:', e.gamepad.id);
+					updateMobileControlsVisibility();
+				});
+				
+				// Verificar gamepads periódicamente (algunos navegadores no disparan eventos correctamente)
+				setInterval(function() {
+					if (hasGamepadConnected() !== document.body.classList.contains('gamepad-active')) {
+						if (hasGamepadConnected()) {
+							document.body.classList.add('gamepad-active');
+						} else {
+							document.body.classList.remove('gamepad-active');
+						}
+						updateMobileControlsVisibility();
+					}
+				}, 1000); // Verificar cada segundo
 				
 				// Joystick setup
 				var joystickBase = document.getElementById('joystickBase');
@@ -1036,12 +1073,18 @@
 				joystickBase.addEventListener('touchend', handleJoystickEnd, { passive: false });
 				joystickBase.addEventListener('touchcancel', handleJoystickEnd, { passive: false });
 				
-				// Look around area (center touch area)
+				// Look around area - estilo Minecraft PE
+				// Toda el área del canvas es sensible al touch para mover la cámara
 				var lookTouchId = null;
 				var lastLookX = 0;
 				var lastLookY = 0;
+				var canvas = document.getElementById('renderSurface');
 				
 				function handleLookStart(e) {
+					// No procesar si se toca un control móvil
+					if (e.target && (e.target.closest('.mobile-button') || e.target.closest('.mobile-joystick-container') || e.target.closest('#mobileControls'))) {
+						return;
+					}
 					e.preventDefault();
 					var touch = e.touches ? e.touches[0] : e;
 					lookTouchId = touch.identifier;
@@ -1068,12 +1111,12 @@
 					var deltaX = touch.clientX - lastLookX;
 					var deltaY = touch.clientY - lastLookY;
 					
-					// Update player look angles (similar to mouse movement)
-					if (player && player.pointerLocked) {
+					// Usar onMouseMove del player para comportamiento idéntico a pointer lock
+					if (player && player.onMouseMove) {
 						player.onMouseMove(deltaX, deltaY);
 					} else if (player) {
-						// Simulate mouse movement for look around
-						var sensitivity = 0.002; // Adjust sensitivity for touch
+						// Fallback con sensibilidad similar a Minecraft PE
+						var sensitivity = 0.002; // Sensibilidad ajustada para touch
 						if (player.targetPitch !== undefined && player.targetYaw !== undefined) {
 							player.targetPitch -= deltaY * sensitivity;
 							player.targetYaw += deltaX * sensitivity;
@@ -1107,10 +1150,21 @@
 					lookTouchId = null;
 				}
 				
-				mobileLookArea.addEventListener('touchstart', handleLookStart, { passive: false });
-				mobileLookArea.addEventListener('touchmove', handleLookMove, { passive: false });
-				mobileLookArea.addEventListener('touchend', handleLookEnd, { passive: false });
-				mobileLookArea.addEventListener('touchcancel', handleLookEnd, { passive: false });
+				// Aplicar listeners al canvas completo (como Minecraft PE)
+				if (canvas) {
+					canvas.addEventListener('touchstart', handleLookStart, { passive: false });
+					canvas.addEventListener('touchmove', handleLookMove, { passive: false });
+					canvas.addEventListener('touchend', handleLookEnd, { passive: false });
+					canvas.addEventListener('touchcancel', handleLookEnd, { passive: false });
+				}
+				
+				// También mantener el área móvil por compatibilidad
+				if (mobileLookArea) {
+					mobileLookArea.addEventListener('touchstart', handleLookStart, { passive: false });
+					mobileLookArea.addEventListener('touchmove', handleLookMove, { passive: false });
+					mobileLookArea.addEventListener('touchend', handleLookEnd, { passive: false });
+					mobileLookArea.addEventListener('touchcancel', handleLookEnd, { passive: false });
+				}
 				
 				// Action buttons
 				var jumpButton = document.getElementById('mobileJumpButton');
@@ -1137,7 +1191,8 @@
 				if (attackButton && player) {
 					attackButton.addEventListener('touchstart', function(e) {
 						e.preventDefault();
-						if (player.pointerLocked && !player.inventoryOpen) {
+						// Funcionar sin pointer lock (como Minecraft PE)
+						if (!player.inventoryOpen && !paused) {
 							player.isMouseDown = true;
 							player.startBreakingBlock();
 						}
@@ -1145,7 +1200,7 @@
 					
 					attackButton.addEventListener('touchend', function(e) {
 						e.preventDefault();
-						if (player.pointerLocked && !player.inventoryOpen) {
+						if (!player.inventoryOpen && !paused) {
 							player.isMouseDown = false;
 							player.stopBreakingBlock();
 						}
@@ -1153,7 +1208,7 @@
 					
 					attackButton.addEventListener('touchcancel', function(e) {
 						e.preventDefault();
-						if (player.pointerLocked && !player.inventoryOpen) {
+						if (!player.inventoryOpen && !paused) {
 							player.isMouseDown = false;
 							player.stopBreakingBlock();
 						}
@@ -1163,7 +1218,8 @@
 				if (placeButton && player) {
 					placeButton.addEventListener('touchstart', function(e) {
 						e.preventDefault();
-						if (player.pointerLocked && !player.inventoryOpen) {
+						// Funcionar sin pointer lock (como Minecraft PE)
+						if (!player.inventoryOpen && !paused) {
 							player.doBlockActionAtCenter(false); // Place block
 						}
 					}, { passive: false });
@@ -1281,7 +1337,7 @@
 				// Setup mobile controls (after player is initialized)
 				setupMobileControls();
 
-				// Override updateMobileControlsVisibility to handle pointer lock/drag
+				// Override updateMobileControlsVisibility to handle pointer lock
 				// This must be done after setupMobileControls() is called
 				const origUpdateMobileControlsVisibility = window.updateMobileControlsVisibility;
 				window.updateMobileControlsVisibility = function() {
@@ -1297,9 +1353,7 @@
 					if (enable) {
 						mobileControls.style.display = 'block';
 						document.body.classList.add('mobile-mode');
-						isMobileActive = true;
-						attachDragListeners();
-						// Salir de pointer lock si está activo
+						// Salir de pointer lock si está activo (Minecraft PE no usa pointer lock)
 						if (document.pointerLockElement || document.mozPointerLockElement || document.webkitPointerLockElement) {
 							document.exitPointerLock = document.exitPointerLock || document.mozExitPointerLock || document.webkitExitPointerLock;
 							if (document.exitPointerLock) document.exitPointerLock();
@@ -1307,8 +1361,6 @@
 					} else {
 						mobileControls.style.display = 'none';
 						document.body.classList.remove('mobile-mode');
-						isMobileActive = false;
-						detachDragListeners();
 						// pointer lock se podrá volver a activar sólo si el usuario hace clic explícitamente
 					}
 				};
@@ -2401,104 +2453,8 @@
 				}
 			});
 
-			// ... dentro de setupMobileControls(), justo después del código de drag/touch existente ...
-			// Nueva versión reacondicionada de drag para móvil
-			let isMobileActive = false;
-			let draggingFingerId = null, lastDragX = null, lastDragY = null;
-
-			function dragStart(e) {
-				if (!isMobileActive) return;
-				if (e.touches && e.touches.length > 0) {
-					// Solo primer dedo
-					draggingFingerId = e.touches[0].identifier;
-					lastDragX = e.touches[0].clientX;
-					lastDragY = e.touches[0].clientY;
-				} else {
-					draggingFingerId = null;
-					lastDragX = e.clientX;
-					lastDragY = e.clientY;
-				}
-				dragActive = true;
-				e.preventDefault();
-			}
-
-			function dragMove(e) {
-				if (!isMobileActive || !dragActive) return;
-				let clientX, clientY;
-				if (e.touches) {
-					// Buscar el dedo correcto
-					let touch = null;
-					for (let i = 0; i < e.touches.length; i++) {
-						if (draggingFingerId === null || e.touches[i].identifier === draggingFingerId) {
-							touch = e.touches[i];
-							break;
-						}
-					}
-					if (!touch) return;
-					clientX = touch.clientX;
-					clientY = touch.clientY;
-				} else {
-					clientX = e.clientX;
-					clientY = e.clientY;
-				}
-				const deltaX = clientX - lastDragX;
-				const deltaY = clientY - lastDragY;
-				lastDragX = clientX;
-				lastDragY = clientY;
-				if (window.player) {
-					// Ajusta aquí la sensibilidad
-					let sensitivity = 0.0035; // Puedes subir o bajar
-					if (player.targetPitch !== undefined && player.targetYaw !== undefined) {
-						player.targetPitch -= deltaY * sensitivity;
-						player.targetYaw += deltaX * sensitivity;
-						// Limitar pitch vertical
-						if (player.targetPitch < -Math.PI/2) player.targetPitch = -Math.PI/2;
-						if (player.targetPitch > Math.PI/2) player.targetPitch = Math.PI/2;
-					}
-				}
-				e.preventDefault();
-			}
-
-			function dragEnd(e) {
-				dragActive = false;
-				draggingFingerId = null;
-				lastDragX = lastDragY = null;
-			}
-
-			function attachDragListeners() {
-				if (!renderSurface) return;
-				renderSurface.addEventListener('touchstart', dragStart, {passive:false});
-				renderSurface.addEventListener('touchmove', dragMove, {passive:false});
-				renderSurface.addEventListener('touchend', dragEnd, {passive:false});
-				renderSurface.addEventListener('touchcancel', dragEnd, {passive:false});
-				renderSurface.addEventListener('mousedown', dragStart);
-				renderSurface.addEventListener('mousemove', dragMove);
-				renderSurface.addEventListener('mouseup', dragEnd);
-				renderSurface.addEventListener('mouseleave', dragEnd);
-				renderSurface.style.cursor = 'grab';
-			}
-
-			function detachDragListeners() {
-				if (!renderSurface) return;
-				renderSurface.removeEventListener('touchstart', dragStart);
-				renderSurface.removeEventListener('touchmove', dragMove);
-				renderSurface.removeEventListener('touchend', dragEnd);
-				renderSurface.removeEventListener('touchcancel', dragEnd);
-				renderSurface.removeEventListener('mousedown', dragStart);
-				renderSurface.removeEventListener('mousemove', dragMove);
-				renderSurface.removeEventListener('mouseup', dragEnd);
-				renderSurface.removeEventListener('mouseleave', dragEnd);
-				renderSurface.style.cursor = '';
-				draggingFingerId = null;
-				lastDragX = lastDragY = null;
-				dragActive = false;
-			}
-
-			// Ejecuta la función original
-			updateMobileControlsVisibility();
-			window.addEventListener('resize', updateMobileControlsVisibility);
-			window.addEventListener('orientationchange', updateMobileControlsVisibility);
-			// ... resto igual ...
+			// NOTA: El sistema de drag anterior ha sido reemplazado por el sistema de look de Minecraft PE
+			// que está integrado en setupMobileControls() y funciona mejor para móviles
 		</script>
 	</body>
 </html lang="es">
