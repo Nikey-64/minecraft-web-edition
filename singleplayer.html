@@ -326,6 +326,16 @@
 						<input type="checkbox" id="pauseFpsToggle" style="margin-right: 10px;">Mostrar FPS
 					</label>
 				</div>
+				<div style="margin: 20px 0;">
+					<label for="pauseVsyncToggle" style="color: white; font-family: Minecraftia;">
+						<input type="checkbox" id="pauseVsyncToggle" style="margin-right: 10px;">VSync (Sincronización Vertical)
+					</label>
+				</div>
+				<div style="margin: 20px 0;">
+					<label for="pauseMaxFpsSlider" style="color: white; font-family: Minecraftia;">FPS Máximo: <span id="pauseMaxFpsValue">Sin límite</span></label><br>
+					<input type="range" id="pauseMaxFpsSlider" min="30" max="240" value="0" step="30" style="width: 200px; margin-top: 10px;">
+					<small style="color: #aaa; font-family: Minecraftia; display: block; margin-top: 5px;">0 = Sin límite (VSync si está activo)</small>
+				</div>
 			</div>
 		</div>
 		
@@ -404,6 +414,9 @@
 			var pauseGuiScaleSlider = document.getElementById('pauseGuiScaleSlider');
 			var pauseGuiScaleValue = document.getElementById('pauseGuiScaleValue');
 			var pauseFpsToggle = document.getElementById('pauseFpsToggle');
+			var pauseVsyncToggle = document.getElementById('pauseVsyncToggle');
+			var pauseMaxFpsSlider = document.getElementById('pauseMaxFpsSlider');
+			var pauseMaxFpsValue = document.getElementById('pauseMaxFpsValue');
 
 			// Initialize world manager and show selection menu
 			initWorldManager();
@@ -1436,6 +1449,25 @@
 				if (savedShowFPS === 'true') {
 					document.getElementById('fpsDisplay').style.display = 'block';
 				}
+
+				// VSync
+				var savedVsync = localStorage.getItem('vsyncEnabled') || 'false';
+				pauseVsyncToggle.checked = savedVsync === 'true';
+				window.vsyncEnabled = savedVsync === 'true';
+
+				// FPS Máximo
+				var savedMaxFps = localStorage.getItem('maxFps') || '0';
+				pauseMaxFpsSlider.value = savedMaxFps;
+				updateMaxFpsDisplay(parseInt(savedMaxFps));
+				window.maxFps = parseInt(savedMaxFps);
+			}
+
+			function updateMaxFpsDisplay(value) {
+				if (value === 0) {
+					pauseMaxFpsValue.textContent = 'Sin límite';
+				} else {
+					pauseMaxFpsValue.textContent = value + ' FPS';
+				}
 			}
 
 			// Setup Canvas 2D player model for inventory
@@ -1947,6 +1979,22 @@
 				lastFrameTime = performance.now(); // Use global variable
 				var frameId = null;
 				
+				// FPS limiting variables
+				var targetFrameTime = 0; // 0 = no limit (VSync)
+				var lastFrameRenderTime = performance.now();
+				
+				// Initialize FPS settings
+				if (typeof window.maxFps === 'undefined') {
+					window.maxFps = parseInt(localStorage.getItem('maxFps') || '0');
+				}
+				if (typeof window.vsyncEnabled === 'undefined') {
+					window.vsyncEnabled = localStorage.getItem('vsyncEnabled') === 'true';
+				}
+				
+				var physicsAccumulator = 0;
+				var PHYSICS_STEP = 1/20; // 20 Hz, igual a Minecraft vanilla
+				var MAX_PHYSICS_STEPS = 8;
+				
 				function gameLoop(currentTime) {
 					if (!paused) {
 						var frameStart = performance.now();
@@ -1962,10 +2010,21 @@
 						// Limit delta to prevent large jumps
 						if (deltaTime > 0.1) deltaTime = 0.1; // Max 100ms delta
 
-						// Simulate physics
-						measureTime('physics', function() {
-							physics.simulate(deltaTime);
-						});
+						// >>> NUEVO BUCLE DE FÍSICAS <<<
+						physicsAccumulator += deltaTime;
+						var subSteps = 0;
+						while(physicsAccumulator >= PHYSICS_STEP && subSteps < MAX_PHYSICS_STEPS) {
+						  measureTime('physics', function() {
+						    physics.simulate(PHYSICS_STEP);
+						  });
+						  physicsAccumulator -= PHYSICS_STEP;
+						  subSteps++;
+						}
+						if (subSteps === MAX_PHYSICS_STEPS) {
+						  // Si hubo mucho lag, descartar el acumulador para evitar el spiral of death
+						  physicsAccumulator = 0;
+						}
+						// <<< FIN NUEVO BUCLE DE FÍSICAS >>>
 
 						// Update animations (debe llamarse cada frame para animaciones suaves)
 						if ( physics.updateAnimations ) {
@@ -2093,8 +2152,34 @@
 						lastFrameTime = performance.now();
 					}
 					
-					// Always schedule next frame, but only process game logic if not paused
-					frameId = requestAnimationFrame(gameLoop);
+					// FPS limiting logic
+					var now = performance.now();
+					var timeSinceLastFrame = now - lastFrameRenderTime;
+					
+					// Determine target frame time
+					if (window.vsyncEnabled) {
+						// VSync: use requestAnimationFrame (browser handles sync)
+						targetFrameTime = 0;
+					} else if (window.maxFps > 0) {
+						// Manual FPS limit
+						targetFrameTime = 1000 / window.maxFps; // milliseconds per frame
+					} else {
+						// No limit
+						targetFrameTime = 0;
+					}
+					
+					// If we have a target frame time and haven't reached it, wait
+					if (targetFrameTime > 0 && timeSinceLastFrame < targetFrameTime) {
+						var waitTime = targetFrameTime - timeSinceLastFrame;
+						setTimeout(function() {
+							lastFrameRenderTime = performance.now();
+							frameId = requestAnimationFrame(gameLoop);
+						}, waitTime);
+					} else {
+						// Schedule next frame immediately
+						lastFrameRenderTime = now;
+						frameId = requestAnimationFrame(gameLoop);
+					}
 				}
 				
 				// Start the loop
@@ -2381,6 +2466,34 @@
 					document.getElementById('fpsDisplay').style.display = 'block';
 				} else {
 					document.getElementById('fpsDisplay').style.display = 'none';
+				}
+			};
+
+			pauseVsyncToggle.onchange = function() {
+				var enabled = pauseVsyncToggle.checked;
+				localStorage.setItem('vsyncEnabled', enabled);
+				window.vsyncEnabled = enabled;
+				// Si VSync está activo, desactivar límite manual de FPS
+				if (enabled && pauseMaxFpsSlider.value !== '0') {
+					pauseMaxFpsSlider.value = '0';
+					updateMaxFpsDisplay(0);
+					localStorage.setItem('maxFps', '0');
+					window.maxFps = 0;
+				}
+				// Nota: requestAnimationFrame ya está sincronizado con el refresh rate del monitor
+				// VSync en web significa usar RAF sin limitación manual
+			};
+
+			pauseMaxFpsSlider.oninput = function() {
+				var value = parseInt(this.value);
+				updateMaxFpsDisplay(value);
+				localStorage.setItem('maxFps', value);
+				window.maxFps = value;
+				// Si se establece un límite manual, desactivar VSync
+				if (value !== 0 && pauseVsyncToggle.checked) {
+					pauseVsyncToggle.checked = false;
+					localStorage.setItem('vsyncEnabled', 'false');
+					window.vsyncEnabled = false;
 				}
 			};
 			
