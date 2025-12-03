@@ -4034,74 +4034,50 @@ Player.prototype.getEyePos = function()
 	return eyePos;
 }
 
-// update()
+// updatePhysics(fixedTimeStep)
 //
-// Updates this local player (gravity, movement)
+// Updates player physics with fixed time step (called from physics loop)
+// fixedTimeStep: fixed time step in seconds (typically 1/20 = 0.05s for 20 Hz)
 
-Player.prototype.update = function()
+Player.prototype.updatePhysics = function(fixedTimeStep)
 {
 	var world = this.world;
 	var velocity = this.velocity;
 	var pos = this.pos;
 	var bPos = new Vector( Math.floor( pos.x ), Math.floor( pos.y ), Math.floor( pos.z ) );
 
-	if ( this.lastUpdate != null )
-	{
-		var delta = ( new Date().getTime() - this.lastUpdate ) / 1000;
+	// Check for ladders BEFORE movement calculation
+	// This allows movement to be modified based on ladder state
+	this.checkLadderContact(pos, world);
 
-		// Limit delta to prevent large jumps when game is paused/resumed
-		// This prevents the player from falling through the world or moving too fast
-		var maxDelta = 0.1; // Maximum 100ms delta (10 FPS equivalent)
-		if ( delta > maxDelta ) {
-			delta = maxDelta;
-		}
-
-		// Initialize physics accumulator if not set
-		if (this.physicsAccumulator === undefined) this.physicsAccumulator = 0;
-
-		// Fixed time step for physics updates (120 Hz = ~8.33ms = 0.00833 seconds)
-		// Increased from 60 Hz for more responsive and accurate physics
-		var fixedTimeStep = 1/120; // 120 Hz physics updates
-
-		// Accumulate time for physics updates
-		this.physicsAccumulator += delta;
-
-		// View (update every frame for smooth camera movement)
-		if ( this.dragging )
-		{
-			this.angles[0] += ( this.targetPitch - this.angles[0] ) * 30 * delta;
-			this.angles[1] += ( this.targetYaw - this.angles[1] ) * 30 * delta;
-			if ( this.angles[0] < -Math.PI/2 ) this.angles[0] = -Math.PI/2;
-			if ( this.angles[0] > Math.PI/2 ) this.angles[0] = Math.PI/2;
-		}
-
-		// Update block breaking progress (every frame)
-		this.updateBreakingProgress(delta);
-
-		// Update step sounds (play footstep sounds while walking)
-		this.updateStepSounds();
-
-		// Update fall damage (check if player landed from a fall)
-		this.updateFallDamage();
-
-		// Update health regeneration (heal when hunger is high, damage when starving)
-		this.updateHealthRegeneration();
-
-		// Check for ladders BEFORE movement calculation
-		// This allows movement to be modified based on ladder state
-		this.checkLadderContact(pos, world);
-
-		// Fixed 120 Hz physics updates for consistent physics behavior
-		while (this.physicsAccumulator >= fixedTimeStep) {
-			this.physicsAccumulator -= fixedTimeStep;
-
-			// Modo creativo: no recibir daño ni hambre
-			if ( this.gameMode === GAME_MODE.CREATIVE ) {
-				this.health = this.maxHealth;
-				this.hunger = this.maxHunger;
+	// Update falling state BEFORE applying physics
+	// This ensures falling state is correct for the current tick
+	// Check if there's a solid block directly below the player's feet
+	var feetY = Math.floor(pos.y);
+	var isOnGround = false;
+	for ( var x = bPos.x - 1; x <= bPos.x + 1; x++ ) {
+		for ( var z = bPos.z - 1; z <= bPos.z + 1; z++ ) {
+			var blockBelow = world.getBlock(x, feetY, z);
+			if ( blockBelow != BLOCK.AIR && (blockBelow.solid !== false || blockBelow.bloctype === "ladder") ) {
+				// Check if player's feet are close enough to the block (within 0.1 blocks)
+				if ( pos.y - feetY <= 0.1 ) {
+					isOnGround = true;
+					break;
+				}
 			}
+		}
+		if (isOnGround) break;
+	}
+	this.falling = !isOnGround && !this.onLadder;
 
-			// Modo espectador: volar libremente sin colisiones ni gravedad
+	// Fixed time step physics update
+	// Modo creativo: no recibir daño ni hambre
+	if ( this.gameMode === GAME_MODE.CREATIVE ) {
+		this.health = this.maxHealth;
+		this.hunger = this.maxHunger;
+	}
+
+	// Modo espectador: volar libremente sin colisiones ni gravedad
 			if ( this.spectatorMode || this.gameMode === GAME_MODE.SPECTATOR )
 			{
 				// Velocidad de vuelo más rápida
@@ -4155,18 +4131,18 @@ Player.prototype.update = function()
 			}
 			else
 			{
-				// Modo normal: con gravedad y colisiones
-					// Ejes: X y Z = horizontal, Y = vertical (altura)
-					// Gravity (fixed 60 Hz updates)
+			// Modo normal: con gravedad y colisiones (Minecraft vanilla physics)
+				// Ejes: X y Z = horizontal, Y = vertical (altura)
+					// Gravity: 0.08 blocks/tick² = 32 blocks/second² (Minecraft vanilla)
 					// Don't apply gravity if player is on a ladder (ladder prevents falling)
 					if ( this.falling && !this.onLadder ) {
-						var gravity = 20; // blocks/second² (same as physics.js)
+						var gravity = 32; // blocks/second² (Minecraft vanilla: 0.08 blocks/tick²)
 						velocity.y += -gravity * fixedTimeStep; // Y es altura
 					}
 
-				// Jumping
+				// Jumping: 0.42 blocks/tick = 8.4 blocks/second (Minecraft vanilla)
 				if ( this.keys[" "] && !this.falling ) {
-					velocity.y = 8; // Y es altura
+					velocity.y = 8.4; // Y es altura (Minecraft vanilla jump speed)
 					// Consume hunger when jumping (survival mode)
 					if (this.gameMode === GAME_MODE.SURVIVAL) {
 						this.consumeHunger(0.05); // Small hunger cost per jump
@@ -4242,10 +4218,18 @@ Player.prototype.update = function()
 							velocity.z *= 0.8;
 						}
 					} else {
-						// Normal walking
+						// Normal walking: 0.215 blocks/tick = 4.3 blocks/second (Minecraft vanilla)
+						// Sprint: 0.28 blocks/tick = 5.6 blocks/second (Minecraft vanilla)
 						walkVelocity = walkVelocity.normal();
-						velocity.x = walkVelocity.x * 4; // X horizontal
-						velocity.z = walkVelocity.z * 4; // Z horizontal
+						var walkSpeed = 4.3; // blocks/second (Minecraft vanilla walking speed)
+						
+						// Check for sprint (Ctrl key)
+						if ( this.keys["Control"] || this.keys[17] ) {
+							walkSpeed = 5.6; // blocks/second (Minecraft vanilla sprint speed)
+						}
+						
+						velocity.x = walkVelocity.x * walkSpeed; // X horizontal
+						velocity.z = walkVelocity.z * walkSpeed; // Z horizontal
 
 						// Consume hunger while walking (survival mode)
 						// Very small amount per physics step, adds up over time
@@ -4254,32 +4238,94 @@ Player.prototype.update = function()
 						}
 					}
 				} else {
-					velocity.x /= this.falling ? 1.01 : 1.5;
-					velocity.z /= this.falling ? 1.01 : 1.5;
+					// Friction: Minecraft vanilla uses 0.91 per tick for air, 0.6 per tick for ground
+					// Since fixedTimeStep = 1/20 = 0.05s (exactly 1 tick), apply friction directly
+					if (this.falling) {
+						// Air friction: 0.91 per tick (Minecraft vanilla)
+						velocity.x *= 0.91;
+						velocity.z *= 0.91;
+					} else {
+						// Ground friction: 0.6 per tick (Minecraft vanilla)
+						velocity.x *= 0.6;
+						velocity.z *= 0.6;
+					}
 				}
 
 				// Apply ladder physics (pull player to wall, restrict movement)
 				this.applyLadderPhysics( pos, velocity, world );
 
-				// Resolve collision
+				// Limit maximum horizontal velocity (Minecraft vanilla: ~10.92 blocks/second)
+				// This prevents exploits and ensures realistic movement
+				var maxHorizontalSpeed = 10.92; // blocks/second (Minecraft vanilla limit)
+				var horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+				if (horizontalSpeed > maxHorizontalSpeed) {
+					var scale = maxHorizontalSpeed / horizontalSpeed;
+					velocity.x *= scale;
+					velocity.z *= scale;
+				}
+
+				// Resolve collision (this also updates this.falling state)
 				this.pos = this.resolveCollision( pos, bPos, velocity.mul( fixedTimeStep ) );
+				
+				// Update fall damage (check if player landed from a fall)
+				// Called from physics loop for consistency - uses this.falling updated above
+				this.updateFallDamage();
+				
+				// Update health regeneration (heal when hunger is high, damage when starving)
+				// Called from physics loop for consistency - uses fixed time intervals
+				this.updateHealthRegeneration();
 			}
+	
+	// Clamp player position to world bounds to prevent falling through
+	// Keep player slightly inside bounds (0.1 margin) to avoid edge cases
+	// Ejes: X y Z = horizontal, Y = vertical (altura)
+	var margin = 0.1;
+	if ( this.pos.x < margin ) this.pos.x = margin;
+	if ( this.pos.y < margin ) this.pos.y = margin; // Y es altura
+	if ( this.pos.z < margin ) this.pos.z = margin; // Z es horizontal
+	if ( this.pos.x > world.sx - 1 - margin ) this.pos.x = world.sx - 1 - margin;
+	if ( this.pos.y > world.sy - 1.7 - margin ) { // Y es altura
+		this.pos.y = world.sy - 1.7 - margin;
+		this.velocity.y = 0; // Y es altura
+		this.falling = false;
+	}
+	if ( this.pos.z > world.sz - 1 - margin ) this.pos.z = world.sz - 1 - margin; // Z es horizontal
+}
+
+// update()
+//
+// Updates visual/UI aspects of the player (called every frame from render loop)
+// This should NOT contain physics calculations
+
+Player.prototype.update = function()
+{
+	if ( this.lastUpdate != null )
+	{
+		var delta = ( new Date().getTime() - this.lastUpdate ) / 1000;
+
+		// Limit delta to prevent large jumps when game is paused/resumed
+		var maxDelta = 0.1; // Maximum 100ms delta (10 FPS equivalent)
+		if ( delta > maxDelta ) {
+			delta = maxDelta;
 		}
-		
-		// Clamp player position to world bounds to prevent falling through
-		// Keep player slightly inside bounds (0.1 margin) to avoid edge cases
-		// Ejes: X y Z = horizontal, Y = vertical (altura)
-		var margin = 0.1;
-		if ( this.pos.x < margin ) this.pos.x = margin;
-		if ( this.pos.y < margin ) this.pos.y = margin; // Y es altura
-		if ( this.pos.z < margin ) this.pos.z = margin; // Z es horizontal
-		if ( this.pos.x > world.sx - 1 - margin ) this.pos.x = world.sx - 1 - margin;
-		if ( this.pos.y > world.sy - 1.7 - margin ) { // Y es altura
-			this.pos.y = world.sy - 1.7 - margin;
-			this.velocity.y = 0; // Y es altura
-			this.falling = false;
+
+		// View (update every frame for smooth camera movement)
+		if ( this.dragging )
+		{
+			this.angles[0] += ( this.targetPitch - this.angles[0] ) * 30 * delta;
+			this.angles[1] += ( this.targetYaw - this.angles[1] ) * 30 * delta;
+			if ( this.angles[0] < -Math.PI/2 ) this.angles[0] = -Math.PI/2;
+			if ( this.angles[0] > Math.PI/2 ) this.angles[0] = Math.PI/2;
 		}
-		if ( this.pos.z > world.sz - 1 - margin ) this.pos.z = world.sz - 1 - margin; // Z es horizontal
+
+		// Update block breaking progress (every frame)
+		this.updateBreakingProgress(delta);
+
+		// Update step sounds (play footstep sounds while walking)
+		this.updateStepSounds();
+
+		// Note: updateFallDamage() and updateHealthRegeneration() are now called
+		// from updatePhysics() in the physics loop for consistency
 	}
 
 	this.lastUpdate = new Date().getTime();
@@ -4581,9 +4627,16 @@ Player.prototype.resolveCollision = function( pos, bPos, velocity )
 	}
 
 	// playerFace usa X y Z para colisiones verticales (Y es altura)
+	// Player height is 1.8 blocks (from feet to head)
+	var playerHeight = 1.8; // Altura del jugador en bloques
 	var playerFace = { x1: pos.x + velocity.x - 0.125, y1: pos.z + velocity.z - 0.125, x2: pos.x + velocity.x + 0.125, y2: pos.z + velocity.z + 0.125 };
-	var newBYLower = Math.floor( pos.y + velocity.y ); // Y es altura
-	var newBYUpper = Math.floor( pos.y + 1.7 + velocity.y * 1.1 ); // Y es altura
+	// Calculate new Y position after movement
+	// Use actual velocity movement, not a multiplier, to avoid premature collision detection
+	// The velocity passed to resolveCollision is already multiplied by fixedTimeStep
+	// So velocity.y here is the actual movement distance, not velocity per second
+	var newY = pos.y + velocity.y;
+	var newBYLower = Math.floor( newY ); // Y es altura (pies)
+	var newBYUpper = Math.floor( newY + playerHeight ); // Y es altura (cabeza)
 
 	// Collect Y collision sides (vertical, altura)
 	collisionCandidates = [];
@@ -4632,17 +4685,31 @@ Player.prototype.resolveCollision = function( pos, bPos, velocity )
 	{
 		var face = collisionCandidates[i];
 
+		// Check collision: playerFace intersects with block face, and moving towards it
+		// face.dir: 1 = block below (floor), -1 = block above (ceiling)
+		// velocity.y: positive = moving up, negative = moving down
 		if ( rectRectCollide( face, playerFace ) && velocity.y * face.dir < 0 ) // Y es altura
 		{
 			if ( velocity.y < 0 ) {
+				// Moving down, hit floor: position player's feet on top of block
 				this.falling = false;
-				pos.y = face.z; // face.z almacena la altura Y
+				pos.y = face.z; // face.z almacena la altura Y (top of block)
 				velocity.y = 0;
 				this.velocity.y = 0;
-			} else {
-				pos.y = face.z - 1.8; // face.z almacena la altura Y
-				velocity.y = 0;
-				this.velocity.y = 0;
+			} else if ( velocity.y > 0 ) {
+				// Moving up, hit ceiling: position player's head just below block
+				// face.z is the Y coordinate of the block's bottom face
+				// Player height is 1.8 blocks, so position feet at face.z - 1.8
+				var playerHeight = 1.8; // Altura del jugador en bloques
+				var newPosY = face.z - playerHeight;
+				// Only stop if we're actually colliding (head would be inside block)
+				// This prevents premature collision detection when jumping
+				if ( newPosY <= pos.y + velocity.y ) {
+					// We're moving up and would hit the ceiling, stop upward movement
+					pos.y = newPosY;
+					velocity.y = 0;
+					this.velocity.y = 0;
+				}
 			}
 
 			break;

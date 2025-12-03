@@ -355,6 +355,7 @@
 			// Game state
 			var paused = false;
 			var gameLoopInterval;
+			var physicsLoopInterval;
 			
 			// Debug state
 			var debugEnabled = false;
@@ -711,7 +712,8 @@
 						console.warn("Could not load player data:", e);
 					}
 					
-					startGameLoop();
+					startPhysicsLoop(); // Start physics loop (separated from render)
+					startGameLoop(); // Start render loop
 				} catch ( error ) {
 					console.error( "Failed to load world:", error );
 					alert( "Error al cargar el mundo: " + error.message );
@@ -908,15 +910,28 @@
 					return isUserAgentMobile || hasTouch || (ar > 1.1);
 				}
 
-				// Detecta si hay gamepads conectados
+				// Detecta si hay gamepads conectados (incluyendo VR controllers)
 				function hasGamepadConnected() {
-					if (!navigator.getGamepads) return false;
-					var gamepads = navigator.getGamepads();
-					for (var i = 0; i < gamepads.length; i++) {
-						if (gamepads[i] !== null) {
-							return true;
+					// Verificar gamepads normales
+					if (navigator.getGamepads) {
+						var gamepads = navigator.getGamepads();
+						for (var i = 0; i < gamepads.length; i++) {
+							if (gamepads[i] !== null) {
+								return true;
+							}
 						}
 					}
+					
+					// Verificar gamepads VR (si hay una sesión VR activa)
+					if (render && render.vrManager && render.vrManager.isVRActive && render.vrManager.xrSession) {
+						var inputSources = render.vrManager.xrSession.inputSources;
+						for (var i = 0; i < inputSources.length; i++) {
+							if (inputSources[i].gamepad) {
+								return true;
+							}
+						}
+					}
+					
 					return false;
 				}
 
@@ -925,9 +940,11 @@
 					if (!mobileControls) return;
 					const shouldShowMobile = isMobileOrPortrait();
 					const hasGamepad = hasGamepadConnected();
-					// Si hay gamepad, ocultar GUI móvil incluso si está en modo móvil
+					// Si hay gamepad (normal o VR), ocultar GUI móvil automáticamente
 					const enable = shouldShowMobile && !hasGamepad;
-					console.log('Mobile controls visible?', enable, '| w:', window.innerWidth, 'h:', window.innerHeight, 'ar:', (window.innerHeight/window.innerWidth).toFixed(2), '| gamepad:', hasGamepad);
+					if (hasGamepad) {
+						console.log('Gamepad detectado - ocultando GUI móvil automáticamente');
+					}
 					if (enable) {
 						mobileControls.style.display = 'block';
 						document.body.classList.add('mobile-mode');
@@ -952,16 +969,22 @@
 				});
 				
 				// Verificar gamepads periódicamente (algunos navegadores no disparan eventos correctamente)
+				// También verificar mandos VR
 				setInterval(function() {
-					if (hasGamepadConnected() !== document.body.classList.contains('gamepad-active')) {
-						if (hasGamepadConnected()) {
+					var hasGamepad = hasGamepadConnected();
+					var wasGamepadActive = document.body.classList.contains('gamepad-active');
+					
+					if (hasGamepad !== wasGamepadActive) {
+						if (hasGamepad) {
 							document.body.classList.add('gamepad-active');
+							console.log('Gamepad activado - GUI móvil oculta');
 						} else {
 							document.body.classList.remove('gamepad-active');
+							console.log('Gamepad desconectado - GUI móvil puede mostrarse si es móvil');
 						}
 						updateMobileControlsVisibility();
 					}
-				}, 1000); // Verificar cada segundo
+				}, 500); // Verificar cada 500ms para respuesta más rápida
 				
 				// Joystick setup
 				var joystickBase = document.getElementById('joystickBase');
@@ -1970,6 +1993,353 @@
 				renderInventoryPlayerModelInternal(ctx, canvas, yaw, pitch);
 			}
 
+			// Gamepad input handler (Xbox layout)
+			function updateGamepadInput() {
+				if (!player) return;
+				
+				// Reset gamepad keys
+				var gamepadKeys = {
+					'w': false, 's': false, 'a': false, 'd': false,
+					' ': false, // Jump
+					'Shift': false, // Sneak/Crouch
+					'Control': false, // Sprint
+					'e': false, // Inventory
+					'q': false, // Drop item
+					't': false // Chat
+				};
+				
+				// Detect gamepad type and get active gamepad
+				var activeGamepad = null;
+				var gamepadType = 'standard'; // 'standard', 'xbox', 'playstation', 'vr'
+				
+				// Check VR controllers first (if VR is active)
+				if (render && render.vrManager && render.vrManager.isVRActive && render.vrManager.xrSession) {
+					var inputSources = render.vrManager.xrSession.inputSources;
+					for (var i = 0; i < inputSources.length; i++) {
+						if (inputSources[i].gamepad) {
+							activeGamepad = inputSources[i].gamepad;
+							gamepadType = 'vr';
+							break;
+						}
+					}
+				}
+				
+				// Check standard gamepads if no VR controller found
+				if (!activeGamepad && navigator.getGamepads) {
+					var gamepads = navigator.getGamepads();
+					for (var i = 0; i < gamepads.length; i++) {
+						if (gamepads[i] !== null) {
+							activeGamepad = gamepads[i];
+							// Detect gamepad type from ID
+							var gamepadId = gamepads[i].id.toLowerCase();
+							if (gamepadId.indexOf('xbox') !== -1 || gamepadId.indexOf('microsoft') !== -1) {
+								gamepadType = 'xbox';
+							} else if (gamepadId.indexOf('playstation') !== -1 || gamepadId.indexOf('sony') !== -1 || gamepadId.indexOf('dualshock') !== -1) {
+								gamepadType = 'playstation';
+							} else {
+								gamepadType = 'standard';
+							}
+							break;
+						}
+					}
+				}
+				
+				if (!activeGamepad) return;
+				
+				// Xbox/Standard Layout Mapping:
+				// Left Stick (axes 0, 1): Movement (W/A/S/D)
+				// Right Stick (axes 2, 3): Camera/Look (handled separately)
+				// A button (0): Jump (Space)
+				// B button (1): Drop item (Q) or secondary action
+				// X button (2): Use/Interact (Right click)
+				// Y button (3): Inventory (E)
+				// Left Bumper (4): Previous slot
+				// Right Bumper (5): Next slot
+				// Left Trigger (6): Sneak/Crouch (Shift)
+				// Right Trigger (7): Attack/Mine (Left click)
+				// Back/Select (8): Chat (T)
+				// Start (9): Pause/Inventory
+				// Left Stick Click (10): Sprint (Ctrl)
+				// Right Stick Click (11): Camera toggle
+				// D-Pad Up (12): Slot 1
+				// D-Pad Right (13): Slot 2
+				// D-Pad Down (14): Slot 3
+				// D-Pad Left (15): Slot 4
+				
+				// VR Layout (Oculus Quest/Similar):
+				// Stick Left (axes 0, 1): Movement
+				// Stick Right (axes 2, 3): Camera (handled separately)
+				// A button (0): Jump
+				// B button (1): Secondary
+				// X button (2): Use
+				// Y button (3): Inventory
+				// Trigger (0): Attack/Mine
+				// Grip (1): Grab/Interact
+				
+				var buttons = activeGamepad.buttons || [];
+				var axes = activeGamepad.axes || [];
+				
+				// Movement from left stick
+				// Xbox/Standard: axes 0, 1 = left stick (movement)
+				// VR (Oculus Quest): axes 0, 1 = left stick (movement), axes 2, 3 = right stick (camera)
+				var leftStickX = 0, leftStickY = 0;
+				if (gamepadType === 'vr') {
+					// VR: Use axes 0, 1 for movement (left stick)
+					// Some VR controllers use axes 2, 3, so check both
+					if (axes.length >= 4) {
+						// Try axes 2, 3 first (common for VR controllers)
+						leftStickX = Math.abs(axes[2]) > 0.1 ? axes[2] : (axes.length > 0 ? axes[0] : 0);
+						leftStickY = Math.abs(axes[3]) > 0.1 ? axes[3] : (axes.length > 1 ? axes[1] : 0);
+					} else {
+						// Fallback to axes 0, 1
+						leftStickX = axes.length > 0 ? axes[0] : 0;
+						leftStickY = axes.length > 1 ? axes[1] : 0;
+					}
+				} else {
+					// Standard/Xbox: axes 0, 1 are left stick
+					leftStickX = axes.length > 0 ? axes[0] : 0;
+					leftStickY = axes.length > 1 ? axes[1] : 0;
+				}
+				
+				// Dead zone
+				var deadZone = 0.15;
+				if (Math.abs(leftStickX) > deadZone) {
+					if (leftStickX > 0) gamepadKeys['d'] = true; // Right
+					else gamepadKeys['a'] = true; // Left
+				}
+				if (Math.abs(leftStickY) > deadZone) {
+					if (leftStickY < 0) gamepadKeys['w'] = true; // Forward (Y is inverted)
+					else gamepadKeys['s'] = true; // Backward
+				}
+				
+				// Buttons mapping (Xbox layout)
+				if (buttons.length > 0) {
+					// A button (0): Jump
+					if (buttons[0] && buttons[0].pressed) {
+						gamepadKeys[' '] = true;
+					}
+					
+					// B button (1): Drop item
+					if (buttons[1] && buttons[1].pressed) {
+						gamepadKeys['q'] = true;
+					}
+					
+					// Y button (3): Inventory
+					if (buttons[3] && buttons[3].pressed && !player._lastGamepadInventoryPress) {
+						gamepadKeys['e'] = true;
+						player._lastGamepadInventoryPress = true;
+					} else if (!buttons[3] || !buttons[3].pressed) {
+						player._lastGamepadInventoryPress = false;
+					}
+					
+					// Left Trigger (6): Sneak/Crouch
+					if (buttons.length > 6 && buttons[6] && buttons[6].value > 0.5) {
+						gamepadKeys['Shift'] = true;
+					}
+					
+					// Right Trigger (7): Attack (handled separately via mouse events)
+					
+					// Left Stick Click (10): Sprint
+					if (buttons.length > 10 && buttons[10] && buttons[10].pressed) {
+						gamepadKeys['Control'] = true;
+					}
+					
+					// Back/Select (8): Chat
+					if (buttons.length > 8 && buttons[8] && buttons[8].pressed && !player._lastGamepadChatPress) {
+						gamepadKeys['t'] = true;
+						player._lastGamepadChatPress = true;
+					} else if (!buttons[8] || !buttons[8].pressed) {
+						player._lastGamepadChatPress = false;
+					}
+					
+					// D-Pad for hotbar slots (12-15)
+					if (buttons.length > 12) {
+						if (buttons[12] && buttons[12].pressed && !player._lastGamepadSlot1Press) {
+							player.selectHotbarSlot(0);
+							player._lastGamepadSlot1Press = true;
+						} else if (!buttons[12] || !buttons[12].pressed) {
+							player._lastGamepadSlot1Press = false;
+						}
+					}
+					if (buttons.length > 13) {
+						if (buttons[13] && buttons[13].pressed && !player._lastGamepadSlot2Press) {
+							player.selectHotbarSlot(1);
+							player._lastGamepadSlot2Press = true;
+						} else if (!buttons[13] || !buttons[13].pressed) {
+							player._lastGamepadSlot2Press = false;
+						}
+					}
+					if (buttons.length > 14) {
+						if (buttons[14] && buttons[14].pressed && !player._lastGamepadSlot3Press) {
+							player.selectHotbarSlot(2);
+							player._lastGamepadSlot3Press = true;
+						} else if (!buttons[14] || !buttons[14].pressed) {
+							player._lastGamepadSlot3Press = false;
+						}
+					}
+					if (buttons.length > 15) {
+						if (buttons[15] && buttons[15].pressed && !player._lastGamepadSlot4Press) {
+							player.selectHotbarSlot(3);
+							player._lastGamepadSlot4Press = true;
+						} else if (!buttons[15] || !buttons[15].pressed) {
+							player._lastGamepadSlot4Press = false;
+						}
+					}
+					
+					// Bumpers for hotbar navigation
+					if (buttons.length > 4 && buttons[4] && buttons[4].pressed && !player._lastGamepadBumperLPress) {
+						var prevSlot = (player.selectedHotbarSlot - 1 + 9) % 9;
+						player.selectHotbarSlot(prevSlot);
+						player._lastGamepadBumperLPress = true;
+					} else if (!buttons[4] || !buttons[4].pressed) {
+						player._lastGamepadBumperLPress = false;
+					}
+					if (buttons.length > 5 && buttons[5] && buttons[5].pressed && !player._lastGamepadBumperRPress) {
+						var nextSlot = (player.selectedHotbarSlot + 1) % 9;
+						player.selectHotbarSlot(nextSlot);
+						player._lastGamepadBumperRPress = true;
+					} else if (!buttons[5] || !buttons[5].pressed) {
+						player._lastGamepadBumperRPress = false;
+					}
+				}
+				
+				// Apply gamepad keys to player.keys
+				// Gamepad takes priority for movement keys if gamepad is active
+				if (activeGamepad) {
+					// Movement keys: gamepad overrides keyboard when active
+					if (gamepadKeys['w'] || gamepadKeys['s'] || gamepadKeys['a'] || gamepadKeys['d']) {
+						// Gamepad is providing movement input, use it exclusively
+						player.keys['w'] = gamepadKeys['w'];
+						player.keys['s'] = gamepadKeys['s'];
+						player.keys['a'] = gamepadKeys['a'];
+						player.keys['d'] = gamepadKeys['d'];
+					} else {
+						// No gamepad movement, allow keyboard
+						// (keyboard input is handled separately in onKeyEvent)
+					}
+					
+					// Action keys: merge gamepad with keyboard (both can be active)
+					player.keys[' '] = player.keys[' '] || gamepadKeys[' '];
+					player.keys['Shift'] = player.keys['Shift'] || gamepadKeys['Shift'];
+					player.keys['Control'] = player.keys['Control'] || gamepadKeys['Control'];
+					
+					// Handle one-time actions (inventory, chat, drop)
+					if (gamepadKeys['e'] && !player._lastGamepadE) {
+						player.onKeyEvent(69, false); // E key
+						player._lastGamepadE = true;
+					} else if (!gamepadKeys['e']) {
+						player._lastGamepadE = false;
+					}
+					
+					if (gamepadKeys['q'] && !player._lastGamepadQ) {
+						player.onKeyEvent(81, false); // Q key
+						player._lastGamepadQ = true;
+					} else if (!gamepadKeys['q']) {
+						player._lastGamepadQ = false;
+					}
+					
+					if (gamepadKeys['t'] && !player._lastGamepadT) {
+						player.onKeyEvent(84, false); // T key
+						player._lastGamepadT = true;
+					} else if (!gamepadKeys['t']) {
+						player._lastGamepadT = false;
+					}
+				}
+				
+				// Handle camera rotation from right stick (for non-VR gamepads)
+				if (gamepadType !== 'vr' && axes.length >= 4 && player) {
+					var rightStickX = axes[2] || 0;
+					var rightStickY = axes[3] || 0;
+					var lookSensitivity = 2.0; // Adjust sensitivity
+					var physicsStep = 1/20; // 20 Hz physics step
+					
+					if (Math.abs(rightStickX) > deadZone || Math.abs(rightStickY) > deadZone) {
+						// Update camera angles
+						player.angles[1] += rightStickX * lookSensitivity * physicsStep;
+						player.angles[0] -= rightStickY * lookSensitivity * physicsStep;
+						
+						// Clamp pitch
+						if (player.angles[0] < -Math.PI/2) player.angles[0] = -Math.PI/2;
+						if (player.angles[0] > Math.PI/2) player.angles[0] = Math.PI/2;
+					}
+				}
+			}
+
+			// Function to start the physics loop (separated from render)
+			// This loop runs at a fixed 20 Hz (50ms per step) independently of render FPS
+			function startPhysicsLoop() {
+				var PHYSICS_STEP = 1/20; // 0.05 seconds = 20 ticks per second (Minecraft vanilla)
+				var TARGET_PHYSICS_FPS = 20; // 20 Hz fixed rate
+				var physicsInterval = 1000 / TARGET_PHYSICS_FPS; // 50ms = 20 Hz
+				
+				// Time accumulator for fixed timestep physics
+				var physicsAccumulator = 0;
+				var lastPhysicsTime = performance.now();
+				
+				var physicsLoop = function() {
+					if (!paused && physics) {
+						var currentTime = performance.now();
+						var frameTime = currentTime - lastPhysicsTime;
+						lastPhysicsTime = currentTime;
+						
+						// Cap frame time to prevent large jumps (max 200ms = 4 physics steps)
+						if (frameTime > 200) {
+							frameTime = 200;
+						}
+						
+						// Accumulate time
+						physicsAccumulator += frameTime;
+						
+						// Execute physics steps at fixed rate
+						// This ensures physics always runs at exactly 20 Hz regardless of actual interval timing
+						var stepsExecuted = 0;
+						var maxSteps = 5; // Prevent spiral of death (max 5 steps per frame)
+						
+						while (physicsAccumulator >= physicsInterval && stepsExecuted < maxSteps) {
+							measureTime('physics', function() {
+								// Update gamepad input (Xbox layout)
+								updateGamepadInput();
+								
+								// Update world physics (blocks, fluids, etc.) with fixed time step
+								physics.simulate(PHYSICS_STEP);
+								
+								// Update player physics with fixed time step
+								if (player && typeof player.updatePhysics === 'function') {
+									player.updatePhysics(PHYSICS_STEP);
+								}
+							});
+							
+							physicsAccumulator -= physicsInterval;
+							stepsExecuted++;
+						}
+						
+						// If we're falling behind, log a warning (but don't break)
+						if (stepsExecuted >= maxSteps) {
+							console.warn('Physics loop falling behind: ' + stepsExecuted + ' steps executed');
+						}
+					} else {
+						// Reset accumulator when paused
+						physicsAccumulator = 0;
+						lastPhysicsTime = performance.now();
+					}
+				};
+				
+				// Start physics loop at fixed 20 Hz rate using setInterval
+				// This runs completely independently of the render loop
+				var physicsIntervalId = setInterval(physicsLoop, physicsInterval);
+				physicsLoopInterval = { 
+					intervalId: physicsIntervalId, 
+					cancel: function() { 
+						if (this.intervalId) {
+							clearInterval(this.intervalId);
+							this.intervalId = null;
+						}
+					} 
+				};
+				
+				console.log('Physics loop iniciado a ' + TARGET_PHYSICS_FPS + ' Hz (separado del renderizado)');
+			}
+
 			// Function to start the render loop
 			function startGameLoop() {
 				// Initialize CSS 3D player model rotation tracking
@@ -1991,10 +2361,6 @@
 					window.vsyncEnabled = localStorage.getItem('vsyncEnabled') === 'true';
 				}
 				
-				var physicsAccumulator = 0;
-				var PHYSICS_STEP = 1/20; // 20 Hz, igual a Minecraft vanilla
-				var MAX_PHYSICS_STEPS = 8;
-				
 				function gameLoop(currentTime) {
 					if (!paused) {
 						var frameStart = performance.now();
@@ -2010,24 +2376,9 @@
 						// Limit delta to prevent large jumps
 						if (deltaTime > 0.1) deltaTime = 0.1; // Max 100ms delta
 
-						// >>> NUEVO BUCLE DE FÍSICAS <<<
-						physicsAccumulator += deltaTime;
-						var subSteps = 0;
-						while(physicsAccumulator >= PHYSICS_STEP && subSteps < MAX_PHYSICS_STEPS) {
-						  measureTime('physics', function() {
-						    physics.simulate(PHYSICS_STEP);
-						  });
-						  physicsAccumulator -= PHYSICS_STEP;
-						  subSteps++;
-						}
-						if (subSteps === MAX_PHYSICS_STEPS) {
-						  // Si hubo mucho lag, descartar el acumulador para evitar el spiral of death
-						  physicsAccumulator = 0;
-						}
-						// <<< FIN NUEVO BUCLE DE FÍSICAS >>>
-
 						// Update animations (debe llamarse cada frame para animaciones suaves)
-						if ( physics.updateAnimations ) {
+						// Las animaciones se actualizan en el bucle de renderizado para suavidad visual
+						if ( physics && physics.updateAnimations ) {
 							physics.updateAnimations(deltaTime);
 							// Marcar chunks como dirty solo si contienen bloques animados
 							if ( Object.keys( physics.fallingBlocks ).length > 0 ) {

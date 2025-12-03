@@ -1241,25 +1241,10 @@ VRManager.prototype.updateVRControls = function()
 		if (inputSource.gamepad) {
 			var gamepad = inputSource.gamepad;
 			
-			// Mover jugador basado en el joystick del control
-			// Eje 2 y 3 son típicamente el joystick izquierdo (movimiento)
-			if (gamepad.axes && gamepad.axes.length >= 4) {
-				var moveX = gamepad.axes[2]; // Movimiento horizontal
-				var moveZ = gamepad.axes[3]; // Movimiento vertical (adelante/atrás)
-				
-				// Aplicar movimiento al jugador
-				// Esto se hace en player.js, pero podemos actualizar la velocidad aquí
-				if (Math.abs(moveX) > 0.1 || Math.abs(moveZ) > 0.1) {
-					// El movimiento se aplica en la dirección que mira el jugador
-					var moveSpeed = 0.1;
-					var moveDirX = Math.sin(yaw) * moveZ + Math.cos(yaw) * moveX;
-					var moveDirZ = Math.cos(yaw) * moveZ - Math.sin(yaw) * moveX;
-					
-					// Actualizar velocidad del jugador (esto requiere acceso a player.vel o similar)
-					// Por ahora, solo actualizamos la posición directamente
-					// En una implementación completa, esto se manejaría en player.js
-				}
-			}
+			// NOTA: El movimiento VR ahora se maneja en updateGamepadInput() en singleplayer.html
+			// para mantener consistencia con el sistema de gamepad normal
+			// Este código se mantiene para compatibilidad pero el movimiento principal
+			// se procesa en el bucle de física junto con otros gamepads
 			
 			// Detectar botones (disparar, saltar, inventario, etc.)
 			if (gamepad.buttons) {

@@ -59,7 +59,7 @@ Physics.prototype.simulate = function(deltaTime)
 			// Initialize elapsedTime if not set
 			if (anim.elapsedTime === undefined) anim.elapsedTime = 0;
 
-			var gravity = 20;
+			var gravity = 32; // blocks/second² (Minecraft vanilla: 0.08 blocks/tick²)
 			var fallDistance = anim.startY - anim.targetY;
 			var currentFall = 0.5 * gravity * anim.elapsedTime * anim.elapsedTime;
 
@@ -158,7 +158,7 @@ Physics.prototype.simulate = function(deltaTime)
 						// Crear animación suave con física realista
 						// Usar aceleración gravitacional constante: g = 20 bloques/seg²
 						// Tiempo de caída: t = sqrt(2 * h / g), donde h = fallDistance
-						var gravity = 20; // Aceleración gravitacional en bloques/seg²
+						var gravity = 32; // Aceleración gravitacional en bloques/seg² (Minecraft vanilla: 0.08 blocks/tick²)
 						var duration = Math.sqrt(2 * fallDistance / gravity) * 1000; // Convertir a ms
 						// Limitar duración máxima a 1 segundo para caídas muy largas
 						if ( duration > 1000 ) duration = 1000;
@@ -306,7 +306,7 @@ Physics.prototype.updateAnimations = function(deltaTime)
 		anim.elapsedTime += deltaTime;
 
 		// Usar física real: posición = 0.5 * g * t^2
-		var gravity = 20; // Aceleración gravitacional en bloques/seg²
+		var gravity = 32; // Aceleración gravitacional en bloques/seg² (Minecraft vanilla: 0.08 blocks/tick²)
 		var fallDistance = anim.startY - anim.targetY;
 		var currentFall = 0.5 * gravity * anim.elapsedTime * anim.elapsedTime;
 
